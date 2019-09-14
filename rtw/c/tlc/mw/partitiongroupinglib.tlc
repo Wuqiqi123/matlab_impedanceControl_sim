@@ -1,0 +1,115 @@
+%% ============================================================================
+%% File : partitiongroupinglib.tlc
+%%
+%% Abstract:
+%%   This is the system library file for partition grouping in code generation,
+%%   use this to communicate with particular multicore code generation backend.
+%%   Currently only support deployment diagram
+%% ============================================================================
+
+%if EXISTS("_PARTITIONGROUPINGLIB_") == TLC_FALSE
+  %assign _PARTITIONGROUPINGLIB_ = TLC_TRUE
+
+%function SLibIsPartitionGrouping() void
+  %% Only support MDS
+  %return LibIsDeploymentDiagram()
+%endfunction
+
+%function SLibGetNumPartitions() void
+  %if LibIsDeploymentDiagram()
+    %return SLibDeploymentGetNumPeriodicMappedEntities() + SLibDeploymentGetNumAperiodicTriggersAndTasks()
+  %endif
+  
+  %assert TLC_FALSE
+%endfunction
+
+%function SLibGetPidFromTid(tid) void
+  %if LibIsDeploymentDiagram()
+    %return SLibGetMDSPIDFromTid(tid)
+  %endif
+%endfunction
+
+%function SLibPartitionNeedContFcnDecl(pid)
+  %if !LibIsDeploymentDiagram()
+    %return TLC_FALSE
+  %endif
+  
+ %return SLibMDSTaskNeedFcnDecl(pid)
+  
+%endfunction
+
+%function SLibContFcnPartitionGrouping(fcnType) void
+  %return (fcnType == "Derivative" || ...
+    fcnType == "Derivatives" || ...
+    fcnType == "Projection" || ...
+    fcnType == "ForcingFunction" || ...
+    fcnType == "MassMatrix" || ...
+    fcnType == "ZeroCrossing") ...
+    && SLibIsPartitionGrouping()
+%endfunction
+
+%function SLibGetPIDFromBlock(blk, tid) void
+  %if ISFIELD(blk, "PID")
+    %assign blkTid = blk.Type == "SubSystem" ? blk.SubsystemTID : blk.TID
+    %if TYPE(blkTid) == "Vector"
+      %foreach idx = SIZE(blkTid, 1)
+        %if blkTid[idx] == tid || ...
+          (blkTid[idx] == 1 && tid == 0 && LibGetTID01EQ())
+          %return blk.PID[idx]
+        %endif
+      %endforeach
+    %elseif blkTid == tid || ...
+      (blkTid == 1 && tid == 0 && LibGetTID01EQ())
+      %return blk.PID
+    %endif
+  %endif
+  
+  %return -1
+%endfunction
+
+%function SLibPartitionNeedTIDArg(pid) void
+  %if SLibIsPartitionGrouping()
+    %return SLibMDSTaskIsSynthesized(pid)
+  %endif
+  
+  %return TLC_FALSE
+%endfunction
+
+%function SLibPartitionGetContStateDerivativeStruct()
+  %if LibIsDeploymentDiagram()
+    %return SLibDeploymentGetContStatesDerivativeStruct(NumSystems - 1, TLC_TRUE)
+  %endif
+%endfunction
+
+%function SLibPartitionGetMassMatricesVarName(pid) void
+  %if LibIsDeploymentDiagram()
+    %assign taskIdx = SLibDeploymentGetTaskIndexForComponent(pid, 0)
+    %if taskIdx < 0
+      %return ::tMassMatrixGlobal
+    %else 
+      %return SLibDeploymentGetTasksMassMatricesVarName(taskIdx)
+    %endif
+  %endif
+%endfunction
+
+%function SLibPartitionGroupingGetRTMVarName(pid, tid) void
+  %if LibIsDeploymentDiagram()
+    %assign taskIdx = SLibDeploymentGetTaskIndexForComponent(pid, tid)
+    %if taskIdx < 0
+      %return ::tSimStruct
+    %else 
+      %return "%<SLibDeploymentGetTasksRTMVarName()>[%<taskIdx>]"
+    %endif
+  %endif
+%endfunction
+
+%function SLibPartitionGroupingSystem(system) void
+  %% currently only root in deployment diagram is supported
+  %if LibIsDeploymentDiagram() && ISEQUAL(system.Type, "root")
+    %return TLC_TRUE
+  %endif
+  
+  %return TLC_FALSE
+%endfunction
+
+%endif %% _PARTITIONGROUPINGLIB_

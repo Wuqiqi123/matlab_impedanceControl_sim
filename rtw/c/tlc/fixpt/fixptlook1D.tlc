@@ -1,0 +1,735 @@
+%% 
+%% 
+%% 
+%%
+%% This file contains tlc code for generation of fixed point
+%% lookup tables
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+
+%%
+%% create variable to indicate that this file has already been loaded
+%%
+%if EXISTS("_FIXPTLOOK1D_") == 0
+%assign _FIXPTLOOK1D_ = 1
+
+
+%include "fixptlook.tlc"
+%include "fixptlook_support.tlc"
+%include "fixptlook_search.tlc"
+
+%% Function: FixPt_SearchAndInterpolateTrivial ==========================
+%%
+%function FixPt_SearchAndInterpolateTrivial(...
+           yLabel,yDT,...
+           xLabel,xDT,...
+           YData, yDataDT, yDataCategory,...
+           xBreakPointInfo,...
+           roundMode,satMode) Output
+  %%
+  %if !xBreakPointInfo.evenlySpaced || !ISEQUAL(xBreakPointInfo.spacingValue,1)
+    %%START_ASSERT
+    %<LibReportFatalError("Must have trivial spacing.")>
+    %%END_ASSERT
+  %endif
+  %%
+  %assign indexExpr = FixPt_IndexSearchTrivial(xLabel,xDT,xBreakPointInfo)
+  %%
+  %assign yDataIsComplex = FixPt_HelperVarIsComplex(YData, yDataCategory)
+  %%
+  %if yDataIsComplex
+    {
+      %<FixPt_uint_label> iLeft = %<indexExpr>;
+      
+      %<FixPt_HelperInterpolateOutputEqualsDataPoint("iLeft",...
+        yLabel,yDT,"variable",...                             
+        YData, yDataDT, yDataCategory,...
+        roundMode,satMode)>\                   
+    }
+  %else
+      %<FixPt_HelperInterpolateOutputEqualsDataPoint(indexExpr,...
+        yLabel,yDT,"variable",...                             
+        YData, yDataDT, yDataCategory,...
+        roundMode,satMode)>\                   
+  %endif
+%endfunction %% FixPt_SearchAndInterpolateTrivial
+
+    
+%% Function: FixPt_SearchAndInterpolateEven ==========================================
+%%
+%%
+%function FixPt_SearchAndInterpolateEven(...
+           yLabel,yDT, ...
+           xLabel,xDT, xBreakPointInfo, ...
+           YData, yDataDT, yDataCategory, ...
+           roundMode,satMode) Output
+  %%
+  %if !xBreakPointInfo.evenlySpaced
+    %%START_ASSERT
+    %<LibReportFatalError("Must be evenly spaced.")>
+    %%END_ASSERT
+  %endif
+  %%  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  %% Case of creating a function to do both search
+  %% and interpolation.
+  %%
+  %assign yDataIsComplex = FixPt_HelperVarIsComplex(YData, yDataCategory)
+  %%
+  %% Create a string to represent the utility
+  %%
+  %assign interpolateMethod = utilDecideInterpolateMethod(...
+                               yDT,yDataDT,xDT,xDT,...
+                               xBreakPointInfo.evenlySpaced,...
+                               xBreakPointInfo.spacingValue,...
+                               xBreakPointInfo.spacingIsPow2)
+  %%
+  %if interpolateMethod == interpolatePow2
+    %%
+    %assign spacingPow2Exp = xBreakPointInfo.spacingPow2Exp
+    %%
+    %assign utilityName = "LookUp" + "2e%<spacingPow2Exp>"
+    %assign utilityName = FixPt_UtilityMakeName(utilityName)
+    %%
+  %else
+    %%
+    %assign spacingPow2Exp = "%error Not Power of 2"
+    %assign spacingValue = xBreakPointInfo.spacingValue
+    %%
+    %assign utilityName = FixPt_UtilityMakeName("LookUpEven")
+    %%
+  %endif
+  %%
+  %if yDataIsComplex
+    %assign utilityName = utilityName + "Cx"
+  %endif
+  %%
+  %% identify current storage types
+  %%
+  %% should promote shorts and chars when possible to reduce
+  %% the variety of functions that are created
+  %% 
+  %assign utilityName = FixPt_UtilityNameAppendDTPair(utilityName,yDT,yDataDT)
+  %%
+  %% An attempt was madeto reduce the variety of lookup
+  %% functions that are produced.  The reduction was achieved by
+  %% bumping any inputs smaller than in int up to an int.  On
+  %% a machine like a pentium where C compilers define both
+  %% int and long to be 32 bits, this lead to overly complicated
+  %% code for lots of cases.  For a machine where int was half
+  %% the size of a long, the generated code might not be as 
+  %% complicated.
+  %%
+  %% For now this attempted optimization is Not done.
+  %% 
+  %assign utilityName = FixPt_UtilityNameAppendDT(utilityName,xDT)
+  %%
+  %assign utilityName = FixPt_UtilityNameAppendMode(utilityName,roundMode,satMode)
+  %%
+  %% END: Create a string to represent the utility
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %%
+  %% Output a call to the utility function
+  %%
+  %assign yDataAddr = FixPt_HelperGetRValuePtr("","",0,"",YData,yDataCategory)
+  %%
+  %%
+  %if yDataIsComplex
+    %assign y0Arg     = "(%<yDT.NativeType> *)(&(%<yLabel>))"
+    %assign y0DataArg = "(%<yDataDT.NativeType> *)(%<yDataAddr>)"
+  %else
+    %assign y0Arg     = "&(%<yLabel>)"
+    %assign y0DataArg = yDataAddr
+  %endif
+  %%
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %if interpolateMethod == interpolatePow2
+    %%
+    %<utilityName>( %<y0Arg>, %<y0DataArg>, %<xLabel>, %<xBreakPointInfo.valueLo>, %<xBreakPointInfo.indexHi>);
+    %%
+  %else
+    %%
+    %<utilityName>( %<y0Arg>, %<y0DataArg>, %<xLabel>, %<xBreakPointInfo.valueLo>, %<xBreakPointInfo.indexHi>, %<spacingValue>);
+    %%
+  %endif
+  %%
+  %% determine if the required utility has already been defined
+  %%   If it has not, then create the definition.
+  %%
+  %if !(ISFIELD(FixPtUtils,utilityName))
+    %%
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils,utilityName,1)
+
+    %<LibPushEmptyStackSharedUtils()>\
+    %%
+    %% determine the appropriate size for an unsigned type
+    %%
+    %assign typeForIndex  = utilUnsignedTypeFromDT(xDT)
+    %assign typeForAdjust = utilFloatOrUnsignedTypeFromDT(xDT)
+    %%
+
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% open a buffer to hold the utility definition
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %openfile utilityDef
+    %assign local_pY         = "pY"
+    %assign local_pYData     = "pYData"
+    %assign local_u0Label     = "u"
+    %assign local_uAdjLabel  = "uAdjusted"
+    %assign local_valueLo    = "valueLo"
+    %assign local_iHiLabel   = "iHi"
+    %assign local_spacing    = "uSpacing"
+    %%
+    %% create first line of utility macro or function
+    %%
+    %assign fcnAbstract =  "Lookup 1D Utility" + utilityName
+    %assign fcnName = utilityName
+    %assign fcnReturns = "void"
+    %assign fcnParams = "%<yDT.NativeType> *%<local_pY>, " + ...
+      "const %<yDataDT.NativeType> *%<local_pYData>, " + ...
+      "%<xDT.NativeType> %<local_u0Label>, " + ...
+      "%<xDT.NativeType> %<local_valueLo>, " + ...
+      "%<FixPt_uint_label> %<local_iHiLabel>"
+    %%
+    %if interpolateMethod != interpolatePow2
+      %assign fcnParams = fcnParams + ", " + ...
+        "%<xDT.NativeType> %<local_spacing>"
+      %%
+    %endif
+
+    %assign staticSpecifier = LibGetStaticStorageSpecifierIfNeeded()
+    %assign funcDecRoot = staticSpecifier + fcnReturns + " " + fcnName + "(" + fcnParams + ")"
+    %%
+    %openfile funcProto
+    %<funcDecRoot>;
+    %closefile funcProto
+    %%
+    %selectfile utilityDef 
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+      Abstract fcnAbstract; Category "utility"; GeneratedBy "fixptlook1D.tlc"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<funcDecRoot>
+    %%
+    %if yDataIsComplex
+      %assign yCategory     = "real pointer to complex"
+      %assign yDataCategory = "real pointer to complex"
+    %else
+      %assign yCategory     = "pointer"
+      %assign yDataCategory = "pointer"
+    %endif
+    %%
+    %assign local_iLeftLabel = "iLeft"
+    %%
+    {
+      if ( %<local_u0Label> <= %<local_valueLo> )
+      {
+        %<FixPt_HelperInterpolateOutputEqualsDataPoint(0,...
+          local_pY,     yDT,     yCategory,...                             
+        local_pYData, yDataDT, yDataCategory,...
+          roundMode,satMode)>\                   
+      }
+      else
+      {
+        %<typeForAdjust> %<local_uAdjLabel> = %<local_u0Label> - %<local_valueLo>;
+        %%
+        %if FixPt_DataTypeIsFloat(xDT)
+          %% Check that the floating point value that is about to be converted to an integer
+          %% index fits inside it. Then check the index against its limit.
+          %assign floatLimit = FEVAL("eval","[int2str(2^%<IntegerSizes.LongNumBits>) '.0']")
+          %if FixPt_DataTypeIsSingle(xDT)
+            %assign floatLimit = floatLimit + "f"
+          %endif
+          %%
+          %if interpolateMethod == interpolatePow2
+            %assign checkValue = "local_uAdjLabel"
+            %<typeForIndex> %<local_iLeftLabel> = (%<typeForIndex>)%<local_uAdjLabel> >> %<spacingPow2Exp>;
+          %else
+            %<typeForAdjust> tmpIdxLeft = %<local_uAdjLabel> / %<local_spacing>;
+            %assign checkValue = "tmpIdxLeft"
+            %<typeForIndex> %<local_iLeftLabel> = (%<typeForIndex>)tmpIdxLeft;
+          %endif
+          %%
+          %assign floatCheckStart = "(%<checkValue> >= %<floatLimit>) || ("
+          %assign floatCheckEnd = ")"
+        %else
+          %assign floatCheckStart = ""
+          %assign floatCheckEnd = ""
+          %%
+          %if interpolateMethod == interpolatePow2
+            %<typeForIndex> %<local_iLeftLabel> = %<local_uAdjLabel> >> %<spacingPow2Exp>;
+          %else
+            %<typeForIndex> %<local_iLeftLabel> = %<local_uAdjLabel> / %<local_spacing>;
+          %endif
+        %endif
+        %%
+        if ( %<floatCheckStart>%<local_iLeftLabel> >= %<local_iHiLabel>%<floatCheckEnd> )
+        {
+          %<FixPt_HelperInterpolateOutputEqualsDataPoint(local_iHiLabel,...
+            local_pY,     yDT,     yCategory,...                             
+          local_pYData, yDataDT, yDataCategory,...
+            roundMode,satMode)>\                   
+        }
+        else
+        {
+          %if yDataIsComplex
+            %assign numCase = 2
+          %else
+            %assign numCase = 1
+          %endif
+          %%
+          %switch interpolateMethod
+              %%
+            %case interpolateBigProduct
+              %%
+              %% handle the real and if nec the imag part
+              %% 
+              %foreach iCase = numCase
+                %%
+                %if yDataIsComplex
+                  %if iCase == 0
+                    %assign part = "real"
+                  %else
+                    %assign part = "imag"
+                  %endif
+                %else
+                  %assign part = ""
+                %endif
+                %%
+                %assign yLeftLabel = FixPt_HelperGetLValue(local_iLeftLabel,"",0,part, local_pYData, yDataCategory)
+                %%
+                %assign iRghtLabel = "((%<local_iLeftLabel>)+1)"    
+                %%
+                %assign yRghtLabel = FixPt_HelperGetLValue(iRghtLabel,      "",0,part, local_pYData, yDataCategory)
+                %%
+                %assign yAddrLabel = FixPt_HelperGetVarPtr("","",0,part,local_pY,yCategory)
+                %%
+                %assign xMinusXLeftLabel = "(%<local_uAdjLabel>-(%<local_iLeftLabel>*%<local_spacing>))"
+                %assign xMinusXLeftLabel = utilDownCastTempExpression(xDT,xMinusXLeftLabel)
+                %%
+                %<fxpInterpEvenBigProd(...
+                  yAddrLabel,             yDT, ...
+                  yLeftLabel, yRghtLabel, yDataDT,...
+                  xMinusXLeftLabel,       xDT,...
+                  local_spacing, ...
+                  roundMode,satMode)>\
+                %%
+              %endforeach
+              %break
+              %%
+            %case interpolateLambda
+            %case interpolatePow2
+              %%
+              %assign lambdaDT = fxpInterpolateGetLambdaDT( ...
+                yDT, yDataDT, xDT, xDT, ...
+                interpolateMethod == interpolatePow2, ...
+                spacingPow2Exp, ...
+                1 )
+              %%
+              %assign lambdaLabel = "lambda"
+              %%
+              %% declare variables
+              %%
+              {
+                %<lambdaDT.NativeType> %<lambdaLabel>;
+                %%
+                %% calc lambda
+                %%
+                %if interpolateMethod == interpolatePow2
+                  %%
+                  %<fxpInterpolateCalcLambdaPow2(...
+                    local_uAdjLabel,  xDT,...
+                    lambdaLabel,      lambdaDT,...
+                    spacingPow2Exp, ...
+                    roundMode,satMode)>\
+                  %%
+                %else
+                  %%
+                  %<fxpInterpolateCalcLambdaEven(...
+                    local_uAdjLabel,  xDT,...
+                    lambdaLabel,      lambdaDT,...
+                    local_spacing, ...
+                    local_iLeftLabel,...
+                    roundMode,satMode)>\
+                  %%
+                %endif              
+                %%
+                %% handle the real and if nec the imag part
+                %% 
+                %foreach iCase = numCase
+                  %%
+                  %if yDataIsComplex
+                    %if iCase == 0
+                      %assign part = "real"
+                    %else
+                      %assign part = "imag"
+                    %endif
+                  %else
+                    %assign part = ""
+                  %endif
+                  %%
+                  %assign yLeftLabel = FixPt_HelperGetLValue(local_iLeftLabel,"",0,part, local_pYData, yDataCategory)
+                  %%
+                  %assign iRghtLabel = "((%<local_iLeftLabel>)+1)"    
+                  %%
+                  %assign yRghtLabel = FixPt_HelperGetLValue(iRghtLabel,      "",0,part, local_pYData, yDataCategory)
+                  %%
+                  %assign curYLabel  = FixPt_HelperGetLValue("","",0,part, local_pY,yCategory)
+                  %%
+                  %<fxpInterpolateApplyLambda(...
+                    curYLabel,              yDT,...
+                    yLeftLabel, yRghtLabel, yDataDT,...
+                    lambdaLabel,            lambdaDT,...
+                    roundMode,satMode)>\
+                %endforeach
+              }
+              %break
+              %%
+            %default
+              %%START_ASSERT
+              %<LibReportFatalError("Unexpected interpolation method.")>
+	      %%END_ASSERT
+          %endswitch
+        }
+      }
+      %%
+      %% finish off utility define
+      %%
+      %selectfile utilityDef
+    }
+    %closefile utilityDef
+    %%
+    %<SLibAddMathIncludeForUtilsSourceCode(utilityDef)>
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif  %% definition of utility
+%endfunction  %% FixPt_SearchAndInterpolateEven
+
+
+
+%% Function: FixPt_SearchAndInterpolateUneven ==========================================
+%%
+%function FixPt_SearchAndInterpolateUneven(...
+                             yLabel,yDT,...
+                             xLabel,xDT,...
+                             YData, yDataDT, yDataCategory,...
+                             XData, xDataDT, xDataCategory,...
+                             roundMode,satMode) Output
+  %%
+  %<FixPt_CheckInputBreakpointDataTypes(xDT,xDataDT)>\
+  %%
+  %assign yDataIsComplex = FixPt_HelperVarIsComplex(YData, yDataCategory)
+  %%
+  %% Create a string to represent the utility
+  %%
+  %assign utilityName = FixPt_UtilityMakeName("LookUp")
+  %%
+  %if yDataIsComplex
+    %assign utilityName = utilityName + "Cx"
+  %endif
+  %%
+  %% identify current storage types
+  %%
+  %assign utilityName = FixPt_UtilityNameAppendDTPair(utilityName,yDT,yDataDT)
+  %%
+  %assign utilityName = FixPt_UtilityNameAppendDTPair(utilityName,xDT,xDataDT)
+  %%
+  %assign utilityName = FixPt_UtilityNameAppendMode(utilityName,roundMode,satMode)
+  %%
+  %% END: Create a string to represent the utility
+  %%
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %% Output a call to the utility function
+  %%
+  %assign yDataAddr = FixPt_HelperGetRValuePtr("","",0,"",YData,yDataCategory)
+  %%
+  %assign xDataAddr = FixPt_HelperGetRValuePtr("","",0,"",XData,xDataCategory)
+  %%
+  %assign iHi = FixPt_HelperVarHiIndex(XData, xDataCategory)
+  %%
+  %if yDataIsComplex
+    %assign y0Arg     = "(%<yDT.NativeType> *)(&(%<yLabel>))"
+    %assign y0DataArg = "(%<yDataDT.NativeType> *)(%<yDataAddr>)"
+  %else
+    %assign y0Arg     = "&(%<yLabel>)"
+    %assign y0DataArg = yDataAddr
+  %endif
+  %%
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %<utilityName>( %<y0Arg>, %<y0DataArg>, %<xLabel>, %<xDataAddr>, %<iHi>);
+  %%
+  %% determine if the required utility has already been defined
+  %%   If it has not, then create the definition.
+  %%
+  %if !(ISFIELD(FixPtUtils,utilityName))
+    %%
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils,utilityName,1)
+
+    %<LibPushEmptyStackSharedUtils()>\
+    
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% open a buffer to hold the utility definition
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %openfile utilityDef
+    %assign local_pY         = "pY"
+    %assign local_pYData     = "pYData"
+    %assign local_u0Label     = "u"
+    %assign local_pUData     = "pUData"
+    %assign local_iHiLabel   = "iHi"
+    %assign local_spacing    = "uSpacing"
+    %%
+    %% create first line of utility macro or function
+    %%
+    %assign fcnAbstract = "Lookup Utility " + utilityName
+    %assign fcnName = utilityName
+    %assign fcnReturns = "void"
+    %assign fcnParams = "%<yDT.NativeType> *%<local_pY>, " + ...
+      "const %<yDataDT.NativeType> *%<local_pYData>, " + ...
+      "%<xDT.NativeType> %<local_u0Label>, " + ...
+      "const %<xDataDT.NativeType> *%<local_pUData>, " + ...
+      "%<FixPt_uint_label> %<local_iHiLabel>"
+    
+    %assign staticSpecifier = LibGetStaticStorageSpecifierIfNeeded()
+    %assign funcDecRoot = staticSpecifier + fcnReturns + " " + fcnName + "(" + fcnParams + ")"
+    %%
+    %openfile funcProto
+    %<funcDecRoot>;
+    %closefile funcProto
+    %%
+    %selectfile utilityDef
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+      Abstract fcnAbstract; Category "utility"; GeneratedBy "fixptlook1D.tlc"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<funcDecRoot>
+    %%
+    %if yDataIsComplex
+      %assign yCategory     = "real pointer to complex"
+      %assign yDataCategory = "real pointer to complex"
+    %else
+      %assign yCategory     = "pointer"
+      %assign yDataCategory = "pointer"
+    %endif
+    %%
+    %assign xDataCategory = "pointer"
+    {
+      %assign iLeftLabel = "iLeft"
+      %assign iRghtLabel = "iRght"
+      %assign searchMethod = "Below"
+      %assign iToUseForOutput = iLeftLabel
+      %%
+      %<FixPt_uint_label> %<iLeftLabel>;
+      %<FixPt_uint_label> %<iRghtLabel>;
+      %%
+      %% find indices
+      %%
+      %% NOTE, there is NO scalar expansion so having the search
+      %% inside the roll-loop is NOT inefficient.
+      %%
+      %<FixPt_IndexSearchUneven(...
+        iLeftLabel,iRghtLabel,...
+        local_u0Label, xDT,...
+        local_pUData, xDataDT, ...
+        local_iHiLabel,...
+        searchMethod)>\
+      %%
+      %if yDataIsComplex
+        %assign numCase = 2
+      %else
+        %assign numCase = 1
+      %endif
+      %%
+      %assign interpolateMethod = utilDecideInterpolateMethodUneven(yDT,yDataDT,xDT,xDataDT)
+      %%
+      %switch interpolateMethod
+          %%
+        %case interpolateBigProduct
+          %%
+          %% handle the real and if nec the imag part
+          %%
+          %foreach iCase = numCase
+            %%
+            %if yDataIsComplex
+              %if iCase == 0
+                %assign part = "real"
+              %else
+                %assign part = "imag"
+              %endif
+            %else
+              %assign part = ""
+            %endif
+            %%
+            %assign yLeftLabel = FixPt_HelperGetRValue( iLeftLabel, "", 0, part, local_pYData,  yDataCategory)
+            %%
+            %assign yRghtLabel = FixPt_HelperGetRValue( iRghtLabel, "", 0, part, local_pYData,  yDataCategory)
+            %%
+            %assign yAddrLabel = FixPt_HelperGetVarPtr( "",         "", 0, part, local_pY,      yCategory)
+            %%
+            %assign xLeftLabel = FixPt_HelperGetRValue( iLeftLabel, "", 0, "",   local_pUData,  xDataCategory)
+            %%
+            %assign xRghtLabel = FixPt_HelperGetRValue( iRghtLabel, "", 0, "",   local_pUData,  xDataCategory)
+            %%
+            %<fxpInterpUnevenBigProd(...
+              yAddrLabel,             yDT, ...
+              yLeftLabel, yRghtLabel, yDataDT, ...
+              local_u0Label,          xDT,...
+              xLeftLabel, xRghtLabel, xDataDT, ...
+              roundMode,satMode)>\
+          %endforeach
+          %%
+          %break
+          %%
+        %case interpolateLambda
+          %%
+          %assign lambdaDT = fxpInterpolateGetLambdaDTUneven( ...
+            yDT, yDataDT, xDT, xDataDT, ...
+            1 )
+          %%
+          %assign lambdaLabel = "lambda"
+          %%
+          %% declare variables
+          %%
+          {
+            %<lambdaDT.NativeType> %<lambdaLabel>;
+            %%
+            %% calc lambda
+            %%
+            %assign xLeftLabel = FixPt_HelperGetRValue( iLeftLabel, "", 0, "", local_pUData,  xDataCategory)
+            %%
+            %assign xRghtLabel = FixPt_HelperGetRValue( iRghtLabel, "", 0, "", local_pUData,  xDataCategory)
+            %%
+            %<fxpInterpolateCalcLambdaUneven( ...
+              local_u0Label,          xDT,...
+              lambdaLabel,            lambdaDT,...
+              xLeftLabel, xRghtLabel, xDataDT, ...
+              roundMode,satMode)>\
+            %%
+            %% handle the real and if nec the imag part
+            %%
+            %foreach iCase = numCase
+              %%
+              %if yDataIsComplex
+                %if iCase == 0
+                  %assign part = "real"
+                %else
+                  %assign part = "imag"
+                %endif
+              %else
+                %assign part = ""
+              %endif
+              %%
+              %assign yLeftLabel = FixPt_HelperGetRValue( iLeftLabel,     "", 0, part, local_pYData,  yDataCategory)
+              %%
+              %assign yRghtLabel = FixPt_HelperGetRValue( iRghtLabel, "", 0, part, local_pYData,  yDataCategory)
+              %%
+              %assign curYLabel = FixPt_HelperGetLValue("","", 0, part, local_pY,yCategory)
+              %%
+              %<fxpInterpolateApplyLambda(...
+                curYLabel,              yDT,...
+                yLeftLabel, yRghtLabel, yDataDT,...
+                lambdaLabel,            lambdaDT,...
+                roundMode,satMode)>\
+            %endforeach
+            %%
+          }
+          %break
+          %%
+        %default
+          %%START_ASSERT
+          %<LibReportFatalError("Unexpected interpolation method.")>
+	  %%END_ASSERT
+      %endswitch
+      %%
+      %% finish off utility define
+      %%
+      %selectfile utilityDef
+    }
+    %closefile utilityDef
+    %%
+    %<SLibAddMathIncludeForUtilsSourceCode(utilityDef)>
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif  %% definition of utility
+%endfunction  %% FixPt_SearchAndInterpolateUneven
+
+
+
+%% Function: FixPt_SearchAndInterpolate ==========================================
+%%
+%function FixPt_SearchAndInterpolate(...
+  yLabel,yDT,...
+  xLabel,xDT,...
+  YData, yDataDT, yDataCategory,...
+  XData, xDataDT, xDataCategory, xDataBreakPointInfo,...
+  roundMode,satMode) Output
+  %%
+  %assign searchMethod = utilDecideSearchMethod(xDT,xDataDT,xDataBreakPointInfo)
+  %%
+  %switch searchMethod
+    %%
+    %case searchTrivial
+      %%
+      %%START_ASSERT
+      %%
+      %% Currently, all blocks catch the trivial case, and avoid calling
+      %% the interpolation routine.
+      %%
+      %<FixPt_SearchAndInterpolateTrivial(...
+        yLabel,yDT,...
+        xLabel,xDT,...
+        YData, yDataDT, yDataCategory,...
+        xDataBreakPointInfo,...
+        roundMode,satMode)>\
+      %break
+      %%END_ASSERT
+      %%
+    %case searchPow2
+    %case searchEven
+      %%
+      %assign xBreakPointInfo = FixPt_BreakPointInfoCast(xDataBreakPointInfo,xDataDT,xDT)
+      %%
+      %<FixPt_SearchAndInterpolateEven(...
+        yLabel,yDT,...
+        xLabel,xDT, xBreakPointInfo,...
+        YData, yDataDT, yDataCategory,...
+        roundMode,satMode)>\
+      %break
+      %%
+    %case searchUneven
+      %%
+      %<FixPt_SearchAndInterpolateUneven(...
+        yLabel,yDT,...
+        xLabel,xDT,...
+        YData, yDataDT, yDataCategory,...
+        XData, xDataDT, xDataCategory,...
+        roundMode,satMode)>\
+      %break
+      %%
+    %default
+      %%START_ASSERT
+      %<LibReportFatalError("Unknown search method.")>
+      %%END_ASSERT
+  %endswitch
+%endfunction  %% FixPt_SearchAndInterpolate
+
+
+%endif %% _FIXPTLOOK1D_

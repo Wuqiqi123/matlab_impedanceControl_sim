@@ -1,0 +1,49 @@
+
+%%========================================================
+%% File : dumpcodemetrics.tlc
+%%
+%%========================================================
+
+%if EXISTS("_DUMPCODEMETRICS_") == 0
+%assign _DUMPCODEMETRICS_ = 1
+
+%function addToBackupCodeMetrics(system, CGIRFcnName, newFcnName, tid) Output
+%if !ISEQUAL(::CompiledModel.ConfigSet.GenerateCodeMetricsReport, 1) || FEVAL("slfeature", "PolySpaceForCodeMetrics") != 2 
+  %return
+%endif
+%assign module = ::CompiledModel.RTWCGModules.RTWCGModule[system.CGIRModuleIdx]
+%% assert this check
+%if !EXISTS(module.TLCFileName)
+  %return
+%endif
+%assign fcnFileName = system.SystemFileName
+%assign tlcFileName = module.TLCFileName + "_" + CGIRFcnName
+%if !ISEQUAL(tid, "")
+  %assign tlcFileName = tlcFileName + "_TID"
+  %assign tlcFileName = tlcFileName + STRING(tid)
+%endif
+%if ::CompiledModel.ConfigSet.TargetLang == "C"
+  %assign fcnFileName = fcnFileName + ".c"
+%else
+  %return
+%endif
+%openfile fileName = "useBackupCodeMetrics.m", "a"
+%% Set new function name
+%if ISEQUAL(system.Type, "root")
+info.FcnInfo(TLCFileNameToFcnIdxMap('%<tlcFileName>')).Name = '%<newFcnName>';
+%endif
+%% Set file idx for function
+if (~isKey(fileNameToFileIdxMap, '%<fcnFileName>'))
+    tempFileInfo = struct('Name', '%<fcnFileName>', ...  
+    'Idx', numel(info.FileInfo) + 1, ...
+    'IncludedIdx', zeros(0, 1, 'uint32'), 'IsIncludedFile', 0, ...
+    'IsSystemFile', 0, 'NumCommentLines', 0, 'NumTotalLines', 0, ...
+    'NumCodeLines', 0);
+    info.FileInfo = [info.FileInfo, tempFileInfo];
+    fileNameToFileIdxMap('%<fcnFileName>') = numel(info.FileInfo);
+end
+info.FcnInfo(TLCFileNameToFcnIdxMap('%<tlcFileName>')).FileIdx = ...
+fileNameToFileIdxMap('%<fcnFileName>');
+%closefile fileName
+%endfunction
+%endif %%_DUMPCODEMETRICS_

@@ -1,0 +1,920 @@
+%% ============================================================================
+%% File : ertmdlreftiming.tlc
+%%
+%% Abstract:
+%%   This is the system library file for code generation's Embedded-C code format.
+%%
+%% 
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%%  For more information, see 
+%%             FcnERTIsSampleHit, 
+%%             LibIsSampleHit, 
+%%             LibIsSpecialSampleHit
+%%
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_ERT_MODELREF_TIMING_") == 0
+%assign _ERT_MODELREF_TIMING_ = 1
+
+%function SLibComputeNumTaskTicks(period, stepSize) void
+  %assign nTaskTicks = period / stepSize + 0.5
+  %assign nTaskTicks = CAST("Number",FEVAL("floor", nTaskTicks))
+  %return nTaskTicks
+%endfunction
+
+%% Local function used in this file
+%function FcnComputeTaskTickLimit(tidIdx) void
+  
+  %assign stepSize = SLibGetFundamentalStepSize()
+  %assign period = SampleTime[tidIdx].PeriodAndOffset[0]
+  %if tidIdx == 0
+    %assign nTaskTicks = 1
+  %elseif SLibControllableRateTID(tidIdx)
+    %assign ctrlRateNumTicks = RTMGet("CtrlRateNumTicksToNextHit")
+    %assign ctrlRateIdx = SampleTime[tidIdx].CtrlRateInstanceIndex
+    %assign ctrlRateRatio = SampleTime[tidIdx].CtrlRateBaseRatioToFundmentalStepSize
+    %assign nTaskTicks = "(%<ctrlRateNumTicks>[%<ctrlRateIdx>]*%<ctrlRateRatio>-1)"
+  %else
+    %assign nTaskTicks = SLibComputeNumTaskTicks(period, stepSize) 
+  %endif
+  %return nTaskTicks
+%endfunction
+
+
+%% Local function used in this file
+%function FcnComputeTaskTickOffset(tidIdx) void
+  %assign stepSize = SLibGetFundamentalStepSize()
+  %assign period = SampleTime[tidIdx].PeriodAndOffset[0]
+  %assign offset = SampleTime[tidIdx].PeriodAndOffset[1]
+  %if SLibControllableRateTID(tidIdx) ||  offset == 0.0
+    %assign nOffsetTicks = 0
+  %else
+    %assign nOffsetTicks = (period - offset)/stepSize + 0.5
+    %assign nOffsetTicks = CAST("Number",FEVAL("floor", nOffsetTicks))
+  %endif
+  %return nOffsetTicks
+%endfunction
+
+
+%function FcnInitializeSampleTimeOffsets() 
+  %assert !IsModelReferenceTarget()
+  %openfile retBuff
+  %assign commentAdded = TLC_FALSE
+  %foreach tidIdx = NumRuntimeExportedRates
+    %if SLibControllableRateTID(tidIdx)
+      %assign ctrlRateNumTicks = RTMGet("CtrlRateNumTicksToNextHit")
+      %assign ctrlRateIdx = SampleTime[tidIdx].CtrlRateInstanceIndex
+      %assign nTaskTicks = "%<ctrlRateNumTicks>[%<ctrlRateIdx>]"
+      %<nTaskTicks> = 1;
+    
+      %if SampleTime[tidIdx].NeedFloatTime == "yes"
+        %assert  SLibIsERTCodeFormat()           
+        %<LibGetTaskTime(tidIdx)> = 0;
+      %endif
+    %else
+      %assign offset = FcnComputeTaskTickOffset(tidIdx)    
+      %if offset != 0
+        %if tidIdx == 0
+          %<LibReportFatalError("Base rate cannot have an offset")>
+        %else
+          %if !commentAdded
+            /* initialize sample time offsets */
+            %assign addedComment = TLC_TRUE
+          %endif
+          %if RTMTaskCountersIsReqFcn()
+            %assign cTick   = RTMGet("TaskCounters")
+            %assign counter = "%<cTick>.%<SLibERTMultiRateCounterField(tidIdx)>"
+            %<counter> = %<offset>; %<LibTaskComment(tidIdx)>
+          %endif
+          %if SampleTime[tidIdx].NeedFloatTime == "yes"
+            %assert  SLibIsERTCodeFormat()
+            %<LibGetTaskTime(tidIdx)> = %<SampleTime[tidIdx].PeriodAndOffset[1]>;          
+          %endif
+        %endif
+      %endif
+    %endif
+  %endforeach
+  
+  %% Set the values in the CtrlRateMdlRefTiming in the top model
+  %if !LibIsDeploymentDiagram() && ...
+    !IsModelReferenceTarget() && ...
+    RTMCtrlRateMdlRefTimingIsReqFcn()
+    %assign ctrlRateTiming = RTMGet("CtrlRateMdlRefTiming")
+    %<ctrlRateTiming>.firstCtrlRateTID = %<SLibFirstControllableRateTID()>;
+    %assign numTicksToNextHit = RTMGet("CtrlRateNumTicksToNextHit")
+    %<ctrlRateTiming>.numTicksToNextHitForCtrlRate = %<numTicksToNextHit>;    
+  %endif
+  
+  %closefile retBuff
+  %return retBuff
+%endfunction
+
+%% Function: SLibGenERTTaskCountersSubStruct ================================== 
+%% Abstract:
+%%   Generate the substructure in the real-time model rtM.Timing.Counters
+%%
+%% Local function used in this file
+%function SLibGenERTTaskCountersSubStruct() void
+  %assign dtIdx = SampleTime[0].TaskCounterDataTypeId
+  %assign dtype = LibGetDataTypeNameFromId(dtIdx)
+  %openfile tmpFcnBuf
+  struct {
+    %<dtype> TID[%<NumRuntimeExportedRates>];
+    %if  ::CompiledModel.SuppressMultiTaskScheduler && ...
+      !::CompiledModel.GenerateSampleERTMain
+      %<dtype> cLimit[%<NumRuntimeExportedRates>];
+    %endif
+  } \
+  %closefile tmpFcnBuf
+  %return tmpFcnBuf
+%endfunction
+  
+
+%function FcnResetCTicksComment() void
+  %assign haveOffset = 0
+  %foreach idx = NumRuntimeExportedRates
+    %if SampleTime[idx].PeriodAndOffset[1] != 0.0 && ...
+      !SLibControllableRateTID(idx)
+      %assign haveOffset = 1
+      %break
+    %endif
+  %endforeach
+  %openfile txt
+
+  /* Compute which subrates run during the next base time step.  Subrates
+  * are an integer multiple of the base rate counter.  Therefore, the subtask
+  * counter is reset when it reaches its limit (zero means run).
+  %if haveOffset
+    *
+    * Sample time offsets are handled by priming the counter with the
+    * appropriate non-zero value in the model's initialization function.
+  %endif
+  */
+  %closefile txt
+  %return txt
+%endfunction
+
+%% Local function used in this file
+
+%function UpdateRateTransitionFlagsWhenSuppressMultiTaskScheduler(tid) 
+  %assign needUpdateRTFlags = SLibIsERTCodeFormat() && SuppressMultiTaskScheduler 
+  %if !needUpdateRTFlags
+    %return ""
+  %endif
+  %openfile retBuf
+  %foreach idx = NumRuntimeExportedRates - tid - 1
+    %assign j = idx + tid + 1
+    %if !IsModelReferenceTarget() && ...
+      SLibGetNeedRateInteraction(tid, j)
+      %assign cTick = RTMGet("TaskCounters")
+      %assign shMat = RTMGet("PerTaskSampleHits")
+      %assign limit = FcnComputeTaskTickLimit(j)/FcnComputeTaskTickLimit(tid)
+      %<SLibAddTIDtoAccessTIDList(...
+        System[NumSystems-1].Interface.RTMArgDef,::BlockFcn,"",tid)>
+      %assign period = ::CompiledModel.SampleTime[tid].PeriodAndOffset[0]
+      %assign offset = ::CompiledModel.SampleTime[tid].PeriodAndOffset[1]
+      %assign s_period = ::CompiledModel.SampleTime[j].PeriodAndOffset[0]
+      %assign s_offset = ::CompiledModel.SampleTime[j].PeriodAndOffset[1]
+      /* Update the flag to indicate when data transfers from 
+      *  Sample time: [%<period>s, %<offset>s] to Sample time: [%<s_period>s, %<s_offset>s]  */
+      %if SLibModelHierarchyContainsNoninlinedSfcn() || GenerateGRTWrapper
+        %<RTMGet("PerTaskSampleHitsPtr")>[%<j + tid*NumRuntimeExportedRates>] = ...
+          (%<shMat>.%<SLibERTMultiRateTimingField(j,tid)> == 0);
+      %endif 
+      %if HasModelReferenceBlocks() 
+        %<shMat>.b_%<SLibERTMultiRateTimingField(j,tid)> = ...
+          (%<shMat>.%<SLibERTMultiRateTimingField(j,tid)> == 0);
+      %endif
+      (%<shMat>.%<SLibERTMultiRateTimingField(j,tid)>)++;
+      if ((%<shMat>.%<SLibERTMultiRateTimingField(j,tid)>) > %<limit-1>) {
+        %<shMat>.%<SLibERTMultiRateTimingField(j,tid)> = 0;
+      }
+      
+    %endif
+  %endforeach
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%function UpdateRateTransitionFlagsHelper(ss, tid, skipMajorTimeCheck) 
+  %openfile tmpBuf
+  %if (SLibIsERTCodeFormat() && SuppressMultiTaskScheduler) && ...
+    (IsModelReferenceBaseSys(ss) || ss.SystemIdx == NumSystems-1)
+    %if FixedStepOpts.TID01EQ 
+      %if ISEQUAL(tid, 0) 
+        %<UpdateRateTransitionFlagsWhenSuppressMultiTaskScheduler(0)>
+        %<UpdateRateTransitionFlagsWhenSuppressMultiTaskScheduler(1)>
+      %elseif ISEQUAL(tid, 1) 
+        %% do nothing
+      %else
+        %<UpdateRateTransitionFlagsWhenSuppressMultiTaskScheduler(tid)>
+      %endif
+    %else
+      %<UpdateRateTransitionFlagsWhenSuppressMultiTaskScheduler(tid)>
+    %endif
+  %endif
+  %closefile tmpBuf
+  
+  %openfile retBuf
+  %if !WHITE_SPACE(tmpBuf)
+    %if !skipMajorTimeCheck && (tid == 0) && (NumContStates > 0)
+      if (%<RTMIs("MajorTimeStep")>) {
+        %<tmpBuf>
+      }    
+    %else
+      %<tmpBuf>
+    %endif
+  %endif
+  %closefile retBuf
+  
+  %return retBuf
+%endfunction
+
+%function FcnScheduleRateTransitions() Output
+  %if ::CompiledModel.RequireMultiRateSampleHits
+    /* To ensure a deterministic data transfer between two rates,
+    * data is transferred at the priority of a fast task and the frequency
+    * of the slow task.  The following flags indicate when the data transfer
+    * happens.  That is, a rate interaction flag is set true when both rates
+    * will run, and false otherwise.
+    */
+  %endif
+  %assign cTick = RTMGet("TaskCounters")
+  %assign shMat = RTMGet("PerTaskSampleHits")
+  %foreach i = NumRuntimeExportedRates
+    %openfile tmpFcnBuf
+    %assign str = ""
+    %assign comma = ""
+    %assign plural = -1
+    %foreach j = NumRuntimeExportedRates
+      %if SLibGetNeedRateInteraction(i,j)
+        %<shMat>.%<SLibERTMultiRateTimingField(j,i)> = ...
+          (%<cTick>.%<SLibERTMultiRateCounterField(j)> == 0);
+        %assign str = str + "%<comma>%<j>"
+	%assign comma = ", "
+	%assign plural = plural + 1
+	%if SLibModelHierarchyContainsNoninlinedSfcn() || GenerateGRTWrapper
+	  /* update PerTaskSampleHits matrix for non-inline sfcn */
+	  %<RTMGet("PerTaskSampleHitsPtr")>[%<j + i*NumRuntimeExportedRates>] = ...
+	    %<shMat>.%<SLibERTMultiRateTimingField(j,i)>;
+	%endif
+      %endif
+    %endforeach
+    %closefile tmpFcnBuf
+      
+    %if !WHITE_SPACE(tmpFcnBuf)
+      /* tid %<i> shares data with slower tid rate%<plural?"s":"">: %<str> */
+      %if i == 0
+	%<tmpFcnBuf>\
+      %else
+	if (%<cTick>.%<SLibERTMultiRateCounterField(i)> == 0) {
+	  %<tmpFcnBuf>\
+	}
+      %endif
+    %endif
+  %endforeach
+%endfunction
+
+
+%% Local function used in this file
+%%   This routine returns a boolean indicating whether the sub-rate code
+%%   is empty (minus comments).  It returns 'true' if the sub-rate code
+%%   is not empty and returns 'false' if it is empty.
+%function FcnScheduleSubRates() Output
+  %assign cTick = RTMGet("TaskCounters")
+  %<FcnResetCTicksComment()>\
+  %openfile buff
+  %% To be consistent with Simulink, Multitasking doesn't udpate
+  %% sampleHit array
+  %assign needSampleHit = (SLibModelHierarchyContainsNoninlinedSfcn() || GenerateGRTWrapper) && SLibSingleTasking()
+  %foreach idx = NumRuntimeExportedRates - 1
+    %assign i = idx + 1
+    %assign counter = "%<cTick>.%<SLibERTMultiRateCounterField(i)>"
+    %assign limit = FcnComputeTaskTickLimit(i)
+    %if TYPE(limit) == "Number" 
+      %assign limit = limit - 1
+    %endif
+    %if  TYPE(limit) != "Number" || limit > 0
+      (%<counter>)++;
+      if ((%<counter>) > %<limit>) { %<LibTaskComment(i)>
+         %<counter> = 0;
+      } 
+      %% Scheduler is called at the end of code current step.
+      %% SampleHit falgs will be used by subrate in next step.
+      %% Need update after counter increments for next step.
+      %if needSampleHit
+        %assert SLibSingleTasking() 
+        %<RTMGet("SampleHitPtr")>[%<i>]  = (%<counter> == 0);
+      %endif
+    %endif
+  %endforeach
+  %closefile buff
+  %<buff>
+  %return !WHITE_SPACE(buff)
+%endfunction
+
+%% Function: SLibERTMultiRateTimingField =======================================
+%% Abstract:
+%%   Generate the field name for rtM.Timing.RateInteraction.TID%<i>_%<j>
+%%
+%function SLibERTMultiRateTimingField(slowTID,fastTID) void
+  %if TYPE(%<slowTID>) != "Number" || TYPE(%<fastTID>) != "Number"
+    %assign errTxt = "tid values must be integers: %<TYPE(slowTID)>, " ...
+      "%<slowTID>, TYPE(fastTID)>, %<fastTID>"
+    %<LibReportFatalError(errTxt)>
+  %endif
+  %return "TID%<fastTID>_%<slowTID>"
+%endfunction
+  
+%% Function: SLibERTMultiRateCounterField ======================================
+%% Abstract:
+%%   Generate the field name for rtM.Timing.TaskCounters.TID[%<tid>]
+%%
+%function SLibERTMultiRateCounterField(tid) void
+  %return "TID[%<tid>]"
+%endfunction
+  
+%% Function: SLibGenERTRateInteractionSubStruct =================================
+%% Abstract:
+%%   Generate the substructure in the real-time model rtM.Timing.RateInteraction
+%%
+%function SLibGenERTRateInteractionSubStruct() void
+  %assign dtIdx = SuppressMultiTaskScheduler ? ...
+    SampleTime[0].TaskCounterDataTypeId : tSS_BOOLEAN  
+  %assign dtype = LibGetDataTypeNameFromId(dtIdx)
+  %openfile tmpFcnBuf
+    %foreach i = NumRuntimeExportedRates
+      %foreach j = NumRuntimeExportedRates
+	%if SLibGetNeedRateInteraction(i,j)
+	  %<dtype> %<SLibERTMultiRateTimingField(j,i)>;
+          %if SuppressMultiTaskScheduler && ...
+            HasModelReferenceBlocks()
+            %<LibGetDataTypeNameFromId(tSS_BOOLEAN)> b_%<SLibERTMultiRateTimingField(j,i)>;
+          %endif
+	%endif
+      %endforeach
+    %endforeach
+  %closefile tmpFcnBuf
+
+  %if !WHITE_SPACE(tmpFcnBuf)
+    %openfile retVal
+    struct {
+      %<tmpFcnBuf>\
+    } \
+    %closefile retVal
+  %else
+    %assign retVal = ""
+  %endif
+
+  %return retVal
+%endfunction
+
+
+%function FcnGenerateEventsForThisBaseRateFcn() Output
+  %assign prototype = ""
+  %openfile buff
+  %if !SLibSingleTasking() && !SuppressSetEventsForThisBaseRateFcn && !SLibIsExportFcnDiagram()
+    %assert(!IsModelReferenceTarget())
+    %if GenerateGRTWrapper
+      %assign fcnName = "rt_SimUpdateDiscreteEvents"
+      %if UsingMalloc
+        %assign tmpfcnName = "_%<fcnName>"
+        %assign fcnParams = ["void  *pModel,", ...
+          "int_T  rtmNumSampTimes, ", ...
+          "void  *rtmTimingData, ", ...
+          "int_T  *rtmSampleHitPtr, ", ...
+          "int_T  *rtmPerTaskSampleHits"]
+      %else
+         %assign tmpfcnName = fcnName
+         %assign fcnParams = ["int_T  rtmNumSampTimes,", ...
+           "void  *rtmTimingData,",...
+           "int_T  *rtmSampleHitPtr,",...
+           "int_T  *rtmPerTaskSampleHits"]
+      %endif                         
+      %assign fcnReturns = "time_T"
+      %openfile prototype
+      %<fcnReturns> %<tmpfcnName>(
+      %foreach idx = SIZE(fcnParams, 1)
+        %<fcnParams[idx]>\
+      %endforeach
+      )
+      %closefile prototype 
+      %assign fcnReturns = "%<SLibGetGRTWrapperLinkage()> %<fcnReturns>"
+      %createrecord fcnRec {Name tmpfcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+        Category "model"; GeneratedBy "ertmdlreftiming.tlc"; Type "Update"}
+      %<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<SLibGetFcnMemSecPragma(tmpfcnName, "MemSecFuncExecute", "Pre")>\
+      %<SLibGetGRTWrapperLinkage()> %<prototype>
+      {
+        %if UsingMalloc
+          %<::tSimStructType>* %<::tSimStruct> = (%<tSimStructType>*) pModel;
+        %endif
+        %foreach idx = NumRuntimeExportedRates -1
+	  rtmSampleHitPtr[%<idx+1>] = %<RTMTaskRunsThisBaseStep(idx+1)>;
+          %if SuppressMultiTaskScheduler
+            %<RTMUpdateTaskCounter(idx+1)>
+          %endif
+	%endforeach
+        %<SLibUnusedParameter("rtmNumSampTimes")>
+        %<SLibUnusedParameter("rtmTimingData")>
+        %<SLibUnusedParameter("rtmPerTaskSampleHits")>
+	return(-1);
+      }
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %elseif !InlineSetEventsForThisBaseRateFcn
+      %assign fcnName = "%<Name>_SetEventsForThisBaseStep"    
+      %openfile fcnAbstract
+Set which subrates need to run this base step (base rate always runs).
+      %if (TargetOS == "BareBoardExample") || (TargetOS == "NativeThreadsExample")
+This function must be called prior to calling the model step function
+in order to "remember" which rates need to run this base step.  The
+buffering of events allows for overlapping preemption.
+      %endif
+      %closefile fcnAbstract
+
+      %assign fcnReturns = "void"
+      %if MultiInstanceERTCode 
+        %assign fcnParams = "boolean_T *eventFlags, %<::tSimStructType> *const %<::tSimStruct>"
+      %else
+        %assign fcnParams = "boolean_T *eventFlags"
+      %endif
+
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "model"; GeneratedBy "ertmdlreftiming.tlc"; Type "SetEvent"}
+      %<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\      
+      %assign prototype = "%<fcnReturns> %<fcnName>(%<fcnParams>)"
+      %<prototype>
+      {
+        /* Task runs when its counter is zero, computed via rtmStepTask macro */
+        %assign firstSubrateTID = 1 + FixedStepOpts.TID01EQ
+        %foreach idx = NumRuntimeExportedRates - firstSubrateTID
+          %assign flags_idx = idx + firstSubrateTID
+          eventFlags[%<flags_idx>] = ((boolean_T)%<RTMTaskRunsThisBaseStep(flags_idx)>);
+          %if SuppressMultiTaskScheduler
+            %<RTMUpdateTaskCounter(flags_idx)>
+          %endif
+        %endforeach
+      }
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %endif
+  %endif
+  %closefile buff
+  %% dump prototype in header file 
+  %if !WHITE_SPACE(prototype)
+    %openfile prototypeBuf
+    /* External function called from main */
+    %if ::GenCPP
+      #ifdef __cplusplus
+      extern "C" {
+      #endif
+    %endif
+    
+    %if UsingMalloc && GenerateGRTWrapper
+      /* Backward compatibility macro */
+      #ifdef rt_SimUpdateDiscreteEvents
+      #undef rt_SimUpdateDiscreteEvents
+      #endif
+      #ifdef _RTW_COMBINE_MULTIPLE_MODELS
+         #define rt_SimUpdateDiscreteEvents(x1,x2,x3,x4) rtmiDiscreteEvents(rtmcGetRTWRTModelMethodsInfo(rtmC),(x1),(x2),(x3),(x4))
+      #else
+         #define rt_SimUpdateDiscreteEvents(x1,x2,x3,x4) rtmiDiscreteEvents(rtmGetRTWRTModelMethodsInfo(S),(x1),(x2),(x3),(x4))
+      #endif
+    %else
+      %<LibExternInFcnDecls()>%<prototype>;
+    %endif
+
+    %if ::GenCPP
+      #ifdef __cplusplus
+      }
+      #endif
+    %endif
+    %closefile prototypeBuf
+    %<SLibCacheCodeToFile("mdl_extern_fcn_decl", prototypeBuf)>
+  %endif
+  %return buff
+%endfunction
+
+%% FcnGetMulirateSchedulerName() =============================
+%%  In single tasking, use rate_scheduler. In multi-tasking, use 
+%%      rate_monotonic_scheduler
+%%
+%function FcnGetMulirateSchedulerName() 
+  %if SLibSingleTasking() || SLibConcurrentTasks()
+    %return "rate_scheduler" 
+  %else
+    %return "rate_monotonic_scheduler"
+  %endif
+%endfunction
+
+%function FcnGenSchedulerFcnAbstract()
+  %openfile abstractBuf
+  %if SLibSingleTasking()
+  This function updates active task flag for each subrate.
+The function is called at model base rate, hence the
+generated code self-manages all its subrates.
+  %elseif SLibConcurrentTasks()
+  This function updates active task flag for each subrate.
+The function is called in the model base rate function. 
+It maintains SampleHit information to allow scheduling 
+of the subrates from the base rate function. 
+  %else
+  This function updates active task flag for each subrate 
+and rate transition flags for tasks that exchange data. 
+The function assumes rate-monotonic multitasking scheduler. 
+The function must be called at model base rate so that 
+the generated code self-manages all its subrates and rate 
+transition flags. 
+  %endif
+  %closefile abstractBuf
+  %return abstractBuf
+%endfunction
+
+%% FcnGenerateMultirateScheduler() =============================
+%%  Multi-rate models need update active task flag 
+%%
+%function FcnGenerateMultirateScheduler() Output
+  %assign buff = ""
+  %assign prototypeBuf = ""
+  %assign fcnName = ""
+ 
+  %if !RootSystemIsSingleRate || SLibModelHasControllableRate()
+    %openfile buff
+    %assign nr = NumRuntimeExportedRates
+    %assign fcnName = FcnGetMulirateSchedulerName()
+    
+    %assign curBlockFcn = ::BlockFcn
+    %assign ::BlockFcn = "Rate_Scheduler"
+    
+    %if SLibSingleTasking() 
+      %openfile schedulerCode
+      %assign ::NeedScheduler = %<FcnScheduleSubRates()>
+      %closefile schedulerCode
+   
+      %if ::NeedScheduler
+        %assign fcnAbstract = FcnGenSchedulerFcnAbstract()
+        %if IsMultiInstanceERTOrModelReference()
+          %assign fcnArgs = "%<::tSimStructType> *const %<::tSimStruct>"
+          %% rate_scheduler to be called in update fcn, 
+          %% need accessed rtm in UpdateFcn at tid0
+          %<SLibAddTIDtoAccessTIDList(...
+            System[NumSystems-1].Interface.RTMArgDef,"Update", "",0)>
+        %else
+          %assign fcnArgs = "void"
+        %endif  
+        %if SLibAutosarCompilerAbstractionRequired()
+          %assign fcnReturns = "static " + SLibAutosarCompilerAbstractionForFcnDeclRtnType("void", "FuncInternal", "")
+        %else
+          %assign fcnReturns = "static void"        
+        %endif
+        %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnArgs; Abstract fcnAbstract; ...
+          Category "model"; GeneratedBy "ertmdlreftiming.tlc"; Type "Schedule"}
+        %<SLibDumpFunctionBanner(fcnRec)>
+        %undef fcnRec
+        %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+        %if SLibAutosarCompilerAbstractionRequired()
+          %assign prototypeBuf = "static " + SLibAutosarCompilerAbstractionForFcnDeclRtnType("void", "FuncInternal", "") + " %<fcnName>(%<fcnArgs>);"
+        %else
+          %assign prototypeBuf = "static void %<fcnName>(%<fcnArgs>);"
+        %endif
+        %<fcnReturns> %<fcnName>(%<fcnArgs>)
+        {
+          %<schedulerCode>
+        }
+        %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+      %endif
+    
+    %else
+      %assign fcnAbstract = FcnGenSchedulerFcnAbstract()
+      %if IsMultiInstanceERTOrModelReference()
+        %assign fcnArgs = "%<::tSimStructType> *const %<::tSimStruct>"
+	%% scheduler to be called output fcn,
+	%% need access rtm in OutputFcn at tid0
+	%<SLibAddTIDtoAccessTIDList(...
+	  System[NumSystems-1].Interface.RTMArgDef,"Output", "",0)>
+      %else
+        %assign fcnArgs = "void"
+      %endif       
+      %if !SLibConcurrentTasks()
+        %assign fcnReturns = "static void"      
+      %else
+        %assign fcnReturns = "void"      
+      %endif
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnArgs; Abstract fcnAbstract; ...
+        Category "model"; GeneratedBy "ertmdlreftiming.tlc"; Type "Schedule"}
+      %<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+      %assign prototypeBuf = "%<fcnReturns> %<fcnName>(%<fcnArgs>);"
+      %<fcnReturns> %<fcnName>(%<fcnArgs>)
+      { 
+      %if !SuppressMultiTaskScheduler
+        %<FcnScheduleRateTransitions()>\
+      %endif
+        %% needScheduler required by API, but not used for multitasking case
+	%assign needScheduler = %<FcnScheduleSubRates()>
+      }
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %endif
+    %closefile buff
+  %endif 
+  %if !SLibConcurrentTasks()
+    %<SLibCacheCodeToFile("baseMdl_fcn_prototype", prototypeBuf)>
+  %elseif !SLibSingleTasking()
+    %% Declare function in header file
+    %assign externPrototypeBuf =  "%<LibExternInFcnDecls()> %<prototypeBuf>"
+    %<SLibCacheCodeToFile("mdl_extern_fcn_decl", externPrototypeBuf)> 
+   %endif
+   
+    %assign ::BlockFcn = curBlockFcn
+  %return buff
+%endfunction
+
+%function UseTargetTaskScheduler() void
+  %return SLibGenerateNativeThreads()
+%endfunction
+
+%% This should be called at the buttom of update function
+%function FcnCallSingleTaskingRateScheduler(tid)
+  %assert (SLibSingleTasking())
+  %openfile buff
+  %if !RootSystemIsSingleRate && ::NeedScheduler
+    %if IsMultiInstanceERTOrModelReference()
+      %<FcnGetMulirateSchedulerName()>(%<GetSimStructExpr(System[GetBaseSystemIdx()], ::tSimStruct)>);
+    %else
+      %<FcnGetMulirateSchedulerName()>();
+    %endif
+  %endif
+  %closefile buff
+  %return buff
+%endfunction
+
+%% This should be called at the top of output function 
+%function FcnCallMultiTaskingRateScheduler(tid)
+  %assert (!SLibSingleTasking())
+  %openfile buff
+  %if !RootSystemIsSingleRate && !SuppressMultiTaskScheduler && ...
+    !UseTargetTaskScheduler()
+    %if(ISEQUAL(tid, "") || ISEQUAL(tid, 0))
+      %<FcnGenerateTidGuardOpenCode(0)>
+      %% Rate scheduler is invoked at the end of the output function
+      %% Rate grouping off or base rate with rate grouping on
+      %if IsMultiInstanceERTOrModelReference()
+        %<FcnGetMulirateSchedulerName()>(%<GetSimStructExpr(System[GetBaseSystemIdx()], ::tSimStruct)>);
+      %else
+        %<FcnGetMulirateSchedulerName()>();
+      %endif
+      %<FcnGenerateTidGuardCloseCode(0)>
+    %endif       
+  %endif
+  %closefile buff
+  %return buff
+%endfunction
+
+
+%function FcnDumpMultiRateScheduler() void
+  
+  %if !RootSystemIsSingleRate 
+    
+    %openfile multirateBuffer
+    %<FcnGenerateEventsForThisBaseRateFcn()>
+    %if (!SuppressMultiTaskScheduler || SLibConcurrentTasks()) ...
+      && !LibIsDeploymentDiagram() && !SLibIsExportFcnDiagram() ...
+      && (SLibSingleTasking() || !UseTargetTaskScheduler())
+      %<FcnGenerateMultirateScheduler()>
+    %endif
+    %closefile multirateBuffer 
+    
+    %<SLibCacheCodeToFile("baseMdl_fcn_defn", multirateBuffer)>
+    
+  %endif
+%endfunction
+
+
+
+%function ErtOrModelrefGetTimingForTopOfOutputFcn(ss, tid)
+  %assert (SLibIsERTCodeFormat() && ss.SystemIdx == NumSystems-1) && ...
+    !IsModelReferenceTarget()
+  
+  %assign needMajorTimeGuard = ...
+    (ISEQUAL(tid,0) || ISEQUAL(tid, "")) && NumContStates > 0
+  
+  %assign retBuf = ""
+  
+  %openfile buf
+  
+  %if (ISEQUAL(tid,0) || ISEQUAL(tid, "")) && ...
+    ((NumContStates > 0) || (UsingMalloc && GenerateGRTWrapper))
+    %<ERTSetSolverStopTime()>
+  %endif
+  %% This function either returns "", or returns the 
+  %% code that update active task flags
+  %if (!SLibSingleTasking()) 
+    %<FcnCallMultiTaskingRateScheduler(tid)>
+  %endif
+  
+  %% skip the major time step check if the outloop already done it. 
+  %<UpdateRateTransitionFlagsHelper(ss, tid, needMajorTimeGuard)>
+  %closefile buf
+    
+  %openfile retBuf
+ 
+  %if !WHITE_SPACE(buf)
+    %if needMajorTimeGuard
+      if (%<RTMIs("MajorTimeStep")>) {
+    %endif
+      %<buf>
+    %if needMajorTimeGuard
+      } /* end MajorTimeStep */
+    %endif
+  %endif
+  %if needMajorTimeGuard
+    %% update base rate absolute time from SolverInfo
+    /* Update absolute time of base rate at minor time step */
+    if (%<RTMIs("MinorTimeStep")>) {
+      %<LibGetTaskTime(0)> = rtsiGetT(%<RTMGetSolverInfo()>);
+    } 
+    %<FcnUpdateAsyncTimeAtMinorMajorTimeStep()>
+  %endif
+  %closefile retBuf
+    
+  %return retBuf
+
+%endfunction
+
+
+%function ErtOrModelrefGetTimingForBottomOfUpdateFcn(ss, tid, skipMajorTimeCheck)
+   %assert (SLibIsERTCodeFormat() && ...
+    (IsModelReferenceBaseSys(ss)  || ss.SystemIdx == NumSystems-1))
+ 
+  %openfile buff               
+  %assign continuousUpdate = ...
+    (ISEQUAL(tid,0) || ISEQUAL(tid, "")) && (NumContStates > 0)
+
+  %assign needMajorTimeGuard = !skipMajorTimeCheck && continuousUpdate
+  
+  %if needMajorTimeGuard
+    if (%<RTMIs("MajorTimeStep")>) {
+  %endif
+  
+  %if ISEQUAL(tid, 0) || ISEQUAL(tid, "")
+      %% Stop sim buffer is empty for model reference
+    %assert (!IsModelReferenceTarget() || ...
+      WHITE_SPACE(CachedCodeBuffsForRootSys.StopSimBuffer))
+    
+    %<CachedCodeBuffsForRootSys.StopSimBuffer>\
+  %endif
+
+   %if !IsModelReferenceTarget()
+    %if continuousUpdate
+      %assign reuseArgs = SLibModelFcnArgs("ODEUpdateContinuousStates",2,0)
+      %if !ISEQUAL(reuseArgs,"")
+	%assign reuseArgs = ", " + reuseArgs
+      %endif
+      %if !SLibIsPeriodicRateGrouping() && !SLibSingleTasking()
+	if (%<LibIsSampleHit(1)>) {
+          rt_ertODEUpdateContinuousStates(%<RTMGetSolverInfo()>%<reuseArgs>);
+	}
+      %elseif !needMajorTimeGuard %% No major time guard yet
+        if (%<RTMIs("MajorTimeStep")>) {
+          rt_ertODEUpdateContinuousStates(%<RTMGetSolverInfo()>%<reuseArgs>);
+        }
+      %else
+        rt_ertODEUpdateContinuousStates(%<RTMGetSolverInfo()>%<reuseArgs>);
+      %endif
+    %endif
+  %endif  
+
+  %assert !LibAsynchronousTriggeredTID(tid)  
+  %assign tmpBuf = SLibIsMultiRateAndPeriodicRateGrouping( System[NumSystems-1] ) ?  ...
+    CachedCodeBuffsForRootSys.UpdateAbsoluteTimeBuffer%<tid> : ...
+    CachedCodeBuffsForRootSys.UpdateAbsoluteTimeBuffer
+  %<tmpBuf>
+    
+  %% This function either returns "", or returns the rate_scheduler
+  %% We do NOT need scheduler for export function models
+  %if SLibSingleTasking() && !SLibIsExportFcnDiagram()
+    %<FcnCallSingleTaskingRateScheduler(tid)>
+  %endif
+  
+  %if needMajorTimeGuard
+     } /* end MajorTimeStep */
+  %endif
+  
+  %closefile buff
+  %return buff
+%endfunction
+
+%% function ERTSetSolverStopTime ======================
+%%
+%%
+%%
+%function ERTSetSolverStopTime()
+  %openfile retBuf
+  %assign needGuard = TLC_FALSE
+  %%
+  /* set solver stop time */
+  %assign ct  = RTMDispatchToAccessFcn("ClockTick0", "get", ...
+    "", "", GetSimStructExpr(System[GetBaseSystemIdx()], ::tSimStruct))
+  %assign ss = RTMDispatchToAccessFcn("StepSize0", "get", ...
+    "", "", GetSimStructExpr(System[GetBaseSystemIdx()], ::tSimStruct))
+  %if SLibClockTickIsUnit32Pair(0)
+    %assign cth  = RTMDispatchToAccessFcn("ClockTickH0", "get", ...
+      "", "", GetSimStructExpr(System[GetBaseSystemIdx()], ::tSimStruct))
+    if (!(%<ct>+1)) {
+      rtsiSetSolverStopTime(%<RTMGetSolverInfo()>, ...
+        ((%<cth> + 1) * %<ss> * 4294967296.0));
+    } else {
+      rtsiSetSolverStopTime(%<RTMGetSolverInfo()>, ...
+        ((%<ct>  + 1) * %<ss> + %<cth> * %<ss> * 4294967296.0));
+    }
+  %else
+    rtsiSetSolverStopTime(%<RTMGetSolverInfo()>,((%<ct>+1)*%<ss>));
+  %endif
+  %closefile retBuf
+  %%
+  %return retBuf
+%endfunction %% ERTSetSolverStopTime
+
+%% function FcnGenChangeStepSizesFcn ===========================
+%% Abstract: 
+%%   Generate a function that changes all stepsizes using 
+%% the new baseRateStepSize.
+%%   The generated function can NOT be called after 
+%% stepsizes have been initialized.
+%function FcnGenChangeStepSizesFcn()
+  %openfile retBuf
+
+  %assign fcnAbstract = "Change all stepsize using the newBaseRateStepSize"
+  %with ::CompiledModel
+    %assign rootSystem        = System[NumSystems-1]
+    
+    %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+    %assign fcnName = "%<Name>_ChangeStepSize"
+    %assign fcnReturns = "void"
+    %if reqInsts.SimStructInst
+      %assign fcnParams = "real_T newBaseRateStepSize, %<::tSimStructType> *const %<::tSimStruct>"
+    %else
+      %assign fcnParams = "real_T newBaseRateStepSize"
+    %endif    
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "model"; GeneratedBy "ertmdlreftiming.tlc"; Type "Utility"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\
+    %<fcnReturns> %<fcnName>(%<fcnParams>) {
+      real_T ratio = newBaseRateStepSize / %<SampleTime[0].ClockTickStepSize>;
+      %assert SampleTime[0].ClockTickStepSize > 0
+      
+      /* update non-zore stepsize of periodic 
+       * sample time. Stepsize of asynchronous
+       * sample time is not changed in this function */
+       %foreach tid = NumRuntimeExportedRates
+	 %if SampleTime[tid].NeedFloatTime == "yes" && ...
+	   !PurelyIntegerCode
+	   %<RTMGet("StepSize%<tid>")>  = %<RTMGet("StepSize%<tid>")> * ratio;
+	 %endif
+       %endforeach
+       %if NumChildSFunctions || GenerateGRTWrapper
+	 %<RTMGet("StepSize")>  = %<RTMGet("StepSize")> * ratio;
+       %endif
+     }
+     %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Post")>\
+   %endwith
+   %closefile retBuf
+  
+   %return retBuf
+%endfunction
+
+%% function FcnCallChangeStepSizesFcn =======================
+%% Abstract: 
+%%   Call a function that changes all stepsizes using 
+%% the new baseRateStepSize.
+%%   The function can NOT be called after 
+%% stepsizes have been initialized.
+%%
+%function FcnCallChangeStepSizesFcn(newBaseRateStepSize)
+  %openfile retBuf
+  /* Change all stepsize using the newBaseRateStepSize */
+  %assert SampleTime[0].ClockTickStepSize > 0
+  %assign rootSystem        = System[NumSystems-1]
+  %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+
+  %if reqInsts.SimStructInst 
+    %<Name>_ChangeStepSize(%<newBaseRateStepSize>, %<::tSimStruct>);
+  %else
+    %<Name>_ChangeStepSize(%<newBaseRateStepSize>);
+  %endif
+  %closefile retBuf
+  
+  %return retBuf
+%endfunction
+
+%endif %% _ERT_MODELREF_TIMING_
+
+%% [EOF] ertmdlreftiming.tlc

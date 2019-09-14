@@ -1,0 +1,107 @@
+%% ============================================================================
+%% File: prm_constwithinit.tlc
+%%
+%% Abstract:
+%%   
+%%   
+%%  
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%% 
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PRM_CONSTWITHINIT_") == 0
+%assign _PRM_CONSTANTWITHINIT_ = 1
+
+%include "prm_cacheutils.tlc"
+
+
+%% Function: SLibCacheConstPrmWithInitBuffers ==================================
+%% Abstract:
+%%   Generate the definition & instantiation buffers for constant parameters
+%%
+%function SLibCacheConstPrmWithInitBuffers(startIdx) void
+
+  %% Create parameter buffers
+  %<SLibCreatePrmBuffer("ConstWithInit", "Typedef")>
+  %<SLibCreatePrmBuffer("ConstWithInit", "Instance")>
+
+  %% Generate the typedef & instantiation buffers for const parameters with init
+  %assign result = FcnGenConstPrmWithInitBuffers(startIdx)
+  %<SLibSetPrmBufferPart("ConstWithInit", "Typedef",   "Code", result[0])>
+  %<SLibSetPrmBufferPart("ConstWithInit", "Instance",  "Code", result[1])>
+  
+%endfunction %% SLibCacheConstPrmWithInitBuffers
+
+
+%% Function: FcnGenConstPrmWithInitBuffers =====================================
+%% Abstract:
+%%   Generate the constant parameters with initialization definition buffer
+%%
+%function FcnGenConstPrmWithInitBuffers(startIdx) void
+
+  %assign result = ["", ""]
+
+  %if NumConstPrmsWithInit == 0
+    %return result
+  %endif
+  
+  %assign constParamWithInitVarGroupIndex = System[NumSystems-1].ConstParameterWithInitVarGroupIndex[0]
+  %assign hasElement = VarGroups.VarGroup[constParamWithInitVarGroupIndex].HasElement
+  %assign tmpResult = FcnGenConstPrmBuffersHelper(...
+    startIdx, NumConstPrmsWithInit, hasElement)
+  %assign typedefBuffer = tmpResult[0]
+  %assign instBuffer = tmpResult[1]
+  %assign macroBuffer = tmpResult[2]
+  %assert ISEMPTY(macroBuffer)
+  %undef tmpResult
+
+  %% Complete buffers for parameter structure (typedef & instantiation)
+  %if !WHITE_SPACE(typedefBuffer)
+    %openfile tmpBuf
+    typedef struct {
+      %<typedefBuffer>
+    } %<::tConstParamWithInitType>;
+    %closefile tmpBuf
+    %assign typedefBuffer = tmpBuf
+  %endif
+
+  %if !WHITE_SPACE(instBuffer)
+    %if SLibAutosarCompilerAbstractionRequired()
+      %openfile definition
+      %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tConstParamWithInitType, TLC_FALSE, TLC_FALSE, ::tConstParamWithInitStruct, "DataGlobal")> = {
+        %<instBuffer>
+      };\
+      %closefile definition
+    %else
+      %openfile definition
+      %assign qualifiers = SLibGetConstParamWithInitQualifiers()
+      %<qualifiers> %<::tConstParamWithInitType> %<::tConstParamWithInitStruct> = {
+        %<instBuffer>
+      };\
+      %closefile definition
+    %endif
+    
+    %openfile instBuffer
+    %<SLibAddPreStructDeclarePragma(::tConstParamWithInitStruct)>\
+    %<SLibApplyMemSecToDataDefn(definition, ...
+      "MemSecDataConstants", "%<::tConstParamWithInitStruct>")>\
+    %<SLibAddPostStructDeclarePragma(::tConstParamWithInitStruct)>\
+    %closefile instBuffer
+  %endif
+  
+  %assign result[0] = typedefBuffer
+  %undef typedefBuffer
+  %assign result[1] = instBuffer
+  %undef instBuffer
+  
+  %return result %% [typedefBuffer, instBuffer]
+
+%endfunction %% FcnGenConstPrmWithInitBuffers
+
+
+%endif %% EXISTS("_PRM_CONSTWITHINIT_")
+
+%% [EOF] prm_constwithinit.tlc

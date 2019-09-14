@@ -1,0 +1,19 @@
+%% ============================================================================
+%% Filename: formattypes.tlc
+%% 
+
+%if EXISTS("_FORMATTYPES_") == 0
+  %% ============================================================================
+  %% Dump buffers to common header file
+  %%
+  
+  %openfile bannerBuf
+  /*
+  * %<Name>_types.h
+  *
+  %<SLibCommonHeaderInfo()>\
+  */
+  %closefile bannerBuf
+  %<SLibCacheCodeToFile("mdl_types_hdr_ban", bannerBuf)>
+  
+%endif %% _FORMATTYPES_

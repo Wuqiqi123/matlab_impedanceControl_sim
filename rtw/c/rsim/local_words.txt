@@ -1,0 +1,11 @@
+# --*-conf-*---
+# Local Words for sbspell and sbcheck -check typos
+# This file is automatically maintained by sbspell.
+# Copyright 2018 The MathWorks, Inc.
+
+ LocalWords:  tmf POSIX rtwgensettings
+ LocalWords:  MAKECMD gmake Toolchain TOOLCHAIN BUILDARGS TGT NUMST NCSTATES
+ LocalWords:  MODELREFS MODELLIB MDLREFINC ifneq ifeq unixtools DRSIM DBG
+ LocalWords:  DMODEL DHAVESTDIO DUNIX DNRT DNUMST DTID DRT DNCSTATES DMT
+ LocalWords:  CFLAGS CPPFLAGS DEP LD OBJS addsuffix notdir lm PRECOMP ruvs os
+ LocalWords:  DYLD proj

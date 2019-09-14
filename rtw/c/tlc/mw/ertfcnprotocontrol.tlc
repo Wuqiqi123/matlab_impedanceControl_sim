@@ -1,0 +1,1164 @@
+%%
+%% Function Prototype Control tlc functions.
+%%
+%% Abstract:
+%%   Customize the prototype of the generated root model step function.
+%%
+%% =====================================================================
+
+%%   Copyright 2004-2018 The MathWorks, Inc.
+%%
+
+%selectfile NULL_FILE
+
+%if EXISTS("_ERT_FCN_PROTO_CONTROL_") == 0
+%assign _ERT_FCN_PROTO_CONTROL_ = 1
+
+%% Check if the argIdx-th argument in function prototype control fpc is
+%% reusable. In FPC, a pair of reusable inport and outport must have
+%% the same name and be placed close to each other. Given argIdx, return -1
+%% if there does not exist a corresponding reusable argument. Otherwise, return
+%% the index of that argument.
+%function GetTheOtherReusableArgInFPC(fpc, argIdx)
+  %if IsFPCIgnored(fpc)
+    %return -1
+  %endif
+
+  %assign numArgs = SIZE(fpc.ArgSpecData, 1)
+  %assert argIdx < numArgs
+
+  %if ISEMPTY(fpc.ArgSpecData[argIdx].ArgName)
+    %return -1
+  %endif
+
+  %assign isInport = ISEQUAL(fpc.ArgSpecData[argIdx].SLObjectType, "Inport")
+
+  %if argIdx < numArgs - 1
+    %assign nextArgIdx = argIdx + 1
+    %if ISEQUAL(fpc.ArgSpecData[argIdx].ArgName, fpc.ArgSpecData[nextArgIdx].ArgName)
+      %assert isInport ^ ISEQUAL(fpc.ArgSpecData[nextArgIdx].SLObjectType, "Inport")
+      %return nextArgIdx
+    %endif
+  %endif
+
+  %if argIdx > 0
+    %assign lastArgIdx = argIdx - 1
+    %if ISEQUAL(fpc.ArgSpecData[argIdx].ArgName, fpc.ArgSpecData[lastArgIdx].ArgName)
+      %assert isInport ^ ISEQUAL(fpc.ArgSpecData[lastArgIdx].SLObjectType, "Inport")
+      %return lastArgIdx
+    %endif
+  %endif
+
+  %return -1
+%endfunction
+
+%% Generates assignments between reusable inports and outports. For example,
+%% if the original step function callsite is
+%%   step(&in, &out);
+%% and we use in and out, the function generates the assignment
+%%   memcpy(&out, &in, ...);
+%%   // or unrolled copies if # of data to copy is small
+%% before the new callsit
+%%   step(&in, &out);
+%function GetReusableInoutAssignmentsFromFPC(fpc, mSysIdx, block, sysFcnName, mdlRefIdx, canInputInfo)
+  %assign retStr = ""
+
+  %if IsFPCIgnored(fpc)
+    %return retStr
+  %endif
+
+  %openfile retStr
+  %assign numArgs = SIZE(fpc.ArgSpecData, 1)
+  %%
+  %foreach argIdx = numArgs
+    %if ISEQUAL(argIdx, numArgs - 1)
+      %break
+    %endif
+    %assign nextArgIdx = argIdx + 1
+    %if ISEQUAL(fpc.ArgSpecData[argIdx].ArgName, fpc.ArgSpecData[nextArgIdx].ArgName)
+      %if ISEQUAL(fpc.ArgSpecData[argIdx].SLObjectType, "Inport")
+        %assign inportNum = CAST("Number", fpc.ArgSpecData[argIdx].PortNum)
+        %assign outportNum = CAST("Number", fpc.ArgSpecData[nextArgIdx].PortNum)
+      %else
+        %assign inportNum = CAST("Number", fpc.ArgSpecData[nextArgIdx].PortNum)
+        %assign outportNum = CAST("Number", fpc.ArgSpecData[argIdx].PortNum)
+      %endif
+
+      %assign width = LibBlockInputSignalWidth(inportNum)
+      %if width < RollThreshold
+        %assign rollVars = ["u%<inportNum>", "y%<outportNum>"]
+        %roll sigIdx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+          %assign u = LibBlockInputSignal(inportNum, "", lcv, sigIdx)
+          %assign y = LibBlockOutputSignal(outportNum, "", lcv, sigIdx)
+          %<y> = %<u>;
+        %endroll
+      %else
+        %assign dataType = LibBlockInputSignalDataTypeName(inportNum, "")
+        %assign uAddr = LibBlockInputSignalAddr(inportNum, "", "", 0)
+        %assign yAddr = LibBlockOutputSignalAddr(outportNum, "", "", 0)
+        (void) %<LibGenMemFcnCall("memcpy", "%<yAddr>", "%<uAddr>", "%<width>*sizeof(%<dataType>)")>;
+      %endif
+    %endif
+  %endforeach
+  %closefile retStr
+
+  %return retStr
+%endfunction
+
+%% Returns the argument name at input port number portNum in function
+%% prototype control fpc
+%function GetInputArgNameFromFPC(fpc, portNum)
+  %assign numArgs = SIZE(fpc.ArgSpecData, 1)
+  %foreach argIdx = numArgs
+    %assign arg = fpc.ArgSpecData[argIdx]
+    %if ISEQUAL(arg.SLObjectType, "Inport") && ISEQUAL(arg.PortNum, portNum)
+      %return arg.ArgName
+    %endif
+  %endforeach
+  %<LibReportFatalError("Cannot find input arg name.")>
+%endfunction
+
+%% Returns the argument name at output port number portNum in function
+%% prototype control fpc
+%function GetOutputArgNameFromFPC(fpc, portNum)
+  %assign numArgs = SIZE(fpc.ArgSpecData, 1)
+  %foreach argIdx = numArgs
+    %assign arg = fpc.ArgSpecData[argIdx]
+    %if ISEQUAL(arg.SLObjectType, "Outport") && ISEQUAL(arg.PortNum, portNum)
+      %return arg.ArgName
+    %endif
+  %endforeach
+  %<LibReportFatalError("Cannot find output arg name.")>
+%endfunction
+
+>>>> ORIGINAL //mw/Bslcgfe/matlab/rtw/c/tlc/mw/ertfcnprotocontrol.tlc#15
+%% Caches reusable inports and outports defined by function prototype control.
+%function CacheFPCReusableIOsInstance(fcnData) void
+  %openfile buffer
+  %foreach idx = ExternalInputs.NumExternalInputs
+    %assign ei = ExternalInputs.ExternalInput[idx]
+    %if ISFIELD(ei, "ReuseBufferName")
+      %%
+      %assign comment  = "/* '%<ei.BlockName>' */"
+      %assign dataType = SLibGetRecordContainerTypeName(ei)
+      %assign optWidth = LibOptionalVectorWidth(LibGetRecordSymbolicWidth(ei))
+      %% ReuseBufferName is the identifier
+      %assign id = ei.ReuseBufferName
+      %assign identifier = GetInputArgNameFromFPC(fcnData, idx)
+
+      %assign definition = ...
+        "%<dataType> %<id>%<optWidth>;"
+      %assign commentForExtraGlobal = "/* Global variable due to the usage of reusable inport: %<identifier> */"
+      %<commentForExtraGlobal>
+      %assign cgT = ::CompiledModel.CGTypes.CGType[ei.CGTypeIdx]
+      %if(ei.Alignment > 0 && cgT.Constructor != "complex")
+        %assign align = SLibGetAlignmentSyntax(::CompiledModel.Name, id, dataType, ...
+          ei.Alignment, "DATA_ALIGNMENT_GLOBAL_VAR")
+        %<LibGlobalDefinitionWithAlignment(definition, comment, align)>
+      %else
+        %<definition> %<comment>
+      %endif
+    %endif
+  %endforeach
+  %foreach idx = ExternalOutputs.NumExternalOutputs
+    %assign eo = ExternalOutputs.ExternalOutput[idx]
+    %if ISFIELD(eo, "ReuseBufferName")
+      %%
+      %assign sysIdx       = eo.Block[0]
+      %assign blkIdx       = eo.Block[1]
+      %assign outportBlock = System[sysIdx].Block[blkIdx]
+      %assign comment  = "/* '%<outportBlock.Name>' */"
+      %assign dataType = SLibGetRecordContainerTypeName(eo)
+      %assign optWidth = LibOptionalVectorWidth(LibGetRecordSymbolicWidth(eo))
+      %% ReuseBufferName is the identifier
+      %assign id = eo.ReuseBufferName
+      %assign identifier = GetOutputArgNameFromFPC(fcnData, idx)
+
+      %assign definition = ...
+        "%<dataType> %<id>%<optWidth>;"
+      %assign commentForExtraGlobal = "/* Global variable due to the usage of reusable outport: %<identifier> */"
+      %<commentForExtraGlobal>
+      %assign cgT = ::CompiledModel.CGTypes.CGType[ei.CGTypeIdx]
+      %if(eo.Alignment > 0 && cgT.Constructor != "complex")
+        %assign align = SLibGetAlignmentSyntax(::CompiledModel.Name, id, dataType, ...
+          ei.Alignment, "DATA_ALIGNMENT_GLOBAL_VAR")
+        %<LibGlobalDefinitionWithAlignment(definition, comment, align)>
+      %else
+        %<definition> %<comment>
+      %endif
+    %endif
+  %endforeach
+  %closefile buffer
+  %assign ::CompiledModel.CustomReusableSignalsInstance = buffer
+%endfunction  %% CacheFPCReusableIOsInstance
+
+%% Generates comments for inport variable at the idx-th argument in the function
+%% prototype control fcnData. If this is a reusable inport, generates the
+%% comments for its corresponding output, too.
+%function DeclareFcnProtoCtrlInportVariableComments(fcnData, idx) Output
+  %assign inSpec = fcnData.ArgSpecData[idx]
+  %assign extInp = ExternalInputs.ExternalInput[inSpec.PortNum]
+  %assign outIdx = GetTheOtherReusableArgInFPC(fcnData, idx)
+  %if outIdx < 0
+    /* '%<extInp.BlockName>' */
+    %return
+  %endif
+  %assign outSpec = fcnData.ArgSpecData[outIdx]
+  %assign extOut       = ExternalOutputs.ExternalOutput[outSpec.PortNum]
+  %assign sysIdx       = extOut.Block[0]
+  %assign blkIdx       = extOut.Block[1]
+  %assign outportBlock = System[sysIdx].Block[blkIdx]
+  /* '%<extInp.BlockName>' */
+  /* '%<outportBlock.Name>' */
+%endfunction
+
+%% Utility function. Create block path from non-path name.
+%function getPath(inputStr) void
+  %assign result = ""
+  %assign len = SIZE(inputStr,1)
+  %assign flag = TLC_FALSE
+
+  %foreach idx = len
+    %if flag
+      %assign result = result + inputStr[idx]
+    %elseif inputStr[idx] == "/"
+      %assign result = "<Root>/"
+      %assign flag = TLC_TRUE
+    %endif
+  %endforeach
+
+  %return result
+
+%endfunction
+
+
+%% Utility function. Construct wrapper function name from fully
+%% qualified subsystem name.
+%function changeSlashToUnderstoreRemoveBrcket(inputStr)
+  %assign result = ""
+  %assign len = SIZE(inputStr,1)
+  %foreach idx = len
+    %if inputStr[idx] == "<" ||  inputStr[idx] == ">"
+      %continue
+    %endif
+    %if inputStr[idx] == "/"
+      %assign result = result + "_"
+    %else
+      %assign result = result + inputStr[idx]
+    %endif
+  %endforeach
+  %return result
+%endfunction
+
+
+%% Function to extract ArgSpecData etc. from RTWFcnClass
+%function FcnGetFunctionPrototypeRecord() void
+  %if !ISEMPTY(::RTWStepPrototypeRecord)
+    %return ::RTWStepPrototypeRecord
+  %endif
+
+  %assign hasReturnValue=TLC_FALSE
+
+  %% The following two arrays are used to map from the I/O ports to
+  %% their corresponding positions in the argspecdata array
+  %assign inportsArgSpecMapping = []
+  %assign outportsArgSpecMapping = []
+
+  %foreach idx = ExternalInputs.NumExternalInputs
+    %assign inportsArgSpecMapping = inportsArgSpecMapping+1
+    %assign inportsArgSpecMapping[idx] = -1
+  %endforeach
+
+  %foreach idx = ExternalOutputs.NumExternalOutputs
+    %assign outportsArgSpecMapping = outportsArgSpecMapping+1
+    %assign outportsArgSpecMapping[idx] = -1
+  %endforeach
+
+  %with ::CompiledModel.RTWFcnClass.Object.ObjectProperties
+    %createrecord FcnPrototype { FunctionName FunctionName }
+    %addtorecord FcnPrototype InitFunctionName InitFunctionName
+    %if ISFIELD(::CompiledModel.RTWFcnClass.Object.ObjectProperties, "NumArgSpecData")
+       %addtorecord FcnPrototype NumArgSpecData NumArgSpecData
+       %foreach argDataIdx = NumArgSpecData
+          %assign argData = ArgSpecData[argDataIdx].Object.ObjectProperties
+          %assign donotcare = REMOVEFIELD(argData, "SLObjectName")
+          %addtorecord FcnPrototype ArgSpecData %<argData>
+          %if argData.SLObjectType == "Inport"
+            %assign inportsArgSpecMapping[argData.PortNum] = argDataIdx
+          %endif
+          %if argData.SLObjectType == "Outport"
+            %assign outportsArgSpecMapping[argData.PortNum] = argDataIdx
+            %if argData.Category == "Value"
+              %assign hasReturnValue=TLC_TRUE
+            %endif
+          %endif
+       %endforeach
+    %else
+       %addtorecord FcnPrototype NumArgSpecData 0
+    %endif
+  %endwith
+
+  %addtorecord FcnPrototype inportsMapping inportsArgSpecMapping
+
+  %addtorecord FcnPrototype outportsMapping outportsArgSpecMapping
+
+  %if hasReturnValue
+     %addtorecord FcnPrototype hasReturnValue 1
+  %endif
+
+  %assign ::RTWStepPrototypeRecord = FcnPrototype
+
+  %return FcnPrototype
+%endfunction
+
+
+%% Function to extract ArgSpecData etc. from RTWCPPFcnClass
+%% I hope that when I move to using SCP's specification in the
+%% future, only this function needs to be refactored.
+%function FcnGetRTWCPPStepPrototypeRecord() void
+  %if !ISEMPTY(::RTWCPPStepPrototypeRecord)
+    %return ::RTWCPPStepPrototypeRecord
+  %endif
+
+  %assign hasReturnValue              = TLC_FALSE
+  %assign noArgOnList                 = TLC_FALSE
+
+  %% hasGlobalAccessForInport is to indicate that this
+  %% is the void-void case, while forcesGlobalAccessForInport
+  %% is to indicate that even it is the non-void-void case,
+  %% some of the inports still need class scope access (rtU), e.g.,
+  %% for the purpose of passing root inport signal value to void-void
+  %% member subsystem functions.
+  %assign hasGlobalAccessForInport    = TLC_FALSE
+  %assign forcesGlobalAccessForInport = TLC_FALSE
+
+  %% hasGlobalAccessForOutport is to indicate that this
+  %% is the void-void case, while forcesGlobalAccessForOutport
+  %% is to indicate that even it is the non-void-void case,
+  %% some of the outports still need class scope access (rtY),
+  %% otherwise, we will generate wrong code. The latter case
+  %% currently include MAT file logging for saving outport values
+  %% and outports have constant sample time.
+  %assign hasGlobalAccessForOutport    = TLC_FALSE
+  %assign forcesGlobalAccessForOutport = TLC_FALSE
+
+  %% The following two arrays are used to map from the I/O ports to
+  %% their corresponding positions in the argspecdata array
+  %assign inportsArgSpecMapping = []
+  %assign outportsArgSpecMapping = []
+
+  %foreach idx = ExternalInputs.NumExternalInputs
+    %assign inportsArgSpecMapping = inportsArgSpecMapping+1
+    %assign inportsArgSpecMapping[idx] = -1
+  %endforeach
+
+  %foreach idx = ExternalOutputs.NumExternalOutputs
+    %assign outportsArgSpecMapping = outportsArgSpecMapping+1
+    %assign outportsArgSpecMapping[idx] = -1
+  %endforeach
+
+  %with ::CompiledModel.RTWFcnCPPClass.Object.ObjectProperties
+    %if ISFIELD(::CompiledModel.RTWFcnCPPClass.Object.ObjectProperties, "FunctionName")
+      %createrecord FcnPrototype { FunctionName FunctionName ModelClassName ModelClassName ClassNamespace ClassNamespace }
+    %else
+      %createrecord FcnPrototype { ModelClassName ModelClassName ClassNamespace ClassNamespace }
+    %endif
+    %if ISFIELD(::CompiledModel.RTWFcnCPPClass.Object.ObjectProperties, "NumArgSpecData")
+       %addtorecord FcnPrototype NumArgSpecData NumArgSpecData
+       %foreach argDataIdx = NumArgSpecData
+          %assign argData = ArgSpecData[argDataIdx].Object.ObjectProperties
+          %assign donotcare = REMOVEFIELD(argData, "SLObjectName")
+          %addtorecord FcnPrototype ArgSpecData %<argData>
+          %if argData.SLObjectType == "Outport" && argData.Category == "Value"
+             %assign hasReturnValue=TLC_TRUE
+          %endif
+          %if argData.Category == "None"
+             %assign noArgOnList=TLC_TRUE
+          %endif
+          %if argData.SLObjectType == "Inport"
+            %if argData.Category == "None" && !IsModelReferenceRTWTarget()
+              %assign hasGlobalAccessForInport = TLC_TRUE
+            %endif
+            %assign inportsArgSpecMapping[argData.PortNum] = argDataIdx
+            %assign inport = ExternalInputs.ExternalInput[argData.PortNum]
+            %if inport.RequiresGlobalAccess == "yes"
+               %assign forcesGlobalAccessForInport = TLC_TRUE
+            %endif
+          %endif
+          %if argData.SLObjectType == "Outport"
+            %if argData.Category == "None" && !IsModelReferenceRTWTarget()
+              %assign hasGlobalAccessForOutport = TLC_TRUE
+            %endif
+            %assign outportsArgSpecMapping[argData.PortNum] = argDataIdx
+            %assign outport = ExternalOutputs.ExternalOutput[argData.PortNum]
+            %if outport.RequiresGlobalAccess == "yes"
+               %assign forcesGlobalAccessForOutport = TLC_TRUE
+            %endif
+          %endif
+       %endforeach
+    %else
+       %addtorecord FcnPrototype NumArgSpecData 0
+    %endif
+  %endwith
+
+  %addtorecord FcnPrototype hasReturnValue hasReturnValue
+
+  %addtorecord FcnPrototype noArgOnList noArgOnList
+
+  %addtorecord FcnPrototype hasGlobalAccessForInport hasGlobalAccessForInport
+
+  %addtorecord FcnPrototype forcesGlobalAccessForInport forcesGlobalAccessForInport
+
+  %addtorecord FcnPrototype hasGlobalAccessForOutport hasGlobalAccessForOutport
+
+  %addtorecord FcnPrototype forcesGlobalAccessForOutport forcesGlobalAccessForOutport
+
+  %addtorecord FcnPrototype inportsMapping inportsArgSpecMapping
+
+  %addtorecord FcnPrototype outportsMapping outportsArgSpecMapping
+
+  %assign ::RTWCPPStepPrototypeRecord = FcnPrototype
+
+  %return FcnPrototype
+%endfunction
+
+
+%% local function to determine whether is is a scalar
+%function isScalar(port) void
+  %assign portWidth = SLibGetFunctionIOWidth(port)
+  %assign flag = (portWidth == 1)
+  %return flag
+%endfunction
+
+%% Function to determine if an outport is returned by value
+%function FcnIsOutputReturnValue(fcnData, portNum)
+   %assign entry = fcnData.ArgSpecData[0]
+
+   %return (entry.Category == "Value" && entry.SLObjectType == "Outport" && entry.PortNum == portNum)
+
+%endfunction
+
+%% Function to return all that is relevant to the return value
+%% mode: "ReturnType", "ReturnDeclaration", "ReturnStatement"
+%%       "ReturnIdentifier"
+%function FcnModelStepFcnReturnCode(fcnData, mode)
+  %assign haveReturnValue = (fcnData.NumArgSpecData > 0 && ...
+                             fcnData.ArgSpecData[0].Category == "Value" && ...
+                             fcnData.ArgSpecData[0].SLObjectType == "Outport")
+
+  %if haveReturnValue
+    %assign entry = fcnData.ArgSpecData[0]
+    %assign outport    = ExternalOutputs.ExternalOutput[entry.PortNum]
+    %assign dimensions = LibGetRecordDimensions(outport)
+    %assign dataType   = LibGetRecordDataTypeName(outport, "")
+    %assign argName    =  entry.ArgName
+    %assign portWidth  = LibGetRecordSymbolicWidth(outport)
+  %endif
+
+  %if mode == "ReturnType"
+    %if !haveReturnValue
+      %return "void"
+    %elseif portWidth != "1"
+      %return "%<dataType>*"
+    %else
+      %return "%<dataType>"
+    %endif
+  %elseif mode == "ReturnDeclaration"
+    %if !haveReturnValue
+      %return ""
+    %elseif portWidth != "1"
+      %assign tmp = "\nstatic %<dataType> " ...
+        "%<argName>[%<portWidth>];"
+    %else
+      %assign tmp = "\n%<dataType> " ...
+        "%<argName>;"
+    %endif
+    %return "/* specified return value */\n%<tmp>\n"
+  %elseif mode == "ReturnIdentifier"
+    %if !haveReturnValue
+      %return ""
+    %else
+      %assign extOut       = ExternalOutputs.ExternalOutput[entry.PortNum]
+      %assign sysIdx       = extOut.Block[0]
+      %assign blkIdx       = extOut.Block[1]
+      %assign outportBlock = System[sysIdx].Block[blkIdx]
+
+      %return "%<argName>"
+    %endif
+  %elseif mode == "ReturnStatement"
+    %if !haveReturnValue
+      %return ""
+    %else
+      %return "\nreturn %<argName>;\n"
+    %endif
+  %else
+    %<LibReportFatalError("Unknown mode: %<mode>")>
+  %endif
+%endfunction
+
+%function FcnGetRootInport(port, width, memberStr, chunkIdx, ucv, indexExpr) void
+  %assert SystemIdx == NumSystems-1 || RTWSystemCode != 2
+  %assign extInp = ::CompiledModel.ExternalInputs.ExternalInput[port]
+  %assert extInp.StorageClass == "Auto"
+  %assign varGroupIdx = extInp.VarGroupIdx[0]
+  %assign memberIdx   = extInp.VarGroupIdx[1]
+  %assign varGroup    = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+  %assign portVarName  = FcnSLibCGIRGetVarGroupMemberName(varGroupIdx, memberIdx)
+  %assign isPointer   = TLC_FALSE
+  %<SLibAccessArgHelper(extInp,"",System[SystemIdx].CurrentTID)>
+  %assign identifier = "%<varGroup.Name>.%<portVarName>"
+  %if SLibHasGlobalExternalInputsWithFPC()
+    %assign identifier = "%<::tSimStruct>->%<identifier>"
+  %endif
+  %return FcnCGIRSimpleCGVarHelper(identifier, isPointer, width, memberStr, chunkIdx, ucv, indexExpr, TLC_FALSE)
+%endfunction
+
+%function FcnGetRootOutport(port, width, memberStr, chunkIdx, ucv, indexExpr) void
+  %assert SystemIdx == NumSystems-1 || RTWSystemCode != 2
+  %assert !IsModelReferenceSimTarget() && !IsModelReferenceRTWTarget()
+  %assign extOut      = ::CompiledModel.ExternalOutputs.ExternalOutput[port]
+  %assign varGroupIdx = extOut.VarGroupIdx[0]
+  %assign memberIdx   = extOut.VarGroupIdx[1]
+  %assign varGroup    = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+  %assign portVarName     = FcnSLibCGIRGetVarGroupMemberName(varGroupIdx, memberIdx)
+  %assign currentTID  = System[SystemIdx].CurrentTID
+  %assign isPointer   = TLC_FALSE
+  %<SLibAccessArgHelper(extOut,"",currentTID)>
+  %assign identifier = "%<varGroup.Name>.%<portVarName>"
+  %if SLibHasGlobalExternalOutputsWithFPC()
+    %assign identifier = "%<::tSimStruct>->%<identifier>"
+  %endif
+  %return FcnCGIRSimpleCGVarHelper(identifier, isPointer, width, memberStr, chunkIdx, ucv, indexExpr, TLC_FALSE)
+%endfunction
+
+%% Function to write to the inputs not on the lower-level step function
+%% argument list
+%function FcnModelStepBufferInputsCode(fcnData) void
+  %assign ::BlockFcn = "OutputUpdate"
+  %assign rootSystem        = System[NumSystems-1]
+  %assign isPeriodicRateGrouping    = ...
+    SLibSystemFcnPeriodicRateGrouping(rootSystem, ::BlockFcn)
+  %openfile tmpBuf
+
+  %foreach idx = fcnData.NumArgSpecData
+    %assign spec = fcnData.ArgSpecData[idx]
+    %if spec.SLObjectType == "Outport" || ...
+        spec.Category == "None"
+      %continue
+    %endif
+
+    %assign extInp   = ExternalInputs.ExternalInput[spec.PortNum]
+    %if (ISFIELD(extInp, "Inactive"))
+      %continue
+    %endif
+
+    %assign ifCond = SLibIfVariantCondition16b(extInp)
+    %assign ifEndCond = SLibEndIfVariantCondition16b(extInp)
+
+
+    %assign outIdx = GetTheOtherReusableArgInFPC(fcnData, idx)
+    %if extInp.RequiresGlobalAccess == "yes"
+      %% model reference at the presence of FPC is in IR,
+      %% the following TLC-code-generation mechanism has no IR implementation.
+      %% so we protect ourselves by this assertion.
+      %assert !IsModelReferenceTarget()
+
+      %assign dataType = LibGetRecordDataTypeName(extInp, "")
+      %assign width    = LibGetRecordSymbolicWidth(extInp)
+      %assign argName =  spec.ArgName
+
+      %assign inVar   = "%<argName>"
+      %assign isPointer = (spec.Category == "Pointer")
+      %assign deref = isPointer ? "*" : ""
+
+      %%%%%% Copy the input value to the right positions.
+      /* Copy value for root inport '%<extInp.BlockName>' since it is accessed globally */
+      %<ifCond>
+      %if width != "1"
+        {
+          %<LibCGTypeName(::CompiledModel.CGTypes.IndexType)> i;
+          for(i = 0; i < %<width>; i++)
+          %<FcnGetRootInport(spec.PortNum, width, "", -1, "i", 0)> = %<inVar>[i];
+        }
+      %else
+        %<FcnGetRootInport(spec.PortNum, width, "", -1, "", 0)> = %<deref>%<inVar>;
+      %endif
+      %<ifEndCond>
+    %elseif outIdx >= 0
+      %% If the input argument at idx has a corresponding output argument,
+      %% Check if we need to copy the output value to its globally accessed
+      %% output port.
+      %assign outSpec = fcnData.ArgSpecData[outIdx]
+      %assign extOut = ExternalOutputs.ExternalOutput[outSpec.PortNum]
+      %if extOut.RequiresGlobalAccess == "yes"
+        %assert !IsModelReferenceTarget()
+
+        %assign sysIdx       = extOut.Block[0]
+        %assign blkIdx       = extOut.Block[1]
+        %assign outportBlock = System[sysIdx].Block[blkIdx]
+        %assign width        = LibGetRecordSymbolicWidth(extOut)
+        %assign isPointer    = (outSpec.Category == "Pointer")
+        %assign deref        = isPointer ? "*" : ""
+        %assign argName      = outSpec.ArgName
+        %assign outVar       = "%<argName>"
+
+        /* Copy value for root outport '%<outportBlock.Name>' since it is accessed globally */
+        %<ifCond>
+        %if width != "1"
+          {
+            %<LibCGTypeName(::CompiledModel.CGTypes.IndexType)> i;
+            for(i=0; i<%<width>; i++)
+            %<FcnGetRootOutport(outSpec.PortNum, width, "", -1, "i", 0)> = %<outVar>[i];
+          }
+        %else
+          %<FcnGetRootOutport(outSpec.PortNum, width, "", -1, "", 0)> = %<deref>%<outVar>;
+        %endif
+        %<ifEndCond>
+      %endif
+    %elseif IsModelReferenceTarget()
+      %assign baseSysIdx = GetBaseSystemIdx()
+      %assign interface   = System[baseSysIdx].Interface
+      %assign argName = spec.ArgName
+      %assign argUsed = TLC_FALSE
+      %foreach canIdx = interface.NumCanonicalInputArgDefs
+        %if argName == LibGetRecordIdentifier(interface.CanonicalInputArgDef[canIdx])
+          %assign argUsed = TLC_TRUE
+          %break
+        %endif
+      %endforeach
+      %if !argUsed
+        %<SLibUnusedParameter(spec.ArgName)>
+      %endif
+    %else
+      %% CGIR only reuses inports by outports, but does not remove inports.
+      %% TLC removes the unused inports. Therefore we do not take them as unused
+      %% parameters.
+      %if !FcnArgNeeded(extInp,rootSystem.CurrentTID,isPeriodicRateGrouping) && ...
+        GetTheOtherReusableArgInFPC(fcnData, idx) < 0
+        %<SLibUnusedParameter(spec.ArgName)>
+      %endif
+    %endif
+  %endforeach %%NumArgSpecData
+
+  %closefile tmpBuf
+
+  %if !WHITE_SPACE(tmpBuf)
+    %openfile bufCode
+
+    %<tmpBuf>
+
+    %closefile bufCode
+    %return bufCode
+  %else
+    %return ""
+  %endif
+%endfunction
+
+%% Function to write to the ouputs that are not on the lower-level step function
+%% argument list. It is needed because outputs do not necessarily appear in the
+%% step function argument list.
+%function FcnModelStepBufferOutputsCode(fcnData) void
+  %openfile tmpBuf
+
+  %foreach idx = fcnData.NumArgSpecData
+    %assign spec = fcnData.ArgSpecData[idx]
+    %if spec.SLObjectType == "Inport" || ...
+        spec.Category == "None"
+      %continue
+    %endif
+
+    %assign portNum  = spec.PortNum
+    %assign extOup   = ExternalOutputs.ExternalOutput[spec.PortNum]
+    %assign width        = LibGetRecordSymbolicWidth(extOup)
+    %assign isPointer        = (spec.Category == "Pointer")
+    %assign deref        = isPointer ? "*" : ""
+    %assign dataType     = LibGetRecordDataTypeName(extOup, "")
+    %assign argName      =  spec.ArgName
+    %assign inVar        = "%<argName>"
+    %assign sysIdx       = extOup.Block[0]
+    %assign blkIdx       = extOup.Block[1]
+    %assign outportBlock = System[sysIdx].Block[blkIdx]
+    
+    %if (ISFIELD(extOup, "Inactive"))
+      %continue
+    %endif
+
+    %if ISFIELD(extOup, "LocalCGVCEIdx") && (extOup.LocalCGVCEIdx != -1)
+        %assign variantCondition =  VariantConditions.CGVCEList[extOup.LocalCGVCEIdx]
+    %else
+        %assign variantCondition = ""
+    %endif
+    %assign ifCond = SLibIfVariantConditionForm16b(variantCondition)
+    %assign ifEndCond = SLibEndIfVariantConditionForm16b(variantCondition)
+
+    %if extOup.RequiresGlobalAccess == "yes"
+
+      %% model reference at the presence of FPC is in IR,
+      %% the following TLC-code-generation mechanism has no IR implementation.
+      %% so we protect ourselves by this assertion.
+
+      %assert !IsModelReferenceTarget()
+
+      /* Copy value for root outport '%<outportBlock.Name>' since it is accessed globally */
+      %<ifCond>
+      %if width != "1"
+        {
+          %<LibCGTypeName(::CompiledModel.CGTypes.IndexType)> i;
+          for(i = 0; i < %<width>; i++)
+          %<inVar>[i] = %<FcnGetRootOutport(spec.PortNum, width, "", -1, "i", 0)>;
+        }
+      %else
+        %<deref>%<inVar> = %<FcnGetRootOutport(spec.PortNum, width, "", -1, "", 0)>;
+      %endif
+      %<ifEndCond>
+    %elseif IsModelReferenceTarget()
+      %% this code is only useful for cases that model reference is not in IR,
+      %% which is, non-reusable inside reusable, or output as return value.
+      %if ISEQUAL(outportBlock.TID, "constant")
+        %% This code cannot be enhanced to support symbolic dims because it unrolls the loop.
+        %% The TLC code coverage shows it is not in use. Perhaps it is dead code.
+        %assert !LibRecordHasSymbolicWidth(extOup)
+        %with outportBlock
+          %assign portObj  = FcnGetInputPortRecord(0)
+          %assign signalRec = SLibGetSourceRecord(portObj, 0)
+          %if ISFIELD(signalRec, "InitialValue")
+            %assign dTypeId = LibGetRecordDataTypeId(signalRec)
+            %assign complex = SLibGetRecordIsComplex(signalRec)
+            %assign multiWord = LibIsDataTypeMultiWordFixpt(dTypeId)
+            %if width != "1"
+              %foreach sigIdx = %<width>
+                %assign suffix = complex ? ".%<tRealPart>" : ""
+                %assign var = STRING(inVar) + "[" + STRING(sigIdx) + "]" + suffix
+                %if multiWord
+                  %assign val = FcnGetNonBuiltInRe(signalRec.InitialValue[sigIdx])
+                %else
+                  %if TYPE(signalRec.InitialValue[sigIdx]) != "String"
+                    %assign val = SLibGetFormattedValue(signalRec, REAL(signalRec.InitialValue[sigIdx]))
+                  %else
+                    %assert !complex
+                    %assign val = signalRec.InitialValue[sigIdx]
+                  %endif
+                %endif
+                %<SLibInitDataInitialValue(dTypeId, var, val)>\
+                %if complex
+                  %assign var = STRING(inVar) + "[" + STRING(sigIdx) + "]." + tImagPart
+                  %if multiWord
+                    %assign val = FcnGetNonBuiltInIm(signalRec.InitialValue[sigIdx])
+                  %else
+                    %assign val = SLibGetFormattedValue(signalRec, IMAG(signalRec.InitialValue[sigIdx]))
+                  %endif
+                  %<SLibInitDataInitialValue(dTypeId, var, val)>\
+                %endif
+              %endforeach
+            %else
+              %assign suffix = complex ? ".%<tRealPart>" : ""
+              %if ISEMPTY(suffix)
+                %assign var = STRING(deref) + STRING(inVar)
+              %else
+                %if !ISEMPTY(deref)
+                  %assign var = "(" + STRING(deref) + STRING(inVar) + ")" + suffix
+                %else
+                  %assign var =  STRING(inVar) + suffix
+                %endif
+              %endif
+              %if multiWord
+                %assign val = FcnGetNonBuiltInRe(signalRec.InitialValue[0])
+              %else
+                %if TYPE(signalRec.InitialValue[0]) != "String"
+                  %assign val = SLibGetFormattedValue(signalRec, REAL(signalRec.InitialValue[0]))
+                %else
+                  %assert !complex
+                  %assign val = signalRec.InitialValue[0]
+                %endif
+              %endif
+              %<SLibInitDataInitialValue(dTypeId, var, val)>\
+              %if complex
+                %if !ISEMPTY(deref)
+                  %assign var = "(" + STRING(deref) + STRING(inVar) + ")." + tImagPart
+                %else
+                  %assign var = STRING(inVar) + "." + tImagPart
+                %endif
+                %if multiWord
+                  %assign val = FcnGetNonBuiltInIm(signalRec.InitialValue[0])
+                %else
+                  %assign val = SLibGetFormattedValue(signalRec, IMAG(signalRec.InitialValue[0]))
+                %endif
+                %<SLibInitDataInitialValue(dTypeId, var, val)>\
+              %endif
+            %endif
+          %endif
+        %endwith
+      %endif
+    %endif
+  %endforeach %%%%%% NumArgSpecData
+
+  %closefile tmpBuf
+  %if !WHITE_SPACE(tmpBuf)
+    %openfile bufCode
+
+
+      %<tmpBuf>
+
+    %closefile bufCode
+    %return bufCode
+  %else
+    %return ""
+  %endif
+%endfunction
+
+%% Function to produce the contents of the model step function wrapper
+%% conforming to the specified prototypes
+%function FcnModelStepFcnArgs(fcnData, mode) void
+
+  %% This is the smart code, doesn't depend on the function prototype control record in the RTW file
+  %if IsModelReferenceTarget() && mode == "WrapperDec"
+    %assign baseSysIdx = GetBaseSystemIdx()
+    %% For multitasking, the TID should be passed into LibGetFcnInfo to get the correct fcnInfo
+    %if ISFIELD(fcnData,"CurrentTID")
+      %assign tid = %<fcnData.CurrentTID>
+    %else 
+      %assign tid = ""
+    %endif
+    %if !(::CompiledModel.FixedStepOpts.SolverMode == "MultiTasking" || ...
+         SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate",tid))
+      %assign tid = ""
+    %endif
+    %assign fcnInfo = LibGetFcnInfo(::CompiledModel.System[baseSysIdx], "OutputUpdate", tid)
+    %if !ISEMPTY(fcnInfo)
+      %return fcnInfo.Params
+    %else
+      %return ""
+    %endif
+  %endif
+
+  %% This is the old code, depends on the function prototype control record in the RTW file
+  %% it needs to be here because root subsystem is not in IR yet
+
+  %% mode:
+  %%  Wrapper declaration (WrapperDec)
+  %%  ERT main call site to wrapper function (WrapperCall)
+
+  %assign wrapperDec   = (mode == "WrapperDec")
+  %assign wrapperCall  = (mode == "WrapperCall")
+  %assign ertsfcncall  = (mode == "ERTSfcnCall")
+  %% The arguments that are needed to be passed to ODEContiunousUpdate
+  %% function, which will be called in the body of step
+  %assign calledInStep = (mode == "CalledInStep")
+
+  %assign recArgs = []
+  %assign ::BlockFcn = "Output"
+
+  %with fcnData
+    %foreach idx = NumArgSpecData
+      %assign spec = ArgSpecData[idx]
+
+      %if spec.Category == "None"
+        %continue
+      %endif
+
+      %assign isPointer = (spec.Category == "Pointer")
+      %assign isReference = (spec.Category == "Reference")
+      %assign argName = spec.ArgName
+      %if spec.SLObjectType == "Inport"
+         %if GetTheOtherReusableArgInFPC(fcnData, idx) >= 0
+           %% CGIR has reused the inport. Do not put it in the argument list.
+           %continue
+         %endif
+
+         %assign extInp    = ExternalInputs.ExternalInput[spec.PortNum]
+         %assign portWidth = LibGetRecordSymbolicWidth(extInp)
+         %assign isScalar  = portWidth == "1"
+         %assign dataType  = LibGetRecordDataTypeName(extInp, "")
+
+         %if wrapperCall
+           %assign deref = ""
+           %if isScalar && isPointer
+             %assign deref = "&"
+           %endif
+
+           %assign recArgs = recArgs + "%<deref>%<argName>"
+         %elseif wrapperDec
+           %assign deref = ""
+           %if isScalar && isPointer
+             %assign deref = "*"
+           %elseif isScalar && isReference
+             %assign deref = "&"
+           %endif
+
+           %assign qualifier = spec.Qualifier
+           %assign tInputUQualifier = ""
+
+           %if qualifier != "none"
+             %if qualifier == "const" || qualifier == "const *" ||...
+                 qualifier == "const * const" ||...
+                 qualifier == "const &"
+               %assign dataType = "const %<dataType>"
+             %endif
+             %if qualifier == "const * const"
+               %assign tInputUQualifier = "const "
+             %else
+               %assign tInputUQualifier = ""
+             %endif
+           %endif
+
+           %if !isScalar
+             %if !isReference
+               %assign recArgs = recArgs + "%<dataType> %<argName>[%<portWidth>]"
+             %else
+               %assign recArgs = recArgs + "%<dataType> (&%<argName>)[%<portWidth>]"
+             %endif
+           %else
+                %assign recArgs = recArgs + "%<dataType> %<deref>" ...
+                 "%<tInputUQualifier>%<argName>"
+           %endif
+
+         %elseif ertsfcncall
+           %assign arg = "localIn%<spec.PortNum>"
+           %assign deref = (isPointer && isScalar)? "&" : ""
+           %assign recArgs = recArgs + "%<deref>%<arg>"
+
+         %elseif calledInStep
+           %% Just use whatever argument name specified.
+           %assign recArgs = recArgs + "%<argName>"
+         %else
+           %<LibReportFatalError("Should not be here.")>
+         %endif
+
+      %elseif spec.SLObjectType == "Outport"
+        %assign extOut       = ExternalOutputs.ExternalOutput[spec.PortNum]
+        %assign portWidth    = LibGetRecordSymbolicWidth(extOut)
+        %assign isScalar     = portWidth == "1"
+        %assign dataType     = LibGetRecordDataTypeName(extOut, "")
+        %assign sysIdx       = extOut.Block[0]
+        %assign blkIdx       = extOut.Block[1]
+        %assign outportBlock = System[sysIdx].Block[blkIdx]
+
+        %assign isReturnArg = (spec.SLObjectType == "Outport" && spec.Category == "Value")
+
+        %assign isReference = (spec.Category == "Reference")
+
+        %if isReturnArg && (wrapperCall || wrapperDec || ertsfcncall || ...
+                            calledInStep)
+          %continue
+        %endif
+
+        %assign argName = spec.ArgName
+
+        %if wrapperCall
+          %if !isScalar
+            %assign recArgs = recArgs + "%<argName>"
+            %else
+              %if !isReference
+                %assign recArgs = recArgs + "&" ...
+                  "%<argName>"
+              %else
+                %assign recArgs = recArgs + "%<argName>"
+              %endif
+            %endif
+          %elseif wrapperDec
+            %assign qualifier = spec.Qualifier
+
+            %assign tOutputYQualifier = ""
+
+            %if qualifier != "none"
+             %if qualifier == "const" || qualifier == "const * const" || ...
+                 qualifier == "const *" ||...
+                 qualifier == "const &"
+               %assign dataType = "const %<dataType>"
+             %endif
+             %if qualifier == "const * const"
+               %assign tOutputYQualifier = "const "
+             %else
+               %assign tOutputYQualifier = ""
+             %endif
+            %endif
+
+            %if !isScalar
+              %if !isReference
+                %assign recArgs = recArgs + "%<dataType> " ...
+                  "%<argName>[%<portWidth>]"
+              %else
+                %assign recArgs = recArgs + "%<dataType> " ...
+                  "(&%<argName>)[%<portWidth>]"
+              %endif
+            %else
+              %if !isReference
+                %assign recArgs = recArgs + "%<dataType> *%<tOutputYQualifier>" ...
+                  "%<argName>"
+              %else
+                %assign recArgs = recArgs + "%<dataType> &%<tOutputYQualifier>" ...
+                  "%<argName>"
+              %endif
+                  %endif
+          %elseif ertsfcncall
+            %assign getAddress = ""
+
+            %if isScalar
+              %if !isReference
+                %assign getAddress = "&"
+              %endif
+            %endif
+            %assign recArgs = recArgs + "%<getAddress>localOut%<spec.PortNum>"
+
+         %elseif calledInStep
+           %% Just use whatever argument name specified.
+           %assign recArgs = recArgs + "%<argName>"
+
+         %else
+            %<LibReportFatalError("Should not be here.")>
+         %endif
+
+      %else
+          %<LibReportFatalError("Should not be here.")>
+      %endif
+     %endforeach %% NumArgSpecData
+  %endwith %%fcnData
+
+
+  %if ISEMPTY(recArgs)
+      %if wrapperCall
+        %return ""
+      %elseif wrapperDec
+        %if !GenerateClassInterface && !::CompiledModel.MultiInstanceERTCode
+          %return "void"
+        %else
+          %return ""
+        %endif
+      %elseif ertsfcncall
+        %return ""
+      %elseif calledInStep
+        %return ""
+      %else
+        %<LibReportFatalError("Should not be here.")>
+      %endif
+  %endif
+
+  %foreach idx = SIZE(recArgs,1)
+      %if idx == 0
+        %assign fcnArgs = recArgs[idx]
+      %else
+        %assign fcnArgs = fcnArgs + ", %<recArgs[idx]>"
+      %endif
+  %endforeach
+
+    %return fcnArgs
+%endfunction
+
+%% Function to call the models lower-level step function
+%function FcnInternalModelStepFcn(fcnData) void
+  %openfile tmpFcnBuf
+
+  %if LibIsSingleRateModel()
+    %assign tid = ""
+  %else
+    %assign tid = "0"
+  %endif
+
+    /* Calls the model step function. */
+    %<SLibModelStepFcnName(tid)>(%<tid>);
+
+  %closefile tmpFcnBuf
+  %return tmpFcnBuf
+%endfunction
+
+%function SLibWriteCustomModelStepFunction() void
+  %if SLibFcnProtoCtrlActive() && (::CompiledModel.RTWFcnClass.Object.Class != "FcnDefault")
+    %if SLibIsAsyncTaskOnlyModel()
+      %assign warnTxt="Customized model step function is not generated since the model has only asynchronous rates."
+      %<LibReportWarning(warnTxt)>
+    %else
+      %assign fcnData = FcnGetFunctionPrototypeRecord()
+
+      %assign fcnName = fcnData.FunctionName
+
+      %assign retType = FcnModelStepFcnReturnCode(fcnData,"ReturnType")
+
+      %assign fcnArgs = ""
+      %assign fcnArgs = fcnArgs + FcnModelStepFcnArgs(fcnData,"WrapperDec")
+      %if ::CompiledModel.MultiInstanceERTCode
+        %assert SLibIsSelfStructured()
+        %assign comma = ""
+        %if !ISEMPTY(fcnArgs)
+          %assign comma = ", "
+        %endif
+        %assign fcnArgs = "%<::tSimStructType> *const %<::tSimStruct>%<comma>" + fcnArgs
+      %endif
+      %assign fcnProto = "%<retType> %<fcnName>(%<fcnArgs>)"
+
+
+      %openfile fcnProtoBuf
+
+      /* Customized model step function */
+      %if !::GenCPP
+         %<LibExternInFcnDecls()>%<fcnProto>;
+      %else
+        #ifdef __cplusplus
+        extern "C" {
+        #endif
+        %<LibExternInFcnDecls()>%<fcnProto>;
+        #ifdef __cplusplus
+        }
+        #endif
+      %endif
+
+      %closefile fcnProtoBuf
+
+      %<SLibCacheCodeToFile("mdl_fcn_decl", fcnProtoBuf)>
+    %endif
+  %endif
+%endfunction %%%%%%SLibWriteModelStepWrapperFunction
+
+%function SLibGetStepMethodDecl(inClass, tid) void
+  %assign decl = ""
+  %if GenerateClassInterface
+      %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+
+      %% For multitasking mode, we include tid info in classConfObj
+      %if (::CompiledModel.FixedStepOpts.SolverMode == "MultiTasking") || ...
+        SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate",tid)
+        %if !ISFIELD(classConfObj, "CurrentTID")
+          %addtorecord classConfObj CurrentTID "%<tid>"
+        %else
+          %assign classConfObj.CurrentTID = "%<tid>"
+        %endif
+      %endif
+      %if(SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate",tid))
+        %assign fcnName = ::CompiledModel.SampleTime[tid].EntryFcnName
+      %elseif ISFIELD(classConfObj,"FunctionName")
+        %assign fcnName = classConfObj.FunctionName
+      %else
+        %return
+      %endif
+      %if (ISFIELD(classConfObj, "CurrentTID")) && classConfObj.CurrentTID != "%<tid>"
+        %assign classConfObj.CurrentTID = "%<tid>"
+      %endif
+      %assign className = classConfObj.ModelClassName
+
+      %assign retType = FcnModelStepFcnReturnCode(classConfObj,"ReturnType")
+
+      %assign theArgs = FcnModelStepFcnArgs(classConfObj,"WrapperDec")
+
+      %if SLibSingleTasking()
+        %if inClass
+          %assign decl = "%<retType> %<fcnName>(%<theArgs>);"
+        %else
+          %assign decl = "%<retType> %<className>::%<fcnName>(%<theArgs>)"
+        %endif
+      %else %%MR/MT, must be void-void case
+        %if inClass
+          %if LibAsynchronousTriggeredTID(tid) || SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate",tid)
+            %assign decl = "%<retType> %<fcnName>(%<theArgs>);\n"
+          %else
+            %assign decl = "%<retType> %<fcnName>%<tid>(%<theArgs>);\n"
+          %endif
+        %endif
+      %endif
+  %endif
+
+  %return decl
+
+%endfunction %%%%%% SLibGetStepMethodDecl
+
+%endif %% _ERT_FCN_PROTO_CONTROL_
+
+%% [EOF] fcnprotocontrol.tlc

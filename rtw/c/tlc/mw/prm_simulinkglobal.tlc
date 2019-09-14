@@ -1,0 +1,410 @@
+%% =============================================================================
+%% File: prm_simulinkglobal.tlc
+%%
+%% Abstract:
+%%   
+%%   
+%%  
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%% 
+%% =============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PRM_SIMULINKGLOBAL_") == 0
+%assign _PRM_SIMULINKGLOBAL_ = 1
+
+%include "prm_cacheutils.tlc"
+
+
+%% Function: SLibCacheSimulinkGlobalPrmBuffers =================================
+%% Abstract:
+%%   Generate the Decl & Instance buffers for SimulinkGlobal parameters.
+%%  
+%function SLibCacheSimulinkGlobalPrmBuffers(startIdx) void
+  %% The UnstructuredSimulinkGlobal buffers Decl and Instance could be created
+  %% by either FcnGenUnstructuredSimulinkGlobalPrmDeclsAndInstances 
+  %% or SLibCacheUnstructuredSimulinkGlobalPrmBuffers.
+  %% The first case happens only when the parameter tuning mode is not DialogOnly.
+  %% The second case happens only for DialogOnly mode (to handle parameters in the 
+  %% ModelReferenceGlobal section). These two calls are mutually exclusive, thus 
+  %% ensuring no double creation of the same buffers.
+  %% Notice that for a top model in Accelerator mode, calls to 
+  %% SLibIsParamUnstructured in FcnGenUnstructuredSimulinkGlobalPrmDeclsAndInstances
+  %% ensures that we get empty UnstructuredSimulinkGlobal buffers as expected.
+  %if InlineParameters != 0
+    %<FcnGenUnstructuredSimulinkGlobalPrmDeclsAndInstances(startIdx)>
+  %endif
+
+  %<FcnGenStructuredSimulinkGlobalPrmDeclsAndInstances()>
+  
+%endfunction  
+
+%function SLibIsProtectedModelParamNotTunable(mdlParam)
+  %foreach prmIdx = SIZE(TunableParamsList,1)
+    %if ISEQUAL(mdlParam.WorkspaceVarName, TunableParamsList[prmIdx])
+      %return TLC_FALSE
+    %endif
+  %endforeach
+  
+  %return TLC_TRUE  
+%endfunction
+
+%% Loop through entries in Model Parameters table to write out unstructured
+%% SimulinkGlobal variables
+%function FcnGenUnstructuredSimulinkGlobalPrmDeclsAndInstances(startIdx) void
+  %<SLibCreatePrmBuffer("UnstructuredSimulinkGlobal", "Decl")>
+  %<SLibCreatePrmBuffer("UnstructuredSimulinkGlobal", "Instance")>
+  
+  %% For protected models, we must create separate buffers for "tunable" 
+  %% variables that are inlined (i.e. parameters with Auto storage class)
+  %% But we keep the declaration in model.h, everyone has visibility to that.
+  %if CompiledModel.GenProtectedModelOrSubmodel
+    %assign instanceProtBuffer = ""
+    %<SLibCreatePrmBuffer("UnstructuredSimulinkGlobalProtInlined", "Instance")>
+  %endif
+  
+  %assign declBuffer = ""
+  %assign instanceBuffer = ""
+  %assign numParams = NumInrtP
+  %foreach prmIdx = numParams
+    %assign mdlParam = Parameter[startIdx + prmIdx]
+    %if SLibIsParamUnstructured(mdlParam)
+      %assign decl = SLibGenModelParamDecl(mdlParam, TLC_TRUE)
+      %assign inst = SLibGenUnstrModelParamInstance(mdlParam, TLC_TRUE)
+      %if CompiledModel.GenProtectedModelOrSubmodel && SLibIsProtectedModelParamNotTunable(mdlParam)
+        %assign instanceProtBuffer = instanceProtBuffer + inst
+      %else
+        %assign instanceBuffer = instanceBuffer + inst
+      %endif
+      %assign declBuffer = declBuffer + decl
+    %endif
+  %endforeach
+  %<SLibSetPrmBufferPart("UnstructuredSimulinkGlobal", "Decl", ...
+    "Code", declBuffer)>
+  %<SLibSetPrmBufferPart("UnstructuredSimulinkGlobal", "Instance", ...
+    "Code", instanceBuffer)>
+  
+  %if CompiledModel.GenProtectedModelOrSubmodel
+    %<SLibSetPrmBufferPart("UnstructuredSimulinkGlobalProtInlined", "Instance", ...
+      "Code", instanceProtBuffer)>
+  %endif
+    
+%endfunction 
+
+%% Function: SLibInitParameterValueAccessIdx ====================================
+%% Abstract:
+%%   Initializes the model parameters with a ValueAccessIdx of zero.
+%%
+%function SLibInitParameterValueAccessIdx() void
+  %foreach prmIdx = ::CompiledModel.ModelParameters.NumParameters
+    %if !ISFIELD(::CompiledModel.ModelParameters.Parameter[prmIdx], "ValueAccessIdx")
+      %addtorecord ::CompiledModel.ModelParameters.Parameter[prmIdx] ValueAccessIdx 0
+    %else
+      %assign ::CompiledModel.ModelParameters.Parameter[prmIdx].ValueAccessIdx = 0
+    %endif
+  %endforeach
+%endfunction %% SLibInitParameterValueAccessIdx
+
+%% Function: SLibResetParameterValueAccessIdx ===================================
+%% Abstract:
+%%   Resets the model parameters ValueAccessIdx to zero.
+%%
+%function SLibResetParameterValueAccessIdx() void
+  %foreach prmIdx = ::CompiledModel.ModelParameters.NumParameters
+    %assign ::CompiledModel.ModelParameters.Parameter[prmIdx].ValueAccessIdx = 0
+  %endforeach
+%endfunction %% SLibResetParameterValueAccessIdx
+
+%% Loop through systems to write out structured SimulinkGlobal variables.
+%% This is necessary as structured variables are stored in the buffer associated 
+%% with appropriate system. Notice that we skip unstructured variables in
+%% FcnScopeParameters.
+%function FcnGenStructuredSimulinkGlobalPrmDeclsAndInstances() void
+  %assign numsys = GetNumSystemsForCodeGen()
+  %foreach sysIdx = numsys
+    %assign sys = System[sysIdx]
+    %<SLibCreateSystemPrmBuffer(sys, "SimulinkGlobal", "Typedef")>
+    %<SLibCreateSystemPrmBuffer(sys, "SimulinkGlobal", "Decl")>
+
+    %% Generate the parameter structure typedef & decl buffers for this system
+    %assign result = FcnGenOneSimulinkGlobalPrmStructDecl(sysIdx)
+    %<SLibSetSystemPrmBufferPart(sys, "SimulinkGlobal", "Typedef", "Code", result[0])>
+    %<SLibSetSystemPrmBufferPart(sys, "SimulinkGlobal", "Decl",    "Code", result[1])>
+  %endforeach
+  
+  %<SLibInitParameterValueAccessIdx()>
+  %<SLibCreatePrmBuffer("SimulinkGlobal", "Instance")>
+  %<LibAddToCompiledModel("NumPrmStructElements", INVALID_COUNTER)>
+  %assign result = SLibCacheConstVarGroupInstances("Parameter")
+  %<SLibSetPrmBufferPart("SimulinkGlobal", "Instance", "Code", result[0])>
+  %assign ::CompiledModel.NumPrmStructElements = result[1]
+  %<SLibResetParameterValueAccessIdx()>
+%endfunction %% FcnGenAllSimulinkGlobalPrmDecls
+  
+%% Loop through systems to write out parameter coder group variables.
+%% This is necessary as structured variables are stored in the buffer associated 
+%% with appropriate system. 
+%function FcnGenCoderDataGroupGlobalPrmDeclsAndInstances() void
+  %assign numsys = GetNumSystemsForCodeGen()
+  %assign rootSystem = System[numsys-1]
+  %<SLibInitParameterValueAccessIdx()>
+  %foreach idx = ::CompiledModel.NumCoderDataGroups
+    %assign group = ::CompiledModel.CoderDataGroup[idx]
+    %% Even reusable top defines InstP, in ert_main
+    %if SLibDataGroupStaticInit(::CompiledModel.CoderDataGroup[idx]) && ...
+      (SLibAllocatesCoderDataGroup(group) || !IsModelReferenceTarget())
+      %assign groupName = group.Name
+      %assign groupToken = "CoderDataGroup" + groupName
+      %assign indexFieldName = groupToken + "VarGroupIndex"
+      %if ISFIELD(rootSystem, indexFieldName)
+        %<SLibCreatePrmBuffer(groupToken, "Instance")>
+        %assign numElementsToken = "Num" + groupToken + "StructElements"
+        %<LibAddToCompiledModel(numElementsToken, INVALID_COUNTER)>
+        %<SLibResetParameterValueAccessIdx()>
+        %assign varGroupIdx = GETFIELD(rootSystem, indexFieldName)
+        %assign result = SLibGetVarGroupInitValue(varGroupIdx[0])
+        %assign group.Initializer = result[0]
+        %assign ::CompiledModel.%<numElementsToken> = result[1]
+      %endif
+    %endif
+  %endforeach  
+  %<SLibResetParameterValueAccessIdx()>
+%endfunction %% FcnGenAllSimulinkGlobalPrmDecls
+  
+%% Function: FcnGenOneSimulinkGlobalPrmStructDecl ==============================
+%% Abstract:
+%%   Generate the structure declaration for the given system.
+%%
+%function FcnGenOneSimulinkGlobalPrmStructDecl(sysIdx) void
+  %assign numsys = GetNumSystemsForCodeGen()
+  %assign result = ["", ""]
+  %if SLibSystemHasOwnDataScope(System[sysIdx])
+    %assign parameterBuff = SLibGetSystemParameters(sysIdx)
+    %assign userTypeAndPrmStructDecl = ""
+    %assign prmStructTypedef = ""
+    %if (sysIdx < (numsys-1))
+      %assign identifierType = FcnSysVarGroupType(System[sysIdx],"Parameter")
+      %openfile comment
+      %if  LibSystemIsReusedLibraryFcn(System[sysIdx]) && ISFIELD(System[sysIdx], "RLSCommentName")
+        %assign sysNameForComment = System[sysIdx].RLSCommentName
+      %else
+        %if BlockCommentType == "BlockSIDComment"
+          %assign sysNameForComment = ::CompiledModel.System[sysIdx].SIDCommentName
+        %else
+          %if System[sysIdx].Synthesized
+            %assign origBlkSet = ISFIELD(::CompiledModel.System[sysIdx],"OriginatorBlock")
+            %if origBlkSet
+              %assign origBlockName = ::CompiledModel.System[sysIdx].OriginatorBlock
+              %assign sysNameForComment = "'" + origBlockName + "'"
+            %else 
+              %assign sysNameForComment = "'" + System[sysIdx].Name + "'"
+            %endif       
+          %else
+            %assign sysNameForComment = "'" + System[sysIdx].Name + "'"
+          %endif
+        %endif
+      %endif
+      /* Parameters for system: %<sysNameForComment> */
+      %closefile comment
+    %else %% RootSystem (sysIdx == numsys-1)
+      %assign  identifierType = ::tParametersType
+      %openfile comment
+      /* Parameters (%<::AutoOrDefaultStorageClass> storage) */
+      %closefile comment
+    %endif
+    %%
+    %assign userTypes = LibDumpTypedefsCache()
+    %if sysIdx == (numsys-1)
+      %assign ::CompiledModel.TypedefsCache = ""
+    %endif
+    %%
+    %% Insert user-defined types before defining the parameter structure
+    %%
+    %if userTypes!=""
+      %assign userTypeAndPrmStructDecl = userTypeAndPrmStructDecl + userTypes
+    %endif
+    %if parameterBuff[1] > 0
+      %%
+      %% Generate the structure declaration
+      %%
+      %openfile prmStructDecl
+      
+      %assign align = ""
+      %if ::CompiledModel.ModelParameters.StructAlignment > 0 && structAlign
+        %assign structName = identifierType + "_"
+        %assign align = SLibGetAlignmentSyntax(::CompiledModel.Name, structName, "", ...
+                                 ::CompiledModel.ModelParameters.StructAlignment, "DATA_ALIGNMENT_WHOLE_STRUCT")
+      %endif
+      %%
+      %<comment>\
+      %<SLibIfSystemPreprocessorCondition(System[sysIdx])>    
+      %if align != ""
+        %switch(structDAFlag.position)
+          %case "DATA_ALIGNMENT_PREDIRECTIVE"
+            %<align> struct %<identifierType>_ {
+              %<parameterBuff[0]>
+            };
+            %break
+          %case "DATA_ALIGNMENT_POSTDIRECTIVE"
+            struct %<identifierType>_ {
+              %<parameterBuff[0]>
+            } %<align>;
+            %break
+          %case "DATA_ALIGNMENT_PRECEDING_STATEMENT"
+            %<align>
+            struct %<identifierType>_ {
+              %<parameterBuff[0]>
+            };
+            %break
+          %case "DATA_ALIGNMENT_FOLLOWING_STATEMENT"
+            struct %<identifierType>_ {
+              %<parameterBuff[0]>
+            };
+            %<align>
+            %break
+        %endswitch
+      %else
+        struct %<identifierType>_ {
+          %<parameterBuff[0]>
+        };
+      %endif
+      %<SLibEndIfSystemPreprocessorCondition(System[sysIdx])>
+      %closefile prmStructDecl
+      %assign userTypeAndPrmStructDecl = ...
+	userTypeAndPrmStructDecl + prmStructDecl
+      %%
+      %% Generate the structure typedef
+      %%
+      %openfile prmStructTypedef
+      
+      %<comment> \
+      typedef struct %<identifierType>_ %<identifierType>;
+      %closefile prmStructTypedef
+    %endif
+    %%
+    %assign result[0] = "%<prmStructTypedef>"
+    %assign result[1] = "%<userTypeAndPrmStructDecl>"
+  %endif
+  %return result
+%endfunction %% FcnGenOneSimulinkGlobalPrmStructDecl
+
+
+%% Function: FcnGenSimulinkGlobalPrmInstance ===================================
+%% Abstract:
+%%   Generate the instantiation of the parameters structure
+%%
+%function FcnGenSimulinkGlobalPrmInstance(groupName) void
+  
+  %foreach prmIdx = ::CompiledModel.ModelParameters.NumParameters
+    %if !ISFIELD(::CompiledModel.ModelParameters.Parameter[prmIdx], "ValueAccessIdx")
+      %addtorecord ::CompiledModel.ModelParameters.Parameter[prmIdx] ValueAccessIdx 0
+    %else
+      %assign ::CompiledModel.ModelParameters.Parameter[prmIdx].ValueAccessIdx = 0
+    %endif
+  %endforeach
+  
+  %if IsModelReferenceTarget()
+    %assign result = FcnScopeParameters(NumSystems-2, 0, groupName)
+  %else
+    %assign result = FcnScopeParameters(NumSystems-1, 0, groupName)
+  %endif
+
+  %foreach prmIdx = ::CompiledModel.ModelParameters.NumParameters
+    %assign ::CompiledModel.ModelParameters.Parameter[prmIdx].ValueAccessIdx = 0
+  %endforeach
+
+  %return result
+
+%endfunction %% FcnGenSimulinkGlobalPrmInstance
+
+
+%%Function: SLibGetSystemParameters ============================================
+%%Abstract:
+%%  Returns the contents of a systems parameter structure.
+%%
+%function SLibGetSystemParameters(sysIdx) void
+  %assign paramBuff = SLibGetSystemDataDefUsingVarGroup(sysIdx,"Parameter")
+  %return paramBuff
+%endfunction %% SLibGetSystemParameters
+
+
+%% Function: LibParametersStructIsEmpty ========================================
+%% Abstract:
+%%   NOTE: All calls to this function could be modified to be calls to
+%%   (::CompiledModel.NumPrmStructElements == 0).   However, to facilitate
+%%   code readability, we will keep this as a wrapper function for now.
+%%               
+%function LibParametersStructIsEmpty() void
+
+  %if ISFIELD(::CompiledModel,"NumPrmStructElements")
+    %% Counter should not be accessed before it has been set.
+    %assert (::CompiledModel.NumPrmStructElements != INVALID_COUNTER)
+    
+    %return (::CompiledModel.NumPrmStructElements == 0)
+  %else
+    %return TLC_TRUE
+  %endif
+  
+%endfunction %% LibParametersStructIsConst
+
+%function SLibModelParametersStructIsEmpty() void
+  %return (::CompiledModel.HasParametersArg == 0)
+%endfunction
+  
+
+%% Function: SLibAreSimulinkGlobalParamsUnstructured ==========================
+%% Abstract:
+%%   In the following cases, we treat SimulinkGlobal parameters as if they 
+%%   were ExportedGlobal (unstructured):
+%%    - For models that are model reference submodels.
+%%    - For models that contain model reference blocks
+%%    - For models that contain standalone subsystems.
+%function SLibAreSimulinkGlobalParamsUnstructured()
+  %if Accelerator
+    %assert !IsModelReferenceTarget()
+    %return TLC_FALSE
+  %elseif (InlineParameters == 1 && ...
+    (IsModelReferenceTarget() || ...
+     HasModelReferenceBlocks()))
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction 
+
+%% Function: SLibIsParamUnstructured ==========================================
+%% Abstract:
+%%   Return true if the given parameter should be generated as unstructured.
+%% This is a global flag for models, except for global parameters owned by
+%% model blocks when the top model has inline parameters off.
+%function SLibIsParamUnstructured(param)
+  %if Accelerator
+    %assert !IsModelReferenceTarget()
+    %return TLC_FALSE
+  %endif
+
+  %if ISFIELD(param, "TestpointIndex") && param.TestpointIndex >= 0
+    %return TLC_FALSE
+  %endif
+    
+  %if ((IsModelReferenceTarget() || HasModelReferenceBlocks())) 
+    %if (param.InModelRefGlobalSection)
+      %return TLC_TRUE
+    %endif
+
+    %if !ISEMPTY(param.WorkspaceVarName)
+      %% if param.WorkspaceVarName is empty, we are dealing with a 
+      %% pseudo workspace variable generated for a mask parameter 
+      %% whose value expression is not tunable. We should treat such 
+      %% parameters exactly like a block parameter, and hence always
+      %% structured.
+      %return !ISFIELD(param, "VarGroupIdx") || param.VarGroupIdx[0] < 0
+    %endif
+  %endif
+  %return TLC_FALSE
+%endfunction 
+
+%endif %% EXISTS("_PRM_SIMULINKGLOBAL_")
+
+%% [EOF] prm_simulinkglobal.tlc

@@ -1,0 +1,365 @@
+%% 
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%% Abstract: 
+%%   This TLC file contains all the code for generating global variables 
+%%   which are used by nonreusable functions that live in reusable functions.
+%%
+
+%if EXISTS("_GLOBALSYSVAR_") == 0
+%assign _GLOBALSYSVAR_ = 1
+
+%% Function: LibAccessGlobalArg ================================================
+%% Abstract:
+%%   This function marks a system function argument as accessed for a specific
+%%   block function (e.g. "Start, Output, Update, ...").  This function also 
+%%   sets the GlobalAccessed flag whenever any global variable is accessed.
+%% 
+%function LibAccessGlobalArg(arg) void
+  %<SLibAccessArgHelper(arg, "Global",FcnGetCurrentAccessTid())>
+%endfunction
+
+%function LibAccessGlobalArgTID(arg,tid) void
+  %if TYPE(tid) != "Number"
+    %<SLibAccessArgHelper(arg, "Global",FcnGetCurrentAccessTid())>
+  %else
+    %<SLibAccessArgHelper(arg, "Global",tid)>
+  %endif
+%endfunction
+
+%function SystemGlobalDeclIsNeeded(arg) void
+  %return ISFIELD(arg, "GlobalAccessed")
+%endfunction
+  
+%% Function: FcnGlobalArgNeeded ================================================
+%% Abstract:
+%%   Call either the rate grouping version or the default version.
+%%
+%function FcnGlobalArgNeeded(arg,tid,isRateGrouping) void
+  %assign retVal = FcnArgNeededHelper(arg, ::BlockFcn,tid,isRateGrouping,"Global")
+  %return retVal
+%endfunction
+
+%% Function: LibDumpGlobalVars ==================================================
+%% Abstract:
+%%   Dump the global variables that are initialized inside the specified function
+%%
+%function LibDumpGlobalVars(system,function) Output
+  %<LibGetSystemField(system, "Cached" + function + "GlobalVars")>\
+%endfunction %% LibDumpGlobalVars
+
+%% Function: LibInitializeGlobalVars ===========================================
+%% Abstract:
+%%    For the given function, initialize all the global variables that are
+%% used in any nonreusable functions that are below this function.  
+%function LibInitializeGlobalVars(system, function) void
+  
+  %% We only need to initialize global variables
+  %% (1) if we are generating model reference target, and the
+  %%     specified system is the model reference base subsystem
+  %% (2) when the AllowNoArgFcnInReusedFcn is on  
+  %if !(::CompiledModel.AllowNoArgFcnInReusedFcn) || ...
+    (IsModelReferenceTarget() && ...
+    !IsModelReferenceBaseSys(system) && ...
+    !LibIsServer(system))
+    %return ""
+  %endif
+  
+  %assign currentTID     = system.CurrentTID
+  %assign isRateGrouping = SLibIsMultiRateAndPeriodicRateGrouping(system) ||...
+    SLibIsModelRefAsyncTID(currentTID)
+  %assign isRateGroupedSLF = SLibIsRateGroupedSLFcn(system, function, currentTID)
+  
+  %openfile tmpbuf
+  %with system.Interface
+    %foreach argIdx = NumCanonicalDWorkArgDefs
+      %if FcnGlobalArgNeeded(CanonicalDWorkArgDef[argIdx],currentTID,...
+        isRateGrouping)
+        %assign canDWork = CanonicalDWorkArgDef[argIdx]
+        %assign dwIdx    = canDWork.FirstSignalSrc %% global idx
+        %assign dwRec    = ::CompiledModel.DWorks.DWork[dwIdx]
+        %assign dwId     = LibGetRecordIdentifier(canDWork)
+	%assign dataType = SLibGetRecordDataTypeName(dwRec, "")
+	%%
+	%% Example:
+	%%   Scalar signal: void foo(real_T *a)
+	%%   Wide signal:   void foo(real_T b[7])
+	%%
+        %<canDWork.GlobalIdentifier> = %<LibGetRecordIdentifier(canDWork)>;
+      %endif
+    %endforeach
+    %foreach argIdx = NumCanonicalPrmArgDefs
+      %if FcnGlobalArgNeeded(CanonicalPrmArgDef[argIdx],currentTID,...
+        isRateGrouping)
+        %assign canPrmDef = CanonicalPrmArgDef[argIdx]
+        %if isRateGroupedSLF
+          %% Cannot initialize global variable within a rate grouped simulink
+          %% function. The global must be initialized in the model init or
+          %% start functions.
+          %addtorecord canPrmDef GlobalInitializationNeeded TLC_TRUE
+        %else
+        %<canPrmDef.GlobalIdentifier> = %<LibGetRecordIdentifier(canPrmDef)>;
+          %addtorecord canPrmDef GlobalInitialized TLC_TRUE
+      %endif
+      %endif
+    %endforeach
+    %foreach argIdx=NumCanonicalInputArgDefs
+      %if FcnGlobalArgNeeded(CanonicalInputArgDef[argIdx],currentTID,...
+        isRateGrouping) && ...
+          FcnArgNeeded(CanonicalInputArgDef[argIdx],currentTID,...
+        isRateGrouping)
+        %assign canInputArg = CanonicalInputArgDef[argIdx]
+        %assign path = ""
+        %if skipCanonicalSideInput(system.Interface,function+"Fcn",argIdx)
+          %continue
+        %endif
+        %if isRateGroupedSLF
+          %% Cannot initialize global variable within a rate grouped simulink
+          %% function. The global must be initialized in the model init or
+          %% start functions.
+          %addtorecord canInputArg GlobalInitializationNeeded TLC_TRUE
+        %else
+          %if ISFIELD(canInputArg,"VarGroupIdx")
+            %assign path =  SLibCGIRVarGroupPath(canInputArg.VarGroupIdx[0], system.SystemIdx, TLC_TRUE)
+            %assign id = SLibVarGroupElementName(canInputArg.VarGroupIdx[0], canInputArg.VarGroupIdx[1])
+          %else
+            %assign id = canInputArg.GlobalIdentifier
+          %endif
+
+          %<path>%<id> = %<LibGetRecordIdentifier(canInputArg)>;
+            %addtorecord canInputArg GlobalInitialized TLC_TRUE
+        %endif
+      %endif
+    %endforeach
+    %foreach argIdx=NumCanonicalOutputArgDefs
+      %if FcnGlobalArgNeeded(CanonicalOutputArgDef[argIdx],currentTID,...
+        isRateGrouping) && ...
+          FcnArgNeeded(CanonicalOutputArgDef[argIdx],currentTID,...
+        isRateGrouping)
+        %assign canOutputArg = CanonicalOutputArgDef[argIdx]
+        %assign isReference = FcnPassCanonicalOutputAsReference(canOutputArg)
+        %assign path = ""
+        %if skipCanonicalSideOutput(system.Interface,function+"Fcn",argIdx)
+          %continue
+        %endif
+        %if isRateGroupedSLF
+          %% Cannot initialize global variable within a rate grouped simulink
+          %% function. The global must be initialized in the model init or
+          %% start functions.
+          %addtorecord canOutputArg GlobalInitializationNeeded TLC_TRUE
+        %else
+        %if ISFIELD(canOutputArg,"VarGroupIdx")
+          %assign path =  SLibCGIRVarGroupPath(canOutputArg.VarGroupIdx[0], system.SystemIdx, TLC_TRUE)
+          %assign id = SLibVarGroupElementName(canOutputArg.VarGroupIdx[0], canOutputArg.VarGroupIdx[1])
+        %else
+          %assign id = canOutputArg.GlobalIdentifier
+        %endif
+
+        %if (canOutputArg.PassByReturn == "yes" || isReference) && ...
+          LibGetRecordWidth(canOutputArg) == 1 && ...
+          (function == "OutputUpdate" || function == "Output")
+          %<path>%<id> = &%<LibGetRecordIdentifier(canOutputArg)>;
+        %else
+          %<path>%<id> = %<LibGetRecordIdentifier(canOutputArg)>;
+        %endif
+          %addtorecord canOutputArg GlobalInitialized TLC_TRUE
+        %endif
+      %endif
+    %endforeach
+    %assign simpIface = ::CompiledModel.RTWCGModules.RTWCGModule[system.CGIRModuleIdx].SimplifiedInterface
+    %if FcnGlobalArgNeeded(RTMArgDef,currentTID,isRateGrouping) && !(SLibIsSelfStructured() && (simpIface || IsModelRefScalableBuild()))
+      %<tsysRTM> = %<GetSimStructExpr(system, ::tSimStruct)>;
+    %endif
+
+    %if FcnGlobalArgNeeded(ContStatesArgDef,currentTID,isRateGrouping)
+      %<FcnSysVarGroupNonreusedName(system,"ContStates")> = localX;
+    %endif
+    %if FcnGlobalArgNeeded(ContStatesDerivativeArgDef,currentTID,isRateGrouping)
+      %<FcnSysVarGroupNonreusedName(system,"ContStatesDerivative")> = localXdot; 
+    %endif
+    %if FcnGlobalArgNeeded(ContStatesDisabledArgDef,currentTID,isRateGrouping)
+      %<FcnSysVarGroupNonreusedName(system,"ContStatesDisabled")> = localXdis;
+    %endif
+    %if FcnGlobalArgNeeded(ContStatesAbsoluteToleranceArgDef,currentTID,isRateGrouping)
+      %<FcnSysVarGroupNonreusedName(system,"ContStatesAbsoluteTolerance")> = localXAbsTol;
+    %endif
+    %if FcnGlobalArgNeeded(ZCSVArgDef,currentTID,isRateGrouping)
+      %<FcnSysVarGroupNonreusedName(system,"ZCSV")>  = localZCSV;
+    %endif
+  %endwith
+  %closefile tmpbuf
+  %if (!ISFIELD(system,"ContainsNonreusedFcn") || system.ContainsNonreusedFcn == 0) && ...
+    (::BlockFcn != "Registration")
+    %% In the model reference registaration function, we may access global 
+    %% identifiers.
+    
+    %assert WHITE_SPACE(tmpbuf)
+  %endif
+  %return tmpbuf
+%endfunction  %% LibInitializeGlobalVars
+  
+%% Function: LibDeclareGlobalVars ==============================================
+%% Abstract:
+%%   For the given system, declare the global variables that are used by any
+%% nonreusable functions that live below this system.  The function may be
+%% passed a string to prepend the declaration (such as "extern")
+%function LibDeclareGlobalVars(system, extern) void
+  %% We only need to declare global variables
+  %% (1) if we are generating model reference target, and the
+  %%     specified system is the model reference base subsystem
+  %% (2) when the AllowNoArgFcnInReusedFcn is on  
+  %if !(::CompiledModel.AllowNoArgFcnInReusedFcn) || ...
+    (IsModelReferenceTarget() && !IsModelReferenceBaseSys(system))
+    %return ""
+  %endif
+  %assign simpIface = ::CompiledModel.RTWCGModules.RTWCGModule[system.CGIRModuleIdx].SimplifiedInterface
+  %openfile tmpbuf
+  %with system.Interface
+    %foreach argIdx=NumCanonicalDWorkArgDefs
+      %if SystemGlobalDeclIsNeeded(CanonicalDWorkArgDef[argIdx])
+        %assign canDWork = CanonicalDWorkArgDef[argIdx]
+        %assign dwIdx    = canDWork.FirstSignalSrc %% global idx
+	%assign dwRec    = ::CompiledModel.DWorks.DWork[dwIdx]
+        %assign dwId     = LibGetRecordIdentifier(canDWork)
+	%assign dataType = SLibGetRecordDataTypeName(dwRec, "")
+	%%
+	%% Example:
+	%%   Scalar signal: void foo(real_T *a)
+	%%   Wide signal:   void foo(real_T b[7])
+	%%
+        %<extern> %<dataType> *%<canDWork.GlobalIdentifier>;
+      %endif
+    %endforeach
+    %foreach argIdx = NumCanonicalPrmArgDefs
+      %if SystemGlobalDeclIsNeeded(CanonicalPrmArgDef[argIdx])
+        %assign canPrmDef = CanonicalPrmArgDef[argIdx]
+        %assign   identi = LibGetRecordIdentifier(canPrmDef)
+        %assign dataType = SLibGetRecordDataTypeName(canPrmDef, "")
+	%assign    width = LibBlockParameterWidth(canPrmDef)
+        %assign    isPtr = ((canPrmDef.DeclareAsPointer == "yes") || (width > 1))
+        %assign      ptr = isPtr ? "*" : ""
+        %assign optConst =  isPtr ? "const " : ""
+        %assign   argDef = "%<identi>"
+        %<extern> %<optConst> %<dataType> %<ptr>%<canPrmDef.GlobalIdentifier>;
+      %endif
+    %endforeach
+    %foreach argIdx=NumCanonicalInputArgDefs
+      %if SystemGlobalDeclIsNeeded(CanonicalInputArgDef[argIdx])
+        %assign ci = CanonicalInputArgDef[argIdx]
+        %assign dataType = SLibGetRecordDataTypeName(ci, "")
+	    %assign isPtr = (LibGetRecordWidth(ci)>1 || ci.DeclareAsPointer == "yes")
+        %assign ptr   =  isPtr ? "*" : ""
+        %assign optConst =  isPtr ? "const " : ""
+        %assign comment = ""
+        %if ISFIELD(ci, "GrSrc")
+          %assign comment  = "/* " + SLibGrBlockCommentName(ci.GrSrc) + " */"
+        %endif
+        %if !ISFIELD(ci,"VarGroupIdx")
+          %<extern> %<optConst> %<dataType> %<ptr>%<ci.GlobalIdentifier>; %<comment>
+        %endif
+      %endif
+    %endforeach
+    %foreach argIdx=NumCanonicalOutputArgDefs
+      %if SystemGlobalDeclIsNeeded(CanonicalOutputArgDef[argIdx])
+        %assign co = CanonicalOutputArgDef[argIdx]
+        %assign dataType = SLibGetRecordDataTypeName(co, "")
+        %% The comment will be based on the root outport that the block is
+        %% feeding.
+        %assign comment = ""
+        %if ISFIELD(co, "RootOutputIdx")
+          %% Get the external outputs record that corresponds to this output 
+          %% index.
+          %assign extOut = ExternalOutputs.ExternalOutput[co.RootOutputIdx]
+          %assign outName = System[extOut.Block[0]].Block[extOut.Block[1]].Name
+          %assign comment  = "/* '" + outName + "' */"
+        %endif
+        %if !ISFIELD(co,"VarGroupIdx")
+          %<extern> %<dataType> *%<co.GlobalIdentifier>; %<comment>
+        %endif
+      %endif
+    %endforeach
+    %if SystemGlobalDeclIsNeeded(RTMArgDef) && !(SLibIsSelfStructured() && (simpIface || IsModelRefScalableBuild()))
+      %<extern> %<::tSimStructType> *%<tsysRTM>;
+    %endif
+    %if SystemGlobalDeclIsNeeded(ContStatesArgDef)
+      %<extern> %<FcnSysVarGroupType(system,"ContStates")> *%<FcnSysVarGroupNonreusedName(system,"ContStates")>;
+    %endif
+    %if SystemGlobalDeclIsNeeded(ContStatesDerivativeArgDef)
+      %<extern> %<FcnSysVarGroupType(system,"ContStatesDerivative")> *%<FcnSysVarGroupNonreusedName(system,"ContStatesDerivative")>;
+    %endif
+    %if SystemGlobalDeclIsNeeded(ContStatesDisabledArgDef)
+      %<extern> %<FcnSysVarGroupType(system,"ContStatesDisabled")> *%<FcnSysVarGroupNonreusedName(system,"ContStatesDisabled")>;
+    %endif
+    %if SystemGlobalDeclIsNeeded(ContStatesAbsoluteToleranceArgDef)
+      %<extern> %<FcnSysVarGroupType(system,"ContStatesAbsoluteTolerance")> *%<FcnSysVarGroupNonreusedName(system,"ContStatesAbsoluteTolerance")>;
+    %endif
+    %if SystemGlobalDeclIsNeeded(ZCSVArgDef)
+      %<extern> %<FcnSysVarGroupType(system,"ZCSV")> *%<FcnSysVarGroupNonreusedName(system,"ZCSV")>;
+    %endif
+  %endwith
+  %closefile tmpbuf
+  %if !ISFIELD(system,"ContainsNonreusedFcn") || ...
+    system.ContainsNonreusedFcn == 0
+    %assert WHITE_SPACE(tmpbuf)
+  %endif
+  %return tmpbuf
+%endfunction  %% LibDeclareGlobalVars
+
+
+%% Function: SLibGlobalFileHandling ============================================
+%% Abstract:
+%%  If we are allowing nonreusable functions to live inside reusable functions, 
+%% then handle all necessary extern global declarations in subsystem files.
+%function SLibGlobalFileHandling(fileOwnerSystem, system) void
+  %% system will handle #including any reusable parent filenames.
+  %if ISFIELD(fileOwnerSystem,"IncludedReusableParentHeaderFiles")
+    %foreach idx = SIZE(fileOwnerSystem.IncludedReusableParentHeaderFiles,1)
+      %assign sys = System[fileOwnerSystem.IncludedReusableParentHeaderFiles[idx]]
+      %assign parentName = SLibGetSystemOutputHdrFileBaseName(sys)
+      %% Don't include root header file, since this is already included
+      %if parentName != ::CompiledModel.Name
+        %openfile tmpBuf
+        /* Include %<parentName>.h for global extern declarations */
+        #include "%<parentName>.h"
+        
+        %closefile tmpBuf
+        %<SLibCacheSystemCodeToFile("sys_src_incl", system, tmpBuf)>
+      %endif
+    %endforeach
+  %endif
+
+  %% The file name owner for opFile will handle declaring any 
+  %% extern variables from reusable parents.
+  %if ISFIELD(fileOwnerSystem,"IncludedReusableParentSystemIdx")
+    %foreach idx = SIZE(fileOwnerSystem.IncludedReusableParentSystemIdx,1)
+      %assign sys = System[fileOwnerSystem.IncludedReusableParentSystemIdx[idx]]
+      %if !GenerateClassInterface
+        %assign externBuf = LibDeclareGlobalVars(sys, "extern")
+      %else
+        %% GenerateClassInterface == true. System level global variables have been
+        %% moved to the class scope, and thus there is no need to declare them at the
+        %% global scope
+        %assign externBuf = ""
+      %endif
+      %assign sysInfo   = GetSystemNameForComments(sys)
+      %if !WHITE_SPACE(externBuf)
+        %openfile tmpBuf
+        %if IsModelReferenceBaseSys(sys) 
+          /* Extern declarations from %<sysInfo> */
+        %else
+          /* Extern declarations from reusable %<sysInfo> */
+        %endif
+        %<externBuf>
+        
+        %closefile tmpBuf
+        %<SLibCacheSystemCodeToFile("sys_extern_data_defn", system, ...
+          tmpBuf)>
+      %endif
+    %endforeach
+  %endif
+%endfunction
+
+%endif %% _GLOBALSYSVAR_
+
+%% [EOF] globalsysvar.tlc

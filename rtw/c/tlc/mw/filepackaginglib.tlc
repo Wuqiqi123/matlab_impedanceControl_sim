@@ -1,0 +1,330 @@
+%% 
+%%
+%% Copyright 2009-2017 The MathWorks, Inc.
+%%
+
+%if EXISTS("_FILEPACKAGINGLIB_") == 0
+%assign _FILEPACKAGINGLIB_ = 1
+
+%% Function: SLibIsCompactFileFormat() ===============================
+%% Abstract:
+%%   Is file package foramt a compact format (including compact file 
+%%   format with separate data file)?
+%% 
+%function SLibIsCompactFileFormat()
+  %assign ret = TLC_FALSE
+  %if SLibIsERTTarget()
+    %if ::CompiledModel.ConfigSet.ERTFilePackagingFormat == "Compact" || ...
+      ::CompiledModel.ConfigSet.ERTFilePackagingFormat == "CompactWithDataFile"
+      %assign ret =  TLC_TRUE
+    %endif
+  %endif
+  %return ret
+%endfunction %% SLibIsCompactFileFormat
+
+%% Function: SLibGenModelTypesFile() ===============================
+%% Abstract:
+%%   Return true if model_types.h is needed in Compact file format. 
+%% Case 1: there are Code Variants 
+%% Case 2: there are non-shared custom files generated for custom storage class
+%% 
+%function SLibGenModelTypesFile()
+  %if SLibIsCompactFileFormat() && ...
+      !SLibGenCustomNonSharedHeaderFileForCSC()
+      %return TLC_FALSE
+  %endif
+  %return TLC_TRUE
+%endfunction %% SLibGenModelTypesFile
+
+%% Function: FcnGetFileNameTableID(codeGroupName) ====================
+%% Abstract:
+%%    Lookup the id of file name table for for codeGroupName.
+%% 
+%function FcnGetFileNameTableID(codeGroupName)
+  %assign value = GETFIELD(::CompiledModel.FilePackagingTable, codeGroupName)
+  %assign fileName_ID = value[0]
+  %assert (TYPE(fileName_ID)=="Number")
+  %return fileName_ID
+%endfunction %% FcnGetFileNameTableID
+
+%% Function: SLibGetFileNameForCode(codeGroupName) ====================
+%% Abstract:
+%%    Lookup the file name in file packaging table for codeGroupName 
+%% 
+%function SLibGetFileNameForCode(codeGroupName)
+  %assign fileName_ID = FcnGetFileNameTableID(codeGroupName)
+  %assign fileName = ::CompiledModel.FileNameTable.File%<fileName_ID>.Name
+  %return fileName
+%endfunction %% SLibGetFileNameForCode
+
+%% Function: SLibGetSectionNameForCode(codeGroupName)
+%% Abstract:
+%%    Lookup the section name in file packaging table for codeGroupName
+%%
+%function SLibGetSectionNameForCode(codeGroupName)
+  %assign value = GETFIELD(::CompiledModel.FilePackagingTable, codeGroupName)
+  %assign sectionName_ID = value[1]
+  %assert(TYPE(sectionName_ID)=="Number")
+  %assign sectionName = ::CompiledModel.FileSectionTable.Section%<sectionName_ID>
+  %return sectionName
+%endfunction %% SLibGetSectionNameForCode
+
+%% Function: SLibGetFileRecForCode(codeGroupName) =====================
+%% Abstract:
+%%    Return the file record to hold specified codeGroup. Return "" if 
+%%    this codeGroup should not be generated.
+%%
+%function SLibGetFileRecForCode(codeGroupName)
+  %assign fileName_ID = FcnGetFileNameTableID(codeGroupName)
+  %assert (TYPE(fileName_ID)=="Number")
+  %assign fileName = ::CompiledModel.FileNameTable.File%<fileName_ID>.Name
+  %if ISEMPTY(fileName)
+    %return ""
+  %endif
+  %assign fileCreator = ::CompiledModel.FileNameTable.File%<fileName_ID>.Creator
+  %assign GroupName =  ::CompiledModel.FileNameTable.File%<fileName_ID>.Group
+  %assign type = ::CompiledModel.FileNameTable.File%<fileName_ID>.Type
+  %assign fileRec = SLibAddModelFile(type, fileCreator, fileName)
+  %<SLibSetModelFileAttribute(fileRec, "Group", GroupName)>
+  %return fileRec
+%endfunction %% SLibGetFileRecForCode
+
+%% Function: SLibCacheCodeToFile(codeGroupName, buffer) ===============
+%% Abstract:
+%%    Place code buffer into right section of a right file record according to 
+%%  file package table.
+%%
+%function SLibCacheCodeToFile(codeGroupName, buffer) void
+  %assign fileRec = SLibGetFileRecForCode(codeGroupName)
+  %assign section = SLibGetSectionNameForCode(codeGroupName)
+  %if !WHITE_SPACE(buffer) && !ISEMPTY(fileRec) && !ISEMPTY(section)
+    %<SLibSetModelFileAttribute(fileRec, section, buffer)>
+  %endif
+%endfunction %% SLibCacheCodeToFile
+
+%% Function: SLibGetFileNameForSystemCode(codeGroupName, system) ======
+%% Abstract:
+%%    Lookup the file name in file packaging table for system 
+%%  codeGroupName.
+%%    system is a system record. (Include <root> system)
+%%
+%function SLibGetFileNameForSystemCode(codeGroupName, system)
+  %if system.SystemSourceFileName != GetRootSystemSourceFileName()
+    %% go to separate subsystem file
+    %assign systemSrcFileName = SLibGetSystemOutputSrcFileBaseName(system) 
+    %assign systemHdrFileName = SLibGetSystemOutputHdrFileBaseName(system)
+    %assign systemPrivHdrFileName = systemHdrFileName
+  %else
+    %% go to model file
+    %assign systemHdrFileName = SLibGetFileNameForCode("mdl_hdr")
+    %assign systemSrcFileName = SLibGetFileNameForCode("mdl_src")
+    %assign systemPrivHdrFileName = systemHdrFileName + "_private"
+  %endif
+  %%modify
+  %assign subsystemDataFileName = systemSrcFileName + "_data"
+  %assign value = GETFIELD(::CompiledModel.systemFilePackagingTable, codeGroupName)
+  %assign fileName_ID = value[0]
+  %assert (TYPE(fileName_ID)=="Number")
+  %assign fileNameString = ::CompiledModel.systemFileNameTable.File%<fileName_ID>.Name
+  %assign fileName = %<fileNameString>
+  %return fileName
+%endfunction %% SLibGetFileNameForSystemCode
+
+%% Function: SLibGetSectionNameForSystemCode(codeGroupName,system) ====
+%% Abstract:
+%%    Lookup the section name in file packaging table for system 
+%%  codeGroupName.
+%%    system is a system record. (Include <root> system)
+%%
+%function SLibGetSectionNameForSystemCode(codeGroupName, system)
+  %assign value = GETFIELD(::CompiledModel.systemFilePackagingTable, codeGroupName)  
+  %assign sectionName_ID = value[1]
+  %assert(TYPE(sectionName_ID)=="Number")
+  %assign sectionName = ::CompiledModel.FileSectionTable.Section%<sectionName_ID>
+  %return sectionName
+%endfunction %% SLibGetSectionNameForSystemCode
+
+%% Function: SLibGetFileRecForSystemCode(codeGroupName, system, isRLS, isGlobalServer) =======
+%% Abstract:
+%%    Return the file record to hold specified system codeGroup.
+%%    Return "" if codeGroup should not be generated.
+%%    system is a system record. (Include <root> system)
+%%    If isRLS, the file goes into the utilities group.
+%%    If isGlobalServer and a header file, the file goes into the utilities group.
+%%
+%function SLibGetFileRecForSystemCode(codeGroupName, system, isRLS, isGlobalServer)
+  %assign fileName = SLibGetFileNameForSystemCode(codeGroupName, system)
+  %assign value = GETFIELD(::CompiledModel.systemFilePackagingTable, codeGroupName)
+  %assign fileName_ID = value[0]
+  %assert (TYPE(fileName_ID)=="Number")
+  %assign type = ::CompiledModel.systemFileNameTable.File%<fileName_ID>.Type
+  %assign globalServerHeader = isGlobalServer && (type == "SystemHeader")
+  %if globalServerHeader && !SLibIsCompactFileFormat()
+    %assign fileName = fileName + "_private"
+  %endif
+  %if ISEMPTY(fileName)
+    %return fileName
+  %endif
+  %assign fileRec = SLibAddModelFile(type, "Simulink", fileName)
+  %if system.SystemSourceFileName == ::CompiledModel.System[GetBaseSystemIdx()].SystemSourceFileName
+    %<SLibSetModelFileAttribute(fileRec, "Group", "model")>
+  %else
+    %if isRLS
+      %<SLibSetModelFileAttribute(fileRec, "Group", "utility")>
+    %else
+      %<SLibSetModelFileAttribute(fileRec, "Group", "subsystem")>
+    %endif
+  %endif
+  %return fileRec
+%endfunction %% SLibCacheSystemCodeToFile
+
+%% Function: SLibCacheSystemCodeToFile(codeGroupName, system, buffer) =========
+%% Abstract:
+%%    Place code buffer into right section of a right file record according to 
+%%  system file package table.
+%%    system is a system record. (Include <root> system)
+%%
+%function SLibCacheSystemCodeToFile(codeGroupName, system, buffer) void
+  %if LibIsSystemExistingLibrary(system)
+    %return
+  %endif
+  %assign ownerFile = ::CompiledModel.System[system.FileNameOwnerIdx]
+  %assign isRls = LibSystemIsReusedLibraryFcn(ownerFile)
+  %assign isGlobalServer = LibIsGlobalServer(ownerFile)
+  %assign fileRec = SLibGetFileRecForSystemCode(codeGroupName, system, isRls, isGlobalServer)
+  %assign sectionName = SLibGetSectionNameForSystemCode(codeGroupName, system)
+  %if !WHITE_SPACE(buffer) && !ISEMPTY(fileRec) && !ISEMPTY(sectionName)
+    %<SLibSetModelFileAttribute(fileRec, sectionName, buffer)>
+  %endif
+%endfunction %% SLibCacheSystemCodeToFile
+
+%% Function: SLibGetFileRecForUtilCode(codeGroupName, utilFileName) ============
+%% Abstract:
+%%    Return the file record to hold specified utility codeGroup. Return "" 
+%% if this codeGroup should not be generated. Return the passed-in fileRec if 
+%% instruced by the file packaging table ("$pass_in_filename$" in FPT).
+%%
+%function SLibGetFileRecForUtilCode(codeGroupName, utilFileName)
+  %assign fileName_ID = FcnGetFileNameTableID(codeGroupName)
+  %assert (TYPE(fileName_ID)=="Number")
+  %assign fileName = ::CompiledModel.FileNameTable.File%<fileName_ID>.Name
+  %if ISEMPTY(fileName)
+    %return ""
+  %endif
+  %if fileName == "$pass_in_filename$"
+    %assign fileName = utilFileName
+  %endif
+  %assign fileCreator = ::CompiledModel.FileNameTable.File%<fileName_ID>.Creator
+  %assign GroupName =  ::CompiledModel.FileNameTable.File%<fileName_ID>.Group
+  %assign type = ::CompiledModel.FileNameTable.File%<fileName_ID>.Type
+  %assign fileRec = SLibAddModelFile(type, fileCreator, fileName)
+  %<SLibSetModelFileAttribute(fileRec, "Group", GroupName)>
+  %return fileRec
+%endfunction %% SLibGetFileRecForUtilCode
+
+%% Function: SLibCacheUtilCodeToFile(codeGroupName, utilFileRec, buffer) ======
+%% Abstract:
+%%    Place utility code buffer into the right section of a right file record 
+%%  according to utility file package table.
+%%    
+%function SLibCacheUtilCodeToFile(codeGroupName, utilFileRec, buffer) void
+  %assign utilRecName = LibGetFileRecordName(utilFileRec)
+  %assign fileRec = SLibGetFileRecForUtilCode(codeGroupName, utilRecName)
+  %assign sectionName = SLibGetSectionNameForCode(codeGroupName)
+  %if !WHITE_SPACE(buffer) && !ISEMPTY(fileRec) && !ISEMPTY(sectionName)
+    %if ISEMPTY(fileRec)
+      %% if not specified in File Packaging Table, use the passed-in fileRec
+      %<SLibSetModelFileAttribute(utilFileRec, sectionName, buffer)>
+    %else
+      %% if specifiled in File Packaging Table, do not use passed-in fileRec
+      %<SLibSetModelFileAttribute(fileRec, sectionName, buffer)>      
+    %endif
+  %endif
+%endfunction %% SLibCacheUtilCodeToFile
+
+%% Function: SLibFilterUtilSourceFile(utilFileRec) =====
+%% Abstract:
+%%   Request to filter out utility source file.
+%% 
+%function SLibFilterUtilSourceFile(utilFileRec)  void
+  %if !SLibIsCompactFileFormat() || ::CompiledModel.GenUtilsSrcInSharedLocation == 1
+    %<SLibSetModelFileAttribute(utilFileRec, "Filter", 1)>
+  %endif
+%endfunction %% SLibFilterUtilSourceFile
+
+%% Function: SLibCacheMacroToUtilityFile(macroName,macroBuf,codeGroup,fileRec)=
+%% Abstract:
+%%   Cache macro buf into fileRec only when it has not been cached.
+%%  
+%function SLibCacheMacroToUtilityFile(macroName, macroBuf, codeGroup, fileRec) void
+  %assign definedMacro = SLibDirectAccessGetFileAttribute(fileRec, "DefinedMacro")
+
+  %if ISEMPTY(FEVAL("strfind", definedMacro, macroName + ", "))
+    %assign newDefinedMacro = definedMacro + macroName + ", "
+    %<SLibDirectAccessSetFileAttribute(fileRec, "DefinedMacro", newDefinedMacro)>
+    %<SLibCacheUtilCodeToFile(codeGroup, fileRec, macroBuf)>
+  %endif
+%endfunction %% SLibCacheMacroToUtilityFile
+
+%% Function: FcnGenOpenExternCForCPP() =========================================
+%function FcnGenOpenExternCForCPP() Output
+  %if GenCPP
+    %if SLibIsCompactFileFormat()
+      extern "C" {
+    %else
+      #ifdef __cplusplus
+      extern "C" {
+      #endif
+    %endif
+  %endif
+%endfunction %% FcnGenOpenExternCForCPP
+
+%% Function: FcnGenCloseExternCForCPP() ========================================
+%function FcnGenCloseExternCForCPP() Output
+  %if GenCPP
+    %if SLibIsCompactFileFormat()
+      } /* extern "C" */
+    %else
+      #ifdef __cplusplus
+      } /* extern "C" */
+      #endif
+    %endif
+  %endif
+%endfunction %% FcnGenCloseExternCForCPP
+
+%% Function: SLibIncludePrivateHeader() =========================================
+%function SLibIncludePrivateHeader() Output
+  %assign mdlPrivHdrFileName = SLibGetFileNameForCode("mdl_priv_hdr")
+  %if !WHITE_SPACE(mdlPrivHdrFileName)
+    #include "%<mdlPrivHdrFileName>.h"
+  %endif 
+%endfunction %% SLibIncludePrivateHeader
+
+%% Function: SLibIncludeModelTypesHeader() =========================================
+%function  SLibIncludeModelTypesHeader() Output
+  %assign mdlTypesHdrFileName = SLibGetFileNameForCode("mdl_types_hdr")
+  %if !WHITE_SPACE(mdlTypesHdrFileName)
+    #include "%<mdlTypesHdrFileName>.h"
+  %endif 
+%endfunction %% SLibIncludeModelTypesHeader
+
+%% Function: SLibIncludeModelHeader() =========================================
+%function SLibIncludeModelHeader() Output
+  %assign mdlHeaderFile = SLibGetFileNameForCode("mdl_hdr")
+  %if !WHITE_SPACE(mdlHeaderFile)
+    #include "%<mdlHeaderFile>.h"
+  %endif
+%endfunction %% SLibIncludeModelHeader
+
+%% Function: SLibIncludeRTnonFiniteHeader() =====================================
+%function SLibIncludeRTnonFiniteHeader() Output
+  %if SLibRealNonFinitesRequired() && ...
+    (!SLibIsCompactFileFormat() || ::CompiledModel.GenUtilsSrcInSharedLocation == 1)
+    #include "rt_nonfinite.h"
+  %endif
+%endfunction %% SLibIncludeRTnonFiniteHeader
+
+%include "filepackagingtable.tlc"
+
+%endif %% _FILEPACKAGINGLIB_
+%% [EOF] filepackaginglib.tlc

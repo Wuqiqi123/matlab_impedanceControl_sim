@@ -1,0 +1,2027 @@
+%%
+%% Copyright 1994-2016 The MathWorks, Inc.
+%%
+%% Abstract: This TLC library file contains library routines in support
+%%           of the Fixed-Point Blockset.
+
+%%
+%% create variable to indicate that this file has already been loaded
+%%
+%if EXISTS("_FIXPTLIB_") == 0
+%assign _FIXPTLIB_ = 1
+
+%include "fixpt_version.tlc"
+
+%addtorecord ::CompiledModel IncludeFloatDotH 0
+
+%if EXISTS("FixPtLookup_opt_pow2") == 0
+  %%
+  %% Unless overridden, evenly spaced lookup tables will be
+  %% optimized for the case when the spacing is a power of
+  %% 2.  The math is much simpler, smaller, and faster for
+  %% this case.  However, if minimum code size is the goal
+  %% then a user may prefer not to optimize this case.
+  %%   If the users model also contains other evenly spaced
+  %% lookup tables, especially ones that are not power of
+  %% 2 spacing, then a few general functions can handle
+  %% all the cases and thereby reduce overall code size
+  %% (but decrease overall speed)
+  %%
+  %assign FixPtLookup_opt_pow2 = 1
+%endif
+
+%% This variable must be defined for TLC to work properly
+%% with fixed point blocks.  Eventually, this should be
+%% automatically defined by the core TLC files, but for now
+%% it must be defined here.
+%%
+%assign SupportDataTypes = 1
+
+%%
+%% include target specific info
+%%
+%include "fixpttarget.tlc"
+
+
+%function LibCacheFixptOddSizeTypedefs(buffer) void
+  %if !ISFIELD(::CompiledModel, "FixptOddSizeTypedefs")
+    %addtorecord ::CompiledModel FixptOddSizeTypedefs ""
+  %endif
+  %assign ::CompiledModel.FixptOddSizeTypedefs = ::CompiledModel.FixptOddSizeTypedefs + buffer
+%endfunction
+
+
+%assign PreDefinedIntegerType = [8,16,32]
+
+%function FixPt_RegisterLongAsBuiltInType( ) void
+  %% set up the new  target defined oversized(>32) long type
+  %assign ::CompiledModel.tSS_LONG = ::CompiledModel.DataTypes.NumDataTypes
+   %assign ::CompiledModel.tSS_ULONG = ::CompiledModel.DataTypes.NumDataTypes + 1
+   %assign ::CompiledModel.DataTypes.NumDataTypes = ::CompiledModel.DataTypes.NumDataTypes + 2
+
+   %% register signed long
+   %assign newDTName = "int%<IntegerSizes.LongNumBits>_T"
+   %assign newCDTName = "cint%<IntegerSizes.LongNumBits>_T"
+   %assign newEnuName = "SS_INT%<IntegerSizes.LongNumBits>"
+   %assign dtSize = IntegerSizes.LongNumBits / IntegerSizes.CharNumBits
+   %addtorecord ::CompiledModel.DataTypes                                     \
+   DataType {                                                               \
+     ActualBits                    %<IntegerSizes.LongNumBits>              \
+     Bias 0                                                                 \
+     ComplexGroundName             ""                                       \
+     ComplexGroundReqInMemory      0                                        \
+     ComplexName                   newCDTName                               \
+     ConvertBetweenTLCFcnFile      ""                                       \
+     ConvertBetweenTLCFcnName      "SLibConvertBetweenBuiltin"              \
+     DTName                        newDTName                                \
+     DataTypeName                  newDTName                                \
+     Enum                          newEnuName                               \
+     FixedExp                      0                                        \
+     FracSlope                     1                                        \
+     GroundHasNonZero              0                                        \
+     GroundInit                    ""                                       \
+     GroundName                    ""                                       \
+     GroundReqInMemory             0                                        \
+     GroundValue                   0                                        \
+     HasObject                     0                                        \
+     HeaderFile                    ""                                       \
+     Id                            %<::CompiledModel.tSS_LONG>                \
+     IdAliasedThruTo               %<::CompiledModel.tSS_LONG>                \
+     IdAliasedTo                   -10                                      \
+     IsBus                         0                                        \
+     IsEnumType                    0                                        \
+     IsFixedPoint                  0                                        \
+     IsPositiveTLCFcnFile          ""                                       \
+     IsPositiveTLCFcnName          "SLibIsPositiveBuiltin"                  \
+     IsSigned                      1                                        \
+     Name                          newDTName                                \
+     NativeType                    newDTName                                \
+     NumElements                   0                                        \
+     RequiredBits                  %<IntegerSizes.LongNumBits>              \
+     SignTLCFcnFile                ""                                       \
+     SignTLCFcnName                "SLibSignBuiltin"                        \
+     Size                          %<dtSize>                                \
+     StorageId                     %<::CompiledModel.tSS_LONG>                \
+   }
+
+   %% register unsigned long
+   %assign newDTName = "uint%<IntegerSizes.LongNumBits>_T"
+   %assign newCDTName = "cuint%<IntegerSizes.LongNumBits>_T"
+   %assign newEnuName = "SS_UINT%<IntegerSizes.LongNumBits>"
+   %addtorecord ::CompiledModel.DataTypes                                     \
+   DataType {                                                               \
+     ActualBits                    %<IntegerSizes.LongNumBits>              \
+     Bias 0                                                                 \
+     ComplexGroundName             ""                                       \
+     ComplexGroundReqInMemory      0                                        \
+     ComplexName                   newCDTName                               \
+     ConvertBetweenTLCFcnFile      ""                                       \
+     ConvertBetweenTLCFcnName      "SLibConvertBetweenBuiltin"              \
+     DTName                        newDTName                                \
+     DataTypeName                  newDTName                                \
+     Enum                          newEnuName                               \
+     FixedExp                      0                                        \
+     FracSlope                     1                                        \
+     GroundHasNonZero              0                                        \
+     GroundInit                    ""                                       \
+     GroundName                    ""                                       \
+     GroundReqInMemory             0                                        \
+     GroundValue                   0U                                       \
+     HasObject                     0                                        \
+     HeaderFile                    ""                                       \
+     Id                            %<::CompiledModel.tSS_ULONG>               \
+     IdAliasedThruTo               %<::CompiledModel.tSS_ULONG>               \
+     IdAliasedTo                   -10                                      \
+     IsBus                         0                                        \
+     IsEnumType                    0                                        \
+     IsFixedPoint                  0                                        \
+     IsPositiveTLCFcnFile          ""                                       \
+     IsPositiveTLCFcnName          "SLibIsPositiveBuiltin"                  \
+     IsSigned                      0                                        \
+     Name                          newDTName                                \
+     NativeType                    newDTName                                \
+     NumElements                   0                                        \
+     RequiredBits                  %<IntegerSizes.LongNumBits>              \
+     SignTLCFcnFile                ""                                       \
+     SignTLCFcnName                "SLibSignBuiltin"                        \
+     Size                          %<dtSize>                                \
+     StorageId                     %<::CompiledModel.tSS_ULONG>               \
+   }
+    %openfile utilityDef
+    #ifndef SS_INT%<IntegerSizes.LongNumBits>
+    #define SS_INT%<IntegerSizes.LongNumBits>  %<::CompiledModel.tSS_LONG>
+    #endif
+    #ifndef SS_UINT%<IntegerSizes.LongNumBits>
+    #define SS_UINT%<IntegerSizes.LongNumBits>  %<::CompiledModel.tSS_ULONG>
+    #endif
+    %closefile utilityDef
+    %<LibCacheFixptOddSizeTypedefs(utilityDef)>\
+    %undef utilityDef
+   %assign ::PreDefinedIntegerType = FEVAL("union",::PreDefinedIntegerType, IntegerSizes.LongNumBits)
+ %endfunction
+
+
+ %function FixPt_RegisterLongLongAsBuiltInType( ) void
+  %% set up the new  target defined oversized(>=64) long long type
+  %assign ::CompiledModel.tSS_LONG_LONG = ::CompiledModel.DataTypes.NumDataTypes
+   %assign ::CompiledModel.tSS_ULONG_LONG = ::CompiledModel.DataTypes.NumDataTypes + 1
+   %assign ::CompiledModel.DataTypes.NumDataTypes = ::CompiledModel.DataTypes.NumDataTypes + 2
+
+   %% register signed long long
+   %assign newDTName = "int%<IntegerSizes.LongLongNumBits>_T"
+   %assign newCDTName = "cint%<IntegerSizes.LongLongNumBits>_T"
+   %assign newEnuName = "SS_INT%<IntegerSizes.LongLongNumBits>"
+   %assign dtSize = IntegerSizes.LongLongNumBits / IntegerSizes.CharNumBits
+   %addtorecord ::CompiledModel.DataTypes                                   \
+   DataType {                                                               \
+     ActualBits                    %<IntegerSizes.LongLongNumBits>          \
+     Bias                          0                                        \
+     ComplexGroundName             ""                                       \
+     ComplexGroundReqInMemory      0                                        \
+     ComplexName                   newCDTName                               \
+     ConvertBetweenTLCFcnFile      ""                                       \
+     ConvertBetweenTLCFcnName      "SLibConvertBetweenBuiltin"              \
+     DTName                        newDTName                                \
+     DataTypeName                  newDTName                                \
+     Enum                          newEnuName                               \
+     FixedExp                      0                                        \
+     FracSlope                     1                                        \
+     GroundHasNonZero              0                                        \
+     GroundInit                    ""                                       \
+     GroundName                    ""                                       \
+     GroundReqInMemory             0                                        \
+     GroundValue                   0                                        \
+     HasObject                     0                                        \
+     HeaderFile                    ""                                       \
+     Id                            %<::CompiledModel.tSS_LONG_LONG>         \
+     IdAliasedThruTo               %<::CompiledModel.tSS_LONG_LONG>         \
+     IdAliasedTo                   -10                                      \
+     IsBus                         0                                        \
+     IsEnumType                    0                                        \
+     IsFixedPoint                  0                                        \
+     IsPositiveTLCFcnFile          ""                                       \
+     IsPositiveTLCFcnName          "SLibIsPositiveBuiltin"                  \
+     IsSigned                      1                                        \
+     Name                          newDTName                                \
+     NativeType                    newDTName                                \
+     NumElements                   0                                        \
+     RequiredBits                  %<IntegerSizes.LongLongNumBits>          \
+     SignTLCFcnFile                ""                                       \
+     SignTLCFcnName                "SLibSignBuiltin"                        \
+     Size                          %<dtSize>                                \
+     StorageId                     %<::CompiledModel.tSS_LONG_LONG>         \
+   }
+
+   %% register unsigned long long
+   %assign newDTName = "uint%<IntegerSizes.LongLongNumBits>_T"
+   %assign newCDTName = "cuint%<IntegerSizes.LongLongNumBits>_T"
+   %assign newEnuName = "SS_UINT%<IntegerSizes.LongLongNumBits>"
+   %addtorecord ::CompiledModel.DataTypes                                   \
+   DataType {                                                               \
+     ActualBits                    %<IntegerSizes.LongLongNumBits>          \
+     Bias                          0                                        \
+     ComplexGroundName             ""                                       \
+     ComplexGroundReqInMemory      0                                        \
+     ComplexName                   newCDTName                               \
+     ConvertBetweenTLCFcnFile      ""                                       \
+     ConvertBetweenTLCFcnName      "SLibConvertBetweenBuiltin"              \
+     DTName                        newDTName                                \
+     DataTypeName                  newDTName                                \
+     Enum                          newEnuName                               \
+     FixedExp                      0                                        \
+     FracSlope                     1                                        \
+     GroundHasNonZero              0                                        \
+     GroundInit                    ""                                       \
+     GroundName                    ""                                       \
+     GroundReqInMemory             0                                        \
+     GroundValue                   0U                                       \
+     HasObject                     0                                        \
+     HeaderFile                    ""                                       \
+     Id                            %<::CompiledModel.tSS_ULONG_LONG>        \
+     IdAliasedThruTo               %<::CompiledModel.tSS_ULONG_LONG>        \
+     IdAliasedTo                   -10                                      \
+     IsBus                         0                                        \
+     IsEnumType                    0                                        \
+     IsFixedPoint                  0                                        \
+     IsPositiveTLCFcnFile          ""                                       \
+     IsPositiveTLCFcnName          "SLibIsPositiveBuiltin"                  \
+     IsSigned                      0                                        \
+     Name                          newDTName                                \
+     NativeType                    newDTName                                \
+     NumElements                   0                                        \
+     RequiredBits                  %<IntegerSizes.LongLongNumBits>          \
+     SignTLCFcnFile                ""                                       \
+     SignTLCFcnName                "SLibSignBuiltin"                        \
+     Size                          %<dtSize>                                \
+     StorageId                     %<::CompiledModel.tSS_ULONG_LONG>        \
+   }
+    %openfile utilityDef
+    #ifndef SS_INT%<IntegerSizes.LongLongNumBits>
+    #define SS_INT%<IntegerSizes.LongLongNumBits>  %<::CompiledModel.tSS_LONG_LONG>
+    #endif
+    #ifndef SS_UINT%<IntegerSizes.LongLongNumBits>
+    #define SS_UINT%<IntegerSizes.LongLongNumBits>  %<::CompiledModel.tSS_ULONG_LONG>
+    #endif
+    %closefile utilityDef
+    %<LibCacheFixptOddSizeTypedefs(utilityDef)>\
+    %undef utilityDef
+    %assign ::PreDefinedIntegerType = FEVAL("union",::PreDefinedIntegerType, IntegerSizes.LongLongNumBits)
+ %endfunction
+
+
+ %assign GeneratedMultiWordTypes = [8,16,32]
+ %%
+ %function FixPt_RegisterMultiWordTypes(nChunks, chunkType) void
+   %assign nBits = nChunks*LargestIntegerNumBits
+   %% if the target long type is not registerd yet, it is time to add it to the type table
+   %assign definedInt = FEVAL("intersect",::GeneratedMultiWordTypes,nBits)
+   %if !ISEMPTY(definedInt)
+     %return
+   %endif
+  %% set up the new  target defined oversized(>32) long type
+   %assign tSS_TYPE  = ::CompiledModel.DataTypes.NumDataTypes
+   %assign tSS_UTYPE = ::CompiledModel.DataTypes.NumDataTypes + 1
+   %assign ::CompiledModel.DataTypes.NumDataTypes = ::CompiledModel.DataTypes.NumDataTypes + 2
+
+   %% register signed largest integer
+   %assign newDTName = "int%<nBits>m_T"
+   %assign newCDTName = "cint%<nBits>m_T"
+   %if IntegerSizes.LongNumBits == LargestIntegerNumBits
+    %assign newEnuName = "SS_INT%<IntegerSizes.LongNumBits>"
+   %else
+    %assign newEnuName = "SS_INT%<IntegerSizes.LongLongNumBits>"
+   %endif
+   %assign dtSize = nBits / IntegerSizes.CharNumBits
+   %addtorecord ::CompiledModel.DataTypes                                   \
+   DataType {                                                               \
+     ActualBits                    %<nBits>                                 \
+     Bias 0                                                                 \
+     ComplexGroundName             ""                                       \
+     ComplexGroundReqInMemory      0                                        \
+     ComplexName                   newCDTName                               \
+     ConvertBetweenTLCFcnFile      ""                                       \
+     ConvertBetweenTLCFcnName      "SLibConvertBetweenBuiltin"              \
+     DTName                        newDTName                                \
+     DataTypeName                  newDTName                                \
+     Enum                          newEnuName                               \
+     FixedExp                      0                                        \
+     FracSlope                     1                                        \
+     GroundHasNonZero              0                                        \
+     GroundInit                    ""                                       \
+     GroundName                    ""                                       \
+     GroundReqInMemory             0                                        \
+     GroundValue                   0                                        \
+     HasObject                     0                                        \
+     HeaderFile                    ""                                       \
+     Id                            %<tSS_TYPE>                              \
+     IdAliasedThruTo               %<tSS_TYPE>                              \
+     IdAliasedTo                   -10                                      \
+     IsBus                         0                                        \
+     IsEnumType                    0                                        \
+     IsFixedPoint                  1                                        \
+     IsPositiveTLCFcnFile          ""                                       \
+     IsPositiveTLCFcnName          "SLibIsPositiveBuiltin"                  \
+     IsSigned                      1                                        \
+     Name                          newDTName                                \
+     NativeType                    newDTName                                \
+     NumElements                   0                                        \
+     RequiredBits                  %<nBits>                                 \
+     SignTLCFcnFile                ""                                       \
+     SignTLCFcnName                "SLibSignBuiltin"                        \
+     Size                          %<dtSize>                                \
+     StorageId                     %<tSS_TYPE>                              \
+   }
+
+   %addtorecord ::CompiledModel.DataTypes.DataType[tSS_TYPE]                \
+     Elements {                                                             \
+       Name             "chunks"                                            \
+       NumDimensions    1                                                   \
+       Dimensions       %<nChunks>                                          \
+       DataTypeId       %<chunkType>                                        \
+       Padding          0                                                   \
+       IsComplex        0                                                   \
+       IsFixedPoint     0                                                   \
+       Width            %<nChunks>                                          \
+       Offset           0                                                   \
+     }
+   %assign ::CompiledModel.DataTypes.DataType[tSS_TYPE] .NumElements = 1
+
+   %% register the largest integer
+   %assign newDTName = "uint%<nBits>m_T"
+   %assign newCDTName = "cuint%<nBits>m_T"
+   %assign newEnuName = "SS_UINT%<LargestIntegerNumBits>"
+   %addtorecord ::CompiledModel.DataTypes                                   \
+   DataType {                                                               \
+     ActualBits                    %<nBits>                                 \
+     Bias 0                                                                 \
+     ComplexGroundName             ""                                       \
+     ComplexGroundReqInMemory      0                                        \
+     ComplexName                   newCDTName                               \
+     ConvertBetweenTLCFcnFile      ""                                       \
+     ConvertBetweenTLCFcnName      "SLibConvertBetweenBuiltin"              \
+     DTName                        newDTName                                \
+     DataTypeName                  newDTName                                \
+     Enum                          newEnuName                               \
+     FixedExp                      0                                        \
+     FracSlope                     1                                        \
+     GroundHasNonZero              0                                        \
+     GroundInit                    ""                                       \
+     GroundName                    ""                                       \
+     GroundReqInMemory             0                                        \
+     GroundValue                   0U                                       \
+     HasObject                     0                                        \
+     HeaderFile                    ""                                       \
+     Id                            %<tSS_UTYPE>                             \
+     IdAliasedThruTo               %<tSS_UTYPE>                             \
+     IdAliasedTo                   -10                                      \
+     IsBus                         0                                        \
+     IsEnumType                    0                                        \
+     IsFixedPoint                  1                                        \
+     IsPositiveTLCFcnFile          ""                                       \
+     IsPositiveTLCFcnName          "SLibIsPositiveBuiltin"                  \
+     IsSigned                      0                                        \
+     Name                          newDTName                                \
+     NativeType                    newDTName                                \
+     NumElements                   0                                        \
+     RequiredBits                  %<nBits>                                 \
+     SignTLCFcnFile                ""                                       \
+     SignTLCFcnName                "SLibSignBuiltin"                        \
+     Size                          %<dtSize>                                \
+     StorageId                     %<tSS_UTYPE>                             \
+   }
+
+   %addtorecord ::CompiledModel.DataTypes.DataType[tSS_UTYPE]                 \
+     Elements {                                                             \
+       Name             "chunks"                                            \
+       NumDimensions    1                                                   \
+       Dimensions       %<nChunks>                                          \
+       DataTypeId       %<chunkType>                                        \
+       Padding          0                                                   \
+       IsComplex        0                                                   \
+       IsFixedPoint     0                                                   \
+       Width            %<nChunks>                                          \
+       Offset           0                                                   \
+     }
+   %assign ::CompiledModel.DataTypes.DataType[tSS_UTYPE] .NumElements = 1
+   %%assign ::PreDefinedIntegerType = FEVAL("union",::GeneratedMultiWordTypes, nBits)
+   %assign ::GeneratedMultiWordTypes = FEVAL("union",::GeneratedMultiWordTypes, nBits)
+ %endfunction
+
+%% This function returns whether the provided bits are a part of
+%% ::PreDefinedIntegerType
+%function fxpIsPreDefinedIntegerType( ActualBits ) void
+  %assign definedInt = FEVAL("intersect",::PreDefinedIntegerType,ActualBits)
+  %if ISEMPTY(definedInt)
+    %return TLC_FALSE
+  %else
+    %return TLC_TRUE
+  %endif
+%endfunction
+
+%% At this point tSS_LONG and tSS_LONG_LONG are not registered. In the case long = 64
+%% long long = (96 or 128), the signals with 64bit will not be registered.
+%% register long to 64 bit signal first before registering multiword types
+
+%function FixPt_DefineSingleWordDTLargerThanInt( dataTypeRec ) void
+
+  %assign curBits = FixPt_RequiredBits_2_ActualBits(dataTypeRec.RequiredBits)
+
+  %if curBits == IntegerSizes.LongNumBits
+    %% if the target long type is not registerd yet, it is time to add it to the type table
+      %if !fxpIsPreDefinedIntegerType(IntegerSizes.LongNumBits) && (ISFIELD(::CompiledModel, "tSS_LONG"))
+        %<FixPt_RegisterLongAsBuiltInType()>
+      %endif
+  %elseif (curBits == IntegerSizes.LongLongNumBits) && (IntegerSizes.LongLongMode == 1)
+    %% if the target long long type is not registerd yet, it is time to add it to the type table
+      %if!fxpIsPreDefinedIntegerType(IntegerSizes.LongLongNumBits)  && (ISFIELD(::CompiledModel, "tSS_LONG_LONG"))
+        %<FixPt_RegisterLongLongAsBuiltInType()>
+      %endif
+  %endif
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  %% alias the fixed type to the large type to support inline
+  %if !LibIsBuiltInWordSize(curBits)
+    %if curBits == IntegerSizes.LongNumBits
+      %if dataTypeRec.IsSigned
+        %assign dataTypeRec.IdAliasedTo = ::CompiledModel.tSS_LONG
+        %assign dataTypeRec.Enum = ::CompiledModel.DataTypes.DataType[::CompiledModel.tSS_LONG].Enum
+      %else
+        %assign dataTypeRec.IdAliasedTo = ::CompiledModel.tSS_ULONG
+        %assign dataTypeRec.Enum = ::CompiledModel.DataTypes.DataType[::CompiledModel.tSS_ULONG].Enum
+      %endif
+    %elseif (curBits == IntegerSizes.LongLongNumBits) && (IntegerSizes.LongLongMode == 1)
+      %if dataTypeRec.IsSigned
+          %assign dataTypeRec.IdAliasedTo = ::CompiledModel.tSS_LONG_LONG
+          %assign dataTypeRec.Enum = ::CompiledModel.DataTypes.DataType[::CompiledModel.tSS_LONG_LONG].Enum
+      %else
+          %assign dataTypeRec.IdAliasedTo = ::CompiledModel.tSS_ULONG_LONG
+          %assign dataTypeRec.Enum = ::CompiledModel.DataTypes.DataType[::CompiledModel.tSS_ULONG_LONG].Enum
+      %endif
+    %endif
+  %endif
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%endfunction
+%%FixPt_DefineSingleWordDTLargerThanInt
+
+
+%function FixPt_PoundDefineOverSizedDataType( dataTypeRec ) void
+  %% change the oversized fixed point type to a struct type,
+  %% so that a #define could be generated in model_types.h,
+  %% but need to surpress "external reference ground value" for the struct type
+  %<FixPt_DefineSingleWordDTLargerThanInt(dataTypeRec)>
+
+  %assign curBits = FixPt_RequiredBits_2_ActualBits(dataTypeRec.RequiredBits)
+
+  %if curBits >= LargestIntegerNumBits
+    %if LargestIntegerNumBits == IntegerSizes.LongNumBits
+        %% if the target long type is not registerd yet, it is time to add it to the type table
+        %if!fxpIsPreDefinedIntegerType(IntegerSizes.LongNumBits)  && ISFIELD(::CompiledModel, "tSS_LONG") ...
+           && (curBits > IntegerSizes.LongNumBits)
+          %<FixPt_RegisterLongAsBuiltInType()>
+        %endif
+    %else
+        %% if the target long long type is not registerd yet, it is time to add it to the type table
+        %if!fxpIsPreDefinedIntegerType(IntegerSizes.LongLongNumBits)  && ISFIELD(::CompiledModel, "tSS_LONG_LONG") ...
+           && (curBits > IntegerSizes.LongLongNumBits)
+          %<FixPt_RegisterLongLongAsBuiltInType()>
+        %endif
+    %endif
+
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% change the oversized fixed point type to a struct type
+    %if curBits > LargestIntegerNumBits
+      %%
+      %if !LibIsBuiltInWordSize(LargestIntegerNumBits)
+        %% not a predefined type such as uint40, uint64
+        %if LargestIntegerNumBits == IntegerSizes.LongNumBits
+            %assign chunkType = ::CompiledModel.tSS_ULONG
+        %else
+            %assign chunkType = ::CompiledModel.tSS_ULONG_LONG
+        %endif
+      %else
+        %switch LargestIntegerNumBits
+          %case 32
+            %assign chunkType = ::CompiledModel.tSS_UINT32
+            %break
+          %default
+            %break
+        %endswitch
+      %endif
+      %%
+      %% make the original type a real struct type, used to generate struct typedef
+      %% element type is always unsigned
+      %% only one chunk array of varient sizes
+      %%
+      %assign curNumChunks = FixPt_NumChunks(curBits)
+      %assign dataTypeRec.NumElements = 1
+      %addtorecord dataTypeRec                              \
+        Elements {                                          \
+          Name             "chunks"                         \
+          NumDimensions    1                                \
+          Dimensions       %<curNumChunks>                  \
+          DataTypeId       %<chunkType>                     \
+          Padding          0                                \
+          IsComplex        0                                \
+          IsFixedPoint     0                                \
+          Width            %<curNumChunks>                  \
+          Offset           0                                \
+        }
+      %assign maxChunks = FixPt_NumChunks(::CompiledModel.LargestMultiwordBits)
+      %%
+      %foreach chunkStep = (maxChunks - 1)
+          %assign nChunks = chunkStep + 2
+          %% register fixpt arithmetics intermediate types
+          %<FixPt_RegisterMultiWordTypes(nChunks, chunkType)>
+      %endforeach
+    %endif
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% alias the fixed type to the largest type to support inline
+    %if curBits == LargestIntegerNumBits ...
+      && !LibIsBuiltInWordSize(LargestIntegerNumBits) %% not a predefined long type
+      %if LargestIntegerNumBits == IntegerSizes.LongNumBits
+          %if dataTypeRec.IsSigned
+            %assign dataTypeRec.IdAliasedTo = ::CompiledModel.tSS_LONG
+          %else
+            %assign dataTypeRec.IdAliasedTo = ::CompiledModel.tSS_ULONG
+          %endif
+      %else
+          %if dataTypeRec.IsSigned
+            %assign dataTypeRec.IdAliasedTo = ::CompiledModel.tSS_LONG_LONG
+          %else
+            %assign dataTypeRec.IdAliasedTo = ::CompiledModel.tSS_ULONG_LONG
+          %endif
+      %endif
+    %endif
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+    %% multiword logging enum name
+    %% curBits >= LargestIntegerNumBits
+    %if !LibIsBuiltInWordSize(LargestIntegerNumBits)
+      %if LargestIntegerNumBits == IntegerSizes.LongNumBits
+          %if dataTypeRec.IsSigned
+            %assign dataTypeRec.Enum = ::CompiledModel.DataTypes.DataType[::CompiledModel.tSS_LONG].Enum
+          %else
+            %assign dataTypeRec.Enum = ::CompiledModel.DataTypes.DataType[::CompiledModel.tSS_ULONG].Enum
+          %endif
+      %else
+          %if dataTypeRec.IsSigned
+            %assign dataTypeRec.Enum = ::CompiledModel.DataTypes.DataType[::CompiledModel.tSS_LONG_LONG].Enum
+          %else
+            %assign dataTypeRec.Enum = ::CompiledModel.DataTypes.DataType[::CompiledModel.tSS_ULONG_LONG].Enum
+          %endif
+      %endif
+    %elseif dataTypeRec.Enum == ""
+      %if(curBits <= 8)
+        %if dataTypeRec.IsSigned
+          %assign dataTypeRec.Enum = "SS_INT8"
+        %else
+          %assign dataTypeRec.Enum = "SS_UINT8"
+        %endif
+      %elseif(curBits <= 16)
+        %if dataTypeRec.IsSigned
+          %assign dataTypeRec.Enum = "SS_INT16"
+        %else
+          %assign dataTypeRec.Enum = "SS_UINT16"
+        %endif
+      %else
+        %if dataTypeRec.IsSigned
+          %assign dataTypeRec.Enum = "SS_INT32"
+        %else
+          %assign dataTypeRec.Enum = "SS_UINT32"
+        %endif
+      %endif
+    %endif
+  %endif
+  %%
+%endfunction
+
+%%
+%% Some parts of the generated code should just use native C integer types
+%% like "int", "unsigned int", "long", "unsigned long", etc.  For example,
+%% temporary variables that are indices to vectors should just be "int".
+%% Unless an extremely long vector is being indexed (or some other
+%% anomalous case), "int" is fast, efficient, and has no portability
+%% issues.  However, Simulink signals and parameters often use typedefs
+%% like "uint32_T", "int16_T", etc. to indicate that these containers
+%% are defined in a portable manner.  The portable lables like
+%% "int16_T" in close proximity to local index declared "int" sometimes
+%% gives the false impression that there is a bug or at least lack of
+%% portability.  To avoid this impression, the goal will be to used "portable"
+%% typedefs like "int16_T" even for things (such as indicies) where
+%% direct use of "int" is equally portable and more efficient.
+%%   The purpose of the following global variables is to provide
+%% fast access to typedef replacements for "int", "long", etc.
+%%
+%assign FixPt_int_label         = "int%<IntegerSizes.IntNumBits>_T"
+%assign FixPt_uint_label        = "uint%<IntegerSizes.IntNumBits>_T"
+%assign FixPt_long_label        = "int%<IntegerSizes.LongNumBits>_T"
+%assign FixPt_ulong_label       = "uint%<IntegerSizes.LongNumBits>_T"
+%assign FixPt_long_long_label   = "int%<IntegerSizes.LongLongNumBits>_T"
+%assign FixPt_ulong_long_label  = "uint%<IntegerSizes.LongLongNumBits>_T"
+%assign FixPt_double_label      = "real_T"
+%assign FixPt_single_label      = "real32_T"
+
+%%
+%% central definition of THE STANDARD fixed point data type fields
+%%    this is useful for having things like copy operations automatically
+%%    include new fields or exclude obsolete fields
+%%
+%assign standardFixPointFields = [ ...
+    "DataTypeName", ...
+    "IsSigned", ...
+    "RequiredBits", ...
+    "ActualBits", ...
+    "FixedExp", ...
+    "FracSlope", ...
+    "Bias", ...
+    "NativeType" ...
+    ]
+
+%%
+%% Create the vector NativeWordSizes
+%%   for backward compatibility
+%%
+%%   For example:  [ 8, 16, 32 ]
+%%
+%if IntegerSizes.CharNumBits < IntegerSizes.ShortNumBits
+    %assign NativeWordSizes = []
+    %assign NativeWordSizes = NativeWordSizes + IntegerSizes.CharNumBits
+    %assign NativeWordSizes = NativeWordSizes + IntegerSizes.ShortNumBits
+%else
+    %assign NativeWordSizes = []
+    %assign NativeWordSizes = NativeWordSizes + IntegerSizes.ShortNumBits
+%endif
+%%
+%if IntegerSizes.IntNumBits > IntegerSizes.ShortNumBits
+    %assign NativeWordSizes = NativeWordSizes + IntegerSizes.IntNumBits
+%endif
+%%
+%if IntegerSizes.LongNumBits > IntegerSizes.IntNumBits
+    %assign NativeWordSizes = NativeWordSizes + IntegerSizes.LongNumBits
+%endif
+%%
+%if (IntegerSizes.LongLongNumBits > IntegerSizes.LongNumBits && IntegerSizes.LongLongMode == 1)
+    %assign NativeWordSizes = NativeWordSizes + IntegerSizes.LongLongNumBits
+%endif
+
+%%
+%% Check that native word sizes
+%%   are multiples of 8
+%%
+%foreach idx =  SIZE(NativeWordSizes, 1)
+  %if (  NativeWordSizes[idx] % 8 )
+    %%
+    %%START_ASSERT
+    %assign errTxt = "Simulink Coder only supports word sizes that are " ...
+      "a multiple of 8.  Illegal word size: "+STRING(NativeWordSizes[idx])
+    %exit Simulink Coder Fatal: %<errTxt>
+    %%END_ASSERT
+  %endif
+%endforeach
+
+
+%%
+%% Keep track of which Fixed Point Utils have
+%% already been defined (and code generated)
+%%
+%assign errTxt = ""
+%if !EXISTS("FixPtUtils")
+  %createrecord FixPtUtils { ...
+  NothingMacro 1}
+%else
+    %%START_ASSERT
+    %exit Simulink Coder Fatal: FixPtUtils already exists.
+    %%END_ASSERT
+%endif
+
+
+%% Function: FLib_ReImIdx ==================================
+%%
+%function FLib_ReImIdx(sigIdx,iCase) void
+    %%
+    %if iCase == 0
+        %%
+        %assign riSigIdx = tRealPart + STRING(sigIdx)
+        %%
+    %elseif iCase == 1
+        %%
+        %assign riSigIdx = tImagPart + STRING(sigIdx)
+        %%
+    %else
+        %%
+        %assign riSigIdx = sigIdx
+        %%
+    %endif
+    %%
+    %return riSigIdx
+%endfunction  %% FLib_ReImIdx
+
+
+
+%% Function: FixPt_DataTypesSame ==================================
+%%
+%% Abstract:  Determine if two data types are the same
+%%            Emulated data are treated as different from the storage container
+%%            Boolean treated as different from uint8
+%%
+%function FixPt_DataTypesSame(aDT,bDT)
+    %%
+    %if !FixPt_SpecifiedContainerSame(aDT,bDT) || ...
+        aDT.FixedExp     != bDT.FixedExp       || ...
+        aDT.FracSlope    != bDT.FracSlope      || ...
+        aDT.Bias         != bDT.Bias
+        %%
+        %return 0
+    %else
+        %return 1
+    %endif
+    %%
+%endfunction  %% FixPt_DataTypesSame
+
+
+%% Function: FixPt_SpecifiedContainerSame ==================================
+%%
+%% Abstract:  Determine if two data types have the same specified containers
+%%            Scaling is ignored
+%%            Emulated data are treated as different from the storage container
+%%            Boolean is not treated the same as uint8
+%%
+%function FixPt_SpecifiedContainerSame(aDT,bDT)
+    %%
+    %if aDT.NativeType   != bDT.NativeType   || ...
+        aDT.RequiredBits != bDT.RequiredBits || ...
+        aDT.IsSigned     != bDT.IsSigned     || ...
+        FixPt_DataTypeIsBoolean(aDT) != FixPt_DataTypeIsBoolean(bDT)
+        %%
+        %return 0
+    %else
+        %return 1
+    %endif
+    %%
+%endfunction  %% FixPt_SpecifiedContainerSame
+
+
+%% Function: FixPt_FracSlopesSame ==================================
+%%
+%% Abstract:  Determine if two data types are the same
+%%
+%function FixPt_FracSlopesSame(aFracSlope,bFracSlope)
+    %%
+    %if aFracSlope == bFracSlope
+        %%
+        %return 1
+        %%
+    %endif
+    %%
+    %if aFracSlope > bFracSlope
+        %%
+        %assign ferror = ( aFracSlope - bFracSlope )
+        %%
+    %else
+        %%
+        %assign ferror = ( bFracSlope - aFracSlope )
+        %%
+    %endif
+    %%
+    %% 2^-33 = 1.164153218269348e-010
+    %%
+    %return  ( ferror < 1.164153218269348e-010 )
+    %%
+%endfunction  %% FixPt_FracSlopesSame
+
+
+%% Function: FixPt_DataTypeSetup ===============================================
+%% Abstract:
+%%     Makes sure all fixed point data types fully registered
+%%
+%function FixPt_DataTypeSetup(index) void
+  %with ::CompiledModel
+      %%
+      %assign curDT = FixPt_GetDataTypeFromIndex(index)
+      %%
+      %assign dTypeId = curDT.Id
+      %%
+      %% register data types in ::CompiledModel.DataTypes
+      %%
+      %if curDT.IsNumericType
+        %%
+        %<FixPt_DataTypePolish(index)>\
+        %%
+        %assign curDT = FixPt_GetDataTypeFromIndex(index)
+        %%
+        %% give special treatment to non-builtin types
+        %%
+        %if !LibIsBuiltInDataType(dTypeId)
+            %%
+            %assign dTypeRec  = FixPt_GetDataTypeFromIndex(dTypeId)
+            %assign dTypeName = curDT.NativeType
+            %%
+            %% register additional data type properties if not already done
+            %%
+            %if ISFIELD(dTypeRec,"GroundName")
+                %if dTypeRec.GroundName == ""
+                    %assign dTypeRecNeedsAdditions = 1
+                %else
+                    %assign dTypeRecNeedsAdditions = 0
+                %endif
+            %else
+                %assign dTypeRecNeedsAdditions = 1
+            %endif
+            %%
+            %if dTypeRecNeedsAdditions
+                %%
+                %% register data type name
+                %%
+                %if !LibIsAliasDataType(dTypeId)  || LibIsDataTypeNewLongestFixpt(dTypeId)
+                  %<fcnSetDataTypeName(dTypeRec, dTypeName, TLC_FALSE)>
+                %endif
+                %%
+                %<SLibSetDataTypeConvertBetweenTLCFcnName(dTypeRec, "FixPt_DtConvertBetween")>
+                %<SLibSetDataTypeIsPositiveTLCFcnName(    dTypeRec, "FixPt_DtIsPositive")>
+                %%
+                %<SLibSetDataTypeSignTLCFcnName(dTypeRec, "FixPt_DtSign")>
+                %%
+                %% register data type enumeration
+                %%
+                %% for now, determine native datatype Id from name and then
+                %% set the enum to the correct value.
+                %foreach nativeDtId = ::CompiledModel.DataTypes.NumSLBuiltInDataTypes
+                    %if curDT.NativeType == LibGetDataTypeNameFromId(nativeDtId)
+                        %assign enum = LibGetDataTypeEnumFromId(nativeDtId)
+                        %<SLibSetDataTypeEnum(dTypeRec, enum)>
+                        %undef enum
+                        %break
+                    %endif
+                %endforeach
+                %%
+                %% register Data Type Ground
+                %%
+
+                %if ISFIELD(curDT,"StoredIntegerZero")
+                  %assign storedIntegerZero = curDT.StoredIntegerZero
+                %else
+                  %assign storedIntegerZero = FixPt_Dbl2StoredInt(0.0,curDT)
+                %endif
+
+                %%
+                %assign grndLabel = ::CompiledModel.Name + "_" +curDT.DTName + "_GND"
+                %%
+                %<SLibSetDataTypeGroundName(dTypeRec, grndLabel)>
+                %<SLibSetDataTypeGroundValue(dTypeRec, storedIntegerZero)>
+                %%
+                %% register complex info
+                %%
+                %if !LibIsAliasDataType(dTypeId)
+                  %<SLibSetDataTypeComplexName(dTypeRec, "c" + dTypeName)>
+                %endif
+                %<SLibSetDataTypeComplexGroundName(dTypeRec, grndLabel + "_Complex")>
+            %endif
+            %%
+        %endif  %% handle non-builtin types
+        %%
+      %endif
+  %endwith %% ::CompiledModel
+%endfunction  %% FixPt_DataTypeSetup
+
+
+
+%% Function: FixPt_Setup =================================================
+%% Abstract:
+%%   All fixed-point blocks call this function in their BlockInstanceSetup
+%%   function.  This function
+%%     1) Gets mask name for clearer comments, errors, etc.
+%%     2) Convert rounding mode and saturate mode from integer codes to
+%%        meaningful strings
+%%
+%function FixPt_Setup(block, system) void
+  %%
+  %% get name of mask to make code more readable
+  %%   o Creates MaskBlockName to be used in each output function.  Using
+  %%     the mask block block name versus the underlying S-Function name makes
+  %%     the generated code more readable since the users may not even realize
+  %%     that the fixed-point block is actually a masked subsystem block.
+  %%
+  %assign MaskBlockName = "'" + Name + "'"
+  %assign block = block + MaskBlockName
+  %%
+  %% Convert rounding mode to a meaningful string
+  %%
+  %if ISFIELD(block,"FixPtRoundingMode")
+      %%
+      %switch FixPtRoundingMode
+          %% Because the block (built-in or s-function) write to the .rtw file
+          %% fxpModeRounding Enum, so the Enum number didn't change even though
+          %% the order on the block dialog changed
+          %%
+          %% fixptdialoginfo.h does the mapping from block dialog to the Enum
+          %% fxpModeRounding
+          %%
+          %% It is recommended to use STRING instead of number to set rndmeth param
+          %%  FXP_ROUND_ZERO = 0,       RndMeth_Zero
+          %%  FXP_ROUND_NEAR = 1,       RndMeth_Nearest
+          %%  FXP_ROUND_CEIL = 2,       RndMeth_Ceiling
+          %%  FXP_ROUND_FLOOR = 3,      RndMeth_Floor
+          %%  FXP_ROUND_SIMPLEST = 4,   RndMeth_Simplest
+          %%  FXP_ROUND_NEAR_ML  = 5,   RndMeth_Round
+          %%  FXP_ROUND_CONVERGENT = 6, RndMeth_Convergent
+          %%
+        %case 0
+          %assign block.FixPtRoundingMode = "Zero"
+          %break
+        %case 1
+          %assign block.FixPtRoundingMode = "Nearest"
+          %break
+        %case 2
+          %assign block.FixPtRoundingMode = "Ceiling"
+          %break
+        %case 3
+          %assign block.FixPtRoundingMode = "Floor"
+          %break
+        %case 4
+          %assign block.FixPtRoundingMode = "Simplest"
+          %break
+        %case 5
+          %assign block.FixPtRoundingMode = "Round"
+          %break
+        %case 6
+          %assign block.FixPtRoundingMode = "Convergent"
+          %break
+        %default
+          %%START_ASSERT
+          %exit Simulink Coder Fatal: Unknown Rounding Mode: %<FixPtRoundingMode>
+          %%END_ASSERT
+      %endswitch
+  %endif
+  %%
+  %% Convert saturation mode to a meaningful string
+  %%
+  %if ISFIELD(block,"FixPtSaturationMode")
+      %%
+      %switch FixPtSaturationMode
+        %case 0
+          %assign block.FixPtSaturationMode = "Wrap"
+          %break
+        %case 1
+          %assign block.FixPtSaturationMode = "Saturate"
+          %break
+        %default
+          %%START_ASSERT
+          %exit Simulink Coder Fatal: Unknown Saturation Mode: %<FixPtSaturationMode>
+          %%END_ASSERT
+      %endswitch
+  %endif
+  %%
+%endfunction  %% FixPt_Setup
+
+
+
+%function FixPt_NumChunks(requiredBits) void
+  %assign nChunks = requiredBits / LargestIntegerNumBits
+  %if requiredBits % LargestIntegerNumBits != 0
+    %assign nChunks = nChunks + 1
+  %endif
+  %return nChunks
+%endfunction
+
+
+
+%% Function: FixPt_RequiredBits_2_ActualBits ==================================
+%% Abstract:
+%%
+%function FixPt_RequiredBits_2_ActualBits(requiredBits) void
+  %%
+  %if requiredBits <= IntegerSizes.CharNumBits
+    %%
+    %assign actualBits = IntegerSizes.CharNumBits
+    %%
+  %elseif requiredBits <= IntegerSizes.ShortNumBits
+    %%
+    %assign actualBits = IntegerSizes.ShortNumBits
+    %%
+  %elseif requiredBits <= IntegerSizes.IntNumBits
+    %%
+    %assign actualBits = IntegerSizes.IntNumBits
+    %%
+  %elseif requiredBits <= IntegerSizes.LongNumBits
+    %%
+    %assign actualBits = IntegerSizes.LongNumBits
+    %%
+  %elseif (requiredBits <= IntegerSizes.LongLongNumBits && IntegerSizes.LongLongMode == 1)
+    %%
+    %assign actualBits = IntegerSizes.LongLongNumBits
+    %%
+  %else
+    %% oversized fixpt is represented using chunk array with each array element of IntegerSizes.LongNumBits size
+    %assign nChunks = FixPt_NumChunks(requiredBits)
+    %assign actualBits = LargestIntegerNumBits * nChunks
+    %%
+  %endif
+  %%
+  %return actualBits
+  %%
+%endfunction %% FixPt_RequiredBits_2_ActualBits
+
+
+%% Function: FixPt_ActualBits_TooBig ==================================
+%% Abstract:
+%%
+%function FixPt_ActualBits_TooBig(actualBits) void
+    %return ( actualBits > LibMaxCodeGenWordSize() )
+%endfunction %% FixPt_ActualBits_TooBig
+
+
+%% Function: FixPt_DataTypePolish ========================================
+%% Abstract:
+%%
+%function FixPt_DataTypePolish(index) void
+  %%
+  %assign dataTypeRec = FixPt_GetDataTypeFromIndex(index)
+  %%
+  %assign dataTypeRecAliasThru = FixPt_GetAliasedThruDataTypeFromIndex(index)
+  %%
+  %% polish the data type, if this hasn't been done yet
+  %%
+  %if !(ISFIELD(dataTypeRec,"NativeType"))
+    %%
+    %% get name of the data type as it was registered with simulink
+    %%    note force data type name to be a string, sometimes it
+    %%    comes out of the .rtw file as "Identifier" type which
+    %%    is sort of a string but can cause errors in some situations.
+    %%
+    %%
+    %assign validType = 1
+    %%
+    %assign dtName = "%<dataTypeRecAliasThru.DTName>"
+    %%
+    %% Define the new data type
+    %%
+    %if ISFIELD(dataTypeRec, "Enum") && dataTypeRec.Enum == "SS_DOUBLE"
+        %assign actualBits = dataTypeRec.RequiredBits
+        %assign nativeType = "real_T"
+    %elseif ISFIELD(dataTypeRec, "Enum") && dataTypeRec.Enum == "SS_SINGLE"
+        %assign actualBits = dataTypeRec.RequiredBits
+        %assign nativeType = "real32_T"
+    %else
+        %%
+        %assign actualBits = FixPt_RequiredBits_2_ActualBits(dataTypeRec.RequiredBits)
+        %%
+        %if FixPt_ActualBits_TooBig(actualBits)
+          %if Accelerator
+            %%START_ASSERT
+            %openfile errTxt
+This model can't be used with the Accelerator.  The Data Type
+%<dtName> requires %<dataTypeRec.RequiredBits> bits, but the maximum supported
+with the Accelerator on this computer is %<LibMaxCodeGenWordSize()> bits.
+            %closefile errTxt
+            %<LibReportFatalError(errTxt)>\
+            %%END_ASSERT
+          %endif
+        %endif
+        %%
+        %% create the standard name
+        %%
+        %assign dtStart = dtName[0]+dtName[1]+dtName[2]
+        %%
+        %if dtStart == "flt"
+            %%
+            %assign nativeType = "real_T"
+            %%
+        %else
+            %assign nChunk = FixPt_NumChunks(actualBits)
+            %if nChunk > 1
+              %assign typeDenotation = "%<actualBits>m"
+            %else
+              %assign typeDenotation = "%<actualBits>"
+            %endif
+
+            %if dataTypeRec.IsSigned
+                %%
+                %assign nativeType = "int%<typeDenotation>_T"
+            %else
+                %assign nativeType = "uint%<typeDenotation>_T"
+            %endif
+            %%
+            %<FixPt_PoundDefineOverSizedDataType( dataTypeRec )>\
+            %%
+        %endif
+    %endif
+    %%
+    %% Add the new fields to the record
+    %%
+    %assign dtRec = FixPt_GetDataTypeFromIndex(index)
+    %%
+    %addtorecord dtRec  DataTypeName dtName
+    %addtorecord dtRec  ActualBits   actualBits
+    %addtorecord dtRec  NativeType   nativeType
+
+    %% Emulated WL check moved to model advisor
+   
+  %endif
+  %%
+%endfunction  %% FixPt_DataTypePolish
+
+
+
+%% Function: FixPt_DefineDataType ========================================
+%% Abstract:
+%%
+%function FixPt_DefineDataType(dataTypeRec) void
+    %%
+    %assign dtName = "%<dataTypeRec.DataTypeName>"
+    %%
+    %if ISFIELD(dataTypeRec, "Enum") && dataTypeRec.Enum == "SS_DOUBLE"
+        %assign actualBits = dataTypeRec.RequiredBits
+        %assign nativeType = "real_T"
+    %elseif ISFIELD(dataTypeRec, "Enum") && dataTypeRec.Enum == "SS_SINGLE"
+        %assign actualBits = dataTypeRec.RequiredBits
+        %assign nativeType = "real32_T"
+    %else
+        %%
+        %assign actualBits = FixPt_RequiredBits_2_ActualBits(dataTypeRec.RequiredBits)
+        %%
+        %if FixPt_ActualBits_TooBig(actualBits)
+          %%START_ASSERT
+          %if Accelerator
+            %openfile errTxt
+This model can't be used with the Accelerator.  The Data Type
+%<dtName> requires %<dataTypeRec.RequiredBits> bits, but the maximum supported
+with the Accelerator on this computer is %<IntegerSizes.LongNumBits> bits.
+            %closefile errTxt
+            %<LibReportFatalError(errTxt)>\
+          %else
+            %%
+            %openfile errTxt
+This model can't generate code for the intended TARGET C Compiler.  The
+Data Type %<dtName> requires %<dataTypeRec.RequiredBits> bits, but
+the maximum supported by the TARGET C Compiler is %<IntegerSizes.LongNumBits>
+bits.
+            %closefile errTxt
+            %<LibReportFatalError(errTxt)>\
+          %endif
+          %%END_ASSERT
+        %endif
+        %%
+        %% create the standard name
+        %%
+        %assign dtStart = dtName[0]+dtName[1]+dtName[2]
+        %%
+        %if dtStart == "flt"
+            %assign nativeType = "real_T"
+        %else
+            %if dataTypeRec.IsSigned
+                %%
+                %assign nativeType = "int%<actualBits>_T"
+            %else
+                %assign nativeType = "uint%<actualBits>_T"
+            %endif
+        %endif
+    %endif
+    %%
+    %% Add the new fields to the record
+    %%
+    %if !(ISFIELD(dataTypeRec,"DataTypeName"))
+      %addtorecord dataTypeRec  DataTypeName dtName
+    %else
+      %<SETFIELD(dataTypeRec,"DataTypeName",dtName)>\
+    %endif
+    %%
+    %if !(ISFIELD(dataTypeRec,"ActualBits"))
+      %addtorecord dataTypeRec  ActualBits   actualBits
+    %else
+      %<SETFIELD(dataTypeRec,"ActualBits",actualBits)>\
+    %endif
+    %%
+    %if !(ISFIELD(dataTypeRec,"NativeType"))
+      %addtorecord dataTypeRec  NativeType   nativeType
+    %else
+      %<SETFIELD(dataTypeRec,"NativeType",nativeType)>\
+    %endif
+    %%
+%endfunction  %% FixPt_DefineDataType
+
+
+
+%% Function: FixPt_IndexStruct ===================================================
+%%
+%% Abstract:
+%%      This routine will return an optional index for a structure field. An
+%%      index into to the signal is returned for wide signals.  Nothing is
+%%      returned for scalar signals (this scalar expands them).
+%%
+%%      ""         - signal is scalar (width == 1)
+%%      [ucv]      - width > 1, ucv specified
+%%
+%% Note must treat lcv different than "built in" because
+%%  a pointer to the variable is not redefined just befor a loop
+%%      [idx+lcv]  - width > 1, lcv specified
+%%      [idx]      - otherwise
+%%
+%% Synopsis:
+%%      FixPt_IndexStruct(width, ucv, lcv, idx)
+%%
+%%      width  - width of variable
+%%      ucv    - user control variable
+%%      lcv    - loop control variable
+%%      idx    - index
+
+%function FixPt_IndexStruct(width, ucv, lcv, idx) void
+    %%
+    %% scalar case
+    %%
+    %if width == 1
+      %%
+      %return ""
+      %%
+    %endif
+    %%
+    %% vector case
+    %%
+    %if TYPE(ucv) != "String"
+      %%
+      %assign ucvStr = "%<ucv>"
+      %%
+    %else
+      %%
+      %assign ucvStr = ucv
+      %%
+    %endif
+    %%
+    %if ucvStr != ""
+      %%
+      %return "%<ucvStr>"
+      %%
+    %elseif lcv != ""
+        %%
+        %if idx != 0
+            %%
+            %% must include offset
+            %%
+            %return "%<idx>+%<lcv>"
+            %%
+        %else
+            %return "%<lcv>"
+        %endif
+    %else
+      %return "%<idx>"
+    %endif
+%endfunction  %% FixPt_IndexStruct
+
+
+%% Function: FixPt_GetDataTypeFromIndex ===============================================
+%%
+%% Abstract:
+%%       For the specified input port, return an alias to the corresponding
+%%       DataTypes record
+%%
+%function FixPt_GetDataTypeFromIndex(dataTypeIdx) void
+  %%
+  %assign curDT = ::CompiledModel.DataTypes.DataType[dataTypeIdx]
+  %%
+  %return curDT
+  %%
+%endfunction  %% FixPt_GetDataTypeFromIndex
+
+%% Function: FixPt_GetAliasThruDataTypeFromIndex ===============================================
+%%
+%% Abstract:
+%%       For the specified input port, return an alias to the corresponding
+%%       DataTypes record
+%%
+%function FixPt_GetAliasedThruDataTypeFromIndex(dataTypeIdx) void
+  %%
+  %assign dataTypeIdxAliasThru = LibGetDataTypeIdAliasedThruToFromId(dataTypeIdx)
+  %%
+  %assign curDT = ::CompiledModel.DataTypes.DataType[dataTypeIdxAliasThru]
+  %%
+  %return curDT
+  %%
+%endfunction  %% FixPt_GetAliasedThruDataTypeFromIndex
+
+%% Function: FixPt_GetInputDataType ===============================================
+%%
+%% Abstract:
+%%       For the specified input port, return an alias to the corresponding
+%%       DataTypes record
+%%
+%function FixPt_GetInputDataType(portIdx) void
+  %%
+  %assign dataTypeIdx = LibGetDataTypeIdAliasedThruToFromId(LibBlockInputSignalDataTypeId(portIdx))
+  %%
+  %assign curDT = FixPt_GetDataTypeFromIndex(dataTypeIdx)
+  %%
+  %return curDT
+  %%
+%endfunction  %% FixPt_GetInputDataType
+
+
+%% Function: FixPt_CopyDataTypeWithBoolReplace ==================================
+%%
+%% Abstract:
+%%       Copy data type record,
+%%       if boolean, replace with uint8
+%%
+%function FixPt_CopyDataTypeWithBoolReplace(aDT) void
+  %%
+  %assign aIsBoolean = FixPt_DataTypeIsBoolean(aDT)
+  %%
+  %if aIsBoolean
+    %assign localUint8DT = FixPt_GetDataTypeFromIndex(tSS_UINT8)
+    %copyrecord aTempDT localUint8DT
+  %else
+    %copyrecord aTempDT aDT
+  %endif
+  %%
+  %return aTempDT
+  %%
+%endfunction  %% FixPt_GetInputDataType
+
+
+
+%% Function: FixPt_GetOutputDataTypeId ========================================
+%%
+%% Abstract:
+%%       For the specified output port, return the data type id used in
+%%       in Simulink.
+%%
+%function FixPt_GetOutputDataTypeId(portIdx) void
+  %%
+  %% get the data type index (into DataTypes record).
+  %%
+  %assign dataTypeIdx = LibBlockOutputSignalDataTypeId(portIdx)
+  %%
+  %return LibGetDataTypeIdAliasedThruToFromId(dataTypeIdx)
+  %%
+%endfunction  %% FixPt_GetOutputDataTypeId
+
+
+
+%% Function: FixPt_GetOutputDataType ==========================================
+%%
+%% Abstract:
+%%       For the specified output port, return an alias to the corresponding
+%%       DataTypes record
+%%
+%function FixPt_GetOutputDataType(portIdx) void
+  %%
+  %assign op = FcnGetOutputPortRecord(portIdx)
+  %if (IDNUM(op.SignalSrc[0])[0] == "F") %% FcnCall
+    %return ""
+  %else
+    %assign dataTypeIdx = LibGetDataTypeIdAliasedThruToFromId(FixPt_GetOutputDataTypeId(portIdx))
+    %%
+    %assign curDT = FixPt_GetDataTypeFromIndex(dataTypeIdx)
+    %%
+    %return curDT
+  %endif
+  %%
+%endfunction  %% FixPt_GetOutputDataType
+
+
+
+%% Function: FixPt_GetParameterDataTypeId ===============================================
+%%
+%% Abstract:
+%%    For the scalar on the ith Row and jth Col of the specified parameter,
+%%    return an alias to the corresponding DataTypes record
+%%
+%function FixPt_GetParameterDataTypeId(dataTypeIdMat,iRow,iCol) void
+    %%
+    %assign nRows = SIZE(dataTypeIdMat,0)
+    %assign nCols = SIZE(dataTypeIdMat,1)
+    %%
+    %% scalar expand the parameter if necessary
+    %%
+    %if (nRows == 1) && (nCols == 1)
+        %assign iRow = 0
+        %assign iCol = 0
+    %endif
+    %%
+    %% check range
+    %%
+    %if (nRows <= iRow) && (nCols <= iCol)
+      %%
+      %%START_ASSERT
+      %assign errTxt = "Specified row and/or column exceeds parameter size"
+      %%
+      %exit Simulink Coder Fatal: %<errTxt>
+      %%END_ASSERT
+      %%
+    %endif
+    %%
+    %assign retRes = dataTypeIdMat[iRow][iCol]
+    %%
+    %return retRes
+%endfunction  %% FixPt_GetParameterDataTypeId
+
+%% Function: FixPt_GetParameterDataType =======================================
+%%
+%% Abstract:
+%%    For the scalar on the ith Row and jth Col of the specified parameter,
+%%    return an alias to the corresponding DataTypes record
+%%
+%function FixPt_GetParameterDataType(dataTypeIdMat,iRow,iCol) void
+  %%
+  %assign nRows = SIZE(dataTypeIdMat,0)
+  %assign nCols = SIZE(dataTypeIdMat,1)
+  %if (nRows > 1) || (nCols > 1)
+      %%
+      %%START_ASSERT
+      %error "No matrix data types"
+      %%END_ASSERT
+      %%
+  %endif
+  %%
+  %assign dataTypeIdx = FixPt_GetParameterDataTypeId(dataTypeIdMat,iRow,iCol)
+  %%
+  %assign curDT = FixPt_GetDataTypeFromIndex(dataTypeIdx)
+  %%
+  %return curDT
+  %%
+%endfunction  %% FixPt_GetParameterDataType
+
+%% Function: FixPt_GetGroundValueOrNameFromDataTypeRec ========================
+%% Abstract:
+%% This function returns ground name for complex or multiword datatypes.
+%% Otherwise, it returns the ground value.
+%%
+%function FixPt_GetGroundValueOrNameFromDataTypeRec(rec, isComplex) void
+  %%
+  %if ISFIELD(rec,"IdAliasedThruTo") && ISFIELD(rec,"IsFixedPoint")
+    %if FixPt_DataTypeIsMultiWord(rec) || isComplex
+      %assign grndValueOrName = SLibGetDtGroundName(rec.IdAliasedThruTo, isComplex, "")
+      %if isComplex
+        %<SLibSetDataTypeComplexGroundReqInMemory(rec.IdAliasedThruTo)>
+      %endif
+    %else
+      %assign grndValueOrName = SLibGetGroundValueFromId(rec.IdAliasedThruTo)
+    %endif
+  %else
+    %if isComplex
+      %%START_ASSERT
+      %<LibReportFatalError("The data type may not be complex.")>
+      %%END_ASSERT
+    %endif
+    %% Get a ground value even if the data type is not a registered type.
+    %% It does not support fixed point types with bias.
+    %if FixPt_DataTypeIsFloat(rec)
+      %if FixPt_DataTypeIsSingle(rec)
+        %assign grndValueOrName = 0.0F
+      %else
+        %assign grndValueOrName = 0.0
+      %endif
+    %else
+      %if ISFIELD(rec,"Bias") && rec.Bias != 0.0
+        %%START_ASSERT
+        %<LibReportFatalError("The data type may not have bias.")>
+        %%END_ASSERT
+      %endif
+      %if FixPt_DataTypeIsUnsignedFixPt(rec)
+        %assign grndValueOrName = 0U
+      %else
+        %assign grndValueOrName = 0
+      %endif
+    %endif
+  %endif
+  %%
+  %return grndValueOrName
+  %%
+%endfunction %%FixPt_GetGroundValueOrNameFromDataTypeRec
+
+%% Function: FixPt_GetParameterDataTypeRec ===============================================
+%%
+%%
+%function FixPt_GetParameterDataTypeRec(param) void
+  %%
+  %%
+  %assign dataTypeIdx = param.OriginalDataTypeIdx
+  %%
+  %assign curDT = FixPt_GetDataTypeFromIndex(dataTypeIdx)
+  %%
+  %return curDT
+  %%
+%endfunction  %% FixPt_GetParameterDataTypeRec
+
+%% Function: FixPt_IsParameterDataSizeLargerThan32 ===============================
+%%
+%% Abstract:
+%%    Determine whether the data size of parameter is larger than 32.
+%function FixPt_IsParameterDataSizeLargerThan32(param) void
+  %%
+  %assign curDT = FixPt_GetParameterDataTypeRec(param)
+  %%
+  %if fxpIsDataTypeFixPt(curDT) && curDT.RequiredBits > 32
+    %return 1
+  %else
+    %return 0
+  %endif
+%endfunction
+
+%function fxpIsDataTypeFixPt(dataType) void
+  %%
+  %assert TYPE(dataType) == "Scope"
+  %%
+  %return ( dataType.NativeType != "real_T"   && ...
+            dataType.NativeType != "real32_T" )
+  %%
+%endfunction
+
+
+%function fxpIsDataTypeBoolean(dataType) void
+    %%
+    %assign res = TLC_FALSE
+    %%
+    %if ISFIELD(dataType,"Id")
+      %%
+      %assign uDTAliasThru = FixPt_GetAliasedThruDataTypeFromIndex(dataType.Id)
+      %%
+      %if uDTAliasThru.Id == tSS_BOOLEAN
+        %%
+        %assign res = TLC_TRUE
+      %endif
+    %endif
+    %%
+    %return res
+    %%
+%endfunction
+
+
+%function fxpIsDataTypeFixPtNonBool(dataType) void
+  %%
+  %assert TYPE(dataType) == "Scope"
+  %%
+  %return ( fxpIsDataTypeFixPt(dataType      ) && ...
+            !fxpIsDataTypeBoolean(dataType   ) )
+  %%
+%endfunction
+
+
+%function fxpIsDataTypeFloatOrSclDbl(dataType) void
+  %%
+  %assert TYPE(dataType) == "Scope"
+  %%
+  %return ( dataType.NativeType == "real_T"   || ...
+            dataType.NativeType == "real32_T" )
+  %%
+%endfunction
+
+
+%function fhpIsDataTypeNoScaleNoBits(dataType) void
+  %%
+  %assert TYPE(dataType) == "Scope"
+  %%
+  %return ( ISEQUAL(dataType.RequiredBits, 0  ) && ...
+            ISEQUAL(dataType.FixedExp,     0  ) && ...
+            ISEQUAL(dataType.FracSlope,    1.0) && ...
+            ISEQUAL(dataType.Bias,         0.0) )
+  %%
+%endfunction
+
+
+%function fxpIsDataTypeScaledDouble(dataType) void
+  %%
+  %assert TYPE(dataType) == "Scope"
+  %%
+  %return ( fxpIsDataTypeFloatOrSclDbl( dataType) && ...
+            !fhpIsDataTypeNoScaleNoBits(dataType) )
+  %%
+%endfunction
+
+
+%% Function: FixPt_DataTypeIsFloat ==========================================
+%%
+%function FixPt_DataTypeIsFloat(dataType) void
+    %%
+    %return ( fxpIsDataTypeFloatOrSclDbl( dataType) )
+    %%
+%endfunction  %% FixPt_DataTypeIsFloat
+
+
+
+%% Function: FixPt_DataTypeIsDouble ==========================================
+%%
+%function FixPt_DataTypeIsDouble(dataType) void
+    %%
+    %assert TYPE(dataType) == "Scope"
+    %%
+    %return ( dataType.NativeType == "real_T" )
+    %%
+%endfunction  %% FixPt_DataTypeIsDouble
+
+
+%% Function: FixPt_DataTypeIsSingle ==========================================
+%%
+%function FixPt_DataTypeIsSingle(dataType) void
+    %%
+    %assert TYPE(dataType) == "Scope"
+    %%
+    %return ( dataType.NativeType == "real32_T" )
+    %%
+%endfunction  %% FixPt_DataTypeIsSingle
+
+
+%% Function: FixPt_DataTypeIsBoolean =====================================
+%%
+%function FixPt_DataTypeIsBoolean(dataType) void
+    %%
+    %return fxpIsDataTypeBoolean(dataType)
+    %%
+%endfunction  %% FixPt_DataTypeIsBoolean
+
+
+%% Function: FixPt_DataTypeIsMultiWord =============================================
+%%
+%function FixPt_DataTypeIsMultiWord(dataType) void
+    %%
+    %assert TYPE(dataType) == "Scope"
+    %%
+    %return (  dataType.IsFixedPoint && ...
+               dataType.RequiredBits > LargestIntegerNumBits && ...
+               !FixPt_DataTypeIsFloat(dataType) )
+    %%
+%endfunction  %% FixPt_DataTypeIsMultiWord
+
+
+%% Function: FixPt_DataTypeIsUnsignedFixPt =================================
+%%
+%function FixPt_DataTypeIsUnsignedFixPt(dataType) void
+    %%
+    %assert TYPE(dataType) == "Scope"
+    %%
+    %return ( !dataType.IsSigned && ...
+              fxpIsDataTypeFixPt(dataType) )
+    %%
+%endfunction  %% FixPt_DataTypeIsUnsignedFixPt
+
+
+%% Function: LibFixPointFormDataTypeName ==========================================
+%%
+%function LibFixPointFormDataTypeName(isSigned,requiredBits,fixedExp) void
+    %%
+    %if isSigned
+        %assign dataTypeName  = "sfix%<requiredBits>_"
+    %else
+        %assign dataTypeName  = "ufix%<requiredBits>_"
+    %endif
+    %%
+    %if fixedExp < 0
+        %assign dataTypeName  = dataTypeName + "En%<-fixedExp>"
+    %elseif fixedExp > 0
+        %assign dataTypeName  = dataTypeName + "E%<fixedExp>"
+    %endif
+    %%
+    %return dataTypeName
+    %%
+%endfunction  %% LibFixPointFormDataTypeName
+
+
+
+%% FixPt_IsZeroNumericOrString
+%%
+%function FixPt_IsZeroNumericOrString(in) void
+  %%
+  %if ISEQUAL(0.0,in)
+    %%
+    %return TLC_TRUE
+    %%
+  %elseif TYPE(in) == "String"
+    %%
+    %if in[0] != "("
+      %%
+      %assign in = "(" + in + ")"
+      %%
+    %endif
+    %%
+    %% change ((*****)) to (******)
+    %if in[0] == "(" && in[1] =="("
+      %%
+      %%Obtain the string length.
+      %assign strLen  = SIZE(in, 1)
+      %%
+      %if in[strLen - 1] == ")" && in[strLen - 2] == ")"
+      %%
+      %assign in[0] = " "
+      %%
+      %assign in[strLen - 1] =" "
+      %%
+      %assign in = FEVAL("strtrim", in)
+      %%
+      %endif
+    %endif
+    %%
+    %if ISEQUAL("(0)",in)
+      %%
+      %return TLC_TRUE
+      %%
+    %elseif in[1] == "0"
+      %%
+      %if in[2] == "."
+        %%
+        %return ISEQUAL("(0.0)",  in) || ...
+                ISEQUAL("(0.0F)", in) || ...
+                ISEQUAL("(0.0f)", in)
+        %%
+      %elseif in[2] == "U"
+        %%
+        %return ISEQUAL("(0U)",   in) || ...
+                ISEQUAL("(0UL)",  in) || ...
+                ISEQUAL("(0Ul)",  in)
+        %%
+      %elseif in[2] == "L"
+        %%
+        %return ISEQUAL("(0L)",   in) || ...
+                ISEQUAL("(0LU)",  in) || ...
+                ISEQUAL("(0Lu)",  in)
+        %%
+      %elseif in[2] == "u"
+        %%
+        %return ISEQUAL("(0u)",   in) || ...
+                ISEQUAL("(0uL)",  in) || ...
+                ISEQUAL("(0ul)",  in)
+        %%
+      %elseif in[2] == "l"
+        %%
+        %return ISEQUAL("(0l)",   in) || ...
+                ISEQUAL("(0lU)",  in) || ...
+                ISEQUAL("(0lu)",  in)
+        %%
+      %elseif in[2] == "x"
+        %%
+        %return ISEQUAL("(0x0)",        in) || ...
+                ISEQUAL("(0x00)",       in) || ...
+                ISEQUAL("(0x0000)",     in) || ...
+                ISEQUAL("(0x00000000)", in)
+        %%
+      %else
+        %return TLC_FALSE
+      %endif
+    %else
+      %return TLC_FALSE
+    %endif
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %% FixPt_IsZeroNumericOrString
+
+
+
+%% Function: FixPt_DtConvertBetween ==================================
+%%
+%% This function is designed to convert between any combination of
+%% builtin and/or fixpt types.  It has not be designed to handle
+%% non-fixpt custom data types.  (It could be but there is no
+%% current need hence no bang for the buck).
+%%
+%function FixPt_DtConvertBetween(dTypeOut,dTypeIn,inLabel,options,outLabel) Output
+    %%
+    %assign roundMode = "Nearest"
+    %assign satMode   = "Saturate"
+    %%
+    %if TYPE(options) == "Scope"
+      %if ISFIELD(options,"roundMode")
+        %assign roundMode = options.roundMode
+      %endif
+      %if ISFIELD(options,"satMode")
+        %assign satMode = options.satMode
+      %endif
+    %endif
+    %%
+    %assign inDT  = FixPt_GetDataTypeFromIndex(dTypeIn )
+    %assign outDT = FixPt_GetDataTypeFromIndex(dTypeOut)
+    %%
+    %<FixPt_Fix2FixAlwaysOutput(outLabel,outDT,inLabel,inDT,roundMode,satMode)>\
+    %%
+    %return 1
+%endfunction  %% FixPt_DtConvertBetween
+
+
+
+%% Function: FixPt_DtIsPositive ==========================================
+%%
+%function FixPt_DtIsPositive(dTypeIn,inLabel,options,outLabel) Output
+  %%
+  %assign inDT = FixPt_GetDataTypeFromIndex(dTypeIn)
+  %%
+  %if !LibIsDataTypeMultiWordFixpt(dTypeIn)
+    %if inDT.Bias == 0.0
+        %%
+        %assign storedIntegerZero = "0"
+        %%
+    %else
+        %%
+        %assign storedIntegerZero = STRING(FixPt_Dbl2StoredInt(0.0,inDT))
+        %%
+    %endif
+    %%
+    %<outLabel> = ( (%<inLabel>) > (%<storedIntegerZero>) );
+    %%
+    %return 1
+  %else
+    %<boolDT.NativeType> %<tmpCmp1>;
+    %<FixPt_MultiWordCompGT(tmpCmp1, boolDT, inLabel, inDT, storedIntegerZero, inDT, "Simplest", "Saturate")>
+    %<outLabel> = %<tmpCmp1>;
+  %endif
+%endfunction  %% FixPt_DtIsPositive
+
+
+
+%% Function: FixPt_DtSign ==========================================
+%%
+%function FixPt_DtSign(dTypeIn,inLabel,options,outLabel) Output
+  %%
+  %assign inDT = FixPt_GetDataTypeFromIndex(dTypeIn)
+  %%
+  %if !LibIsDataTypeMultiWordFixpt(dTypeIn)
+    %if inDT.Bias == 0.0
+        %%
+        %assign storedIntegerZero = "0"
+        %%
+    %else
+        %%
+        %assign storedIntegerZero = STRING(FixPt_Dbl2StoredInt(0.0,inDT))
+        %%
+    %endif
+    %%
+    %if !(inDT.IsSigned) && ( inDT.Bias >= 0.0 )
+        %%
+        %% can only be positive
+        %%
+        %<outLabel> = ( (%<inLabel>) > (%<storedIntegerZero>) );
+    %else
+        %<outLabel> = ( ((%<inLabel>)<(%<storedIntegerZero>)) ? (-1) : ((%<inLabel>)>(%<storedIntegerZero>)) );
+        %%
+    %endif
+    %%
+    %return 1
+  %else
+    %% Multiword datatype
+    %assign boolDT = DataTypes.DataType[tSS_BOOLEAN]
+    %assign storedIntegerZero = FixPt_GetGroundValueOrNameFromDataTypeRec(inDT, TLC_FALSE)
+    %assign tmpCmp1 = "tmpCmp1"
+    %assign tmpCmp2 = "tmpCmp2"
+    {
+      %if !(inDT.IsSigned) && ( inDT.Bias >= 0.0 )
+        %%
+        %% can only be positive
+        %%
+        %<boolDT.NativeType> %<tmpCmp1>;
+        %<FixPt_MultiWordCompGT(tmpCmp1, boolDT, inLabel, inDT, storedIntegerZero, inDT, "Simplest", "Saturate")>
+        %<outLabel> = %<tmpCmp1>;
+      %else
+        %<boolDT.NativeType> %<tmpCmp1>, %<tmpCmp2>;
+        %<FixPt_MultiWordCompGT(tmpCmp1, boolDT, inLabel, inDT, storedIntegerZero, inDT, "Simplest", "Saturate")>
+        %<FixPt_MultiWordCompLT(tmpCmp2, boolDT, inLabel, inDT, storedIntegerZero, inDT, "Simplest", "Saturate")>
+        %<outLabel> = ( (%<tmpCmp2>) ? (-1) : (%<tmpCmp1>) );
+      %endif
+    }
+    %return 1
+  %endif
+%endfunction
+
+
+%function FixPt_helperUtilityNameAppendDT(yDT) void
+  %%
+  %if FixPt_DataTypeIsFloat(yDT)
+    %%
+    %assign utilityName = yDT.NativeType
+    %%
+  %elseif FixPt_DataTypeIsBoolean(yDT)
+    %%
+    %assign utilityName = "Bool"
+    %%
+  %else
+    %if yDT.IsSigned
+      %assign utilityName = "S"
+    %else
+      %assign utilityName = "U"
+    %endif
+    %assign utilityName = utilityName + STRING(yDT.RequiredBits)
+  %endif
+  %%
+  %return utilityName
+  %%
+%endfunction %% FixPt_helperUtilityNameAppendDT
+
+
+%function FixPt_UtilityNameAppendDT(utilityName,yDT) void
+  %%
+  %assign utilityName = utilityName + "_" + FixPt_helperUtilityNameAppendDT(yDT)
+  %%
+  %return utilityName
+  %%
+%endfunction %% FixPt_UtilityNameAppendDT
+
+
+%% function FixPt_UtilityMakeName(name) void
+%% Abstract:
+%%   To ensure that fixpoint functions names
+%%   are unique to this model so that when top model is built,
+%%   no symbols collisions occur.
+%%
+%function FixPt_UtilityMakeName(name) void
+  %if CodeFormat == "S-Function"
+    %assign name = ::CompiledModel.Name + "_"+name
+  %endif
+
+  %return name
+%endfunction
+
+%% Function: FixPt_LoadFixPtUtils ==============================================
+%% Abstract:
+%%   This function generates and loads fixpoint utility function that have been
+%%   created by CGIR in either rtwgen or from calls in TLC to the CGIR fixpt
+%%   lowering function
+%%
+%function FixPt_LoadFixPtUtils() void
+  %if SLibIsValidCoderContext()
+    %assign rtwCtx = ::CompiledModel.RTWContext
+    %% Clear the projected multiword scm map
+    %assign dummy = FEVAL("rtwprivate", "retrieveMultiWordUtilitiesAndFunctions", "%<::CompiledModel.LocalSharedCodeManagerFile>", 0, "")
+    %if FEVAL("rtwprivate", "rtwcgtlc", "WriteFixptUtilsFile", rtwCtx)
+      %include "%<LibGetModelName()>_fixpt_util.tlc"
+      %<CGIRBlockRegisterFixPointFunctions()>
+      %assign nMaxMWBits = FEVAL("rtwprivate", "rtwcgtlc", ...
+        "fixPtWordSizeUsage", rtwCtx)
+      %<DeclareFixedPointWordSizeUsage(nMaxMWBits)>
+    %else
+      %%START_ASSERT
+      %error "Failure to write the fixpoint utility TLC file"
+      %%END_ASSERT
+    %endif
+  %endif
+%endfunction
+
+%% Function: FixPt_UnaryOp ====================================================
+%% Abstract:
+%%   This function returns the C code for a unary operator.
+%%
+%function FixPt_UnaryOp(unaryOp, yLabel, yDT, uLabel, uDT, ...
+  roundMode, satMode) void
+  %if SLibIsValidCoderContext()
+    %assign rtwCtx = ::CompiledModel.RTWContext
+    %assign retVal = FEVAL("rtwprivate", "rtwcgtlc", unaryOp, rtwCtx, ...
+      yLabel, yDT, uLabel, uDT, roundMode, satMode)
+    %assign headers = retVal[3]
+    %foreach idx = SIZE(headers, 1)
+      %<FcnTrackHeaderFileUsage(headers[idx], TLC_FALSE, TLC_FALSE)>
+    %endforeach
+    %return retVal
+  %else
+    %%START_ASSERT
+    %error "This fixpoint operator is not available if the TLC command is invoked offline"
+    %%END_ASSERT
+  %endif
+%endfunction
+
+%% Function: FixPt_BinaryOp ===================================================
+%% Abstract:
+%%   This function returns the C code for a binary operator.
+%%
+%function FixPt_BinaryOp(binaryOp, yLabel, yDT, ...
+  u1Label, u1DT, u2Label, u2DT, roundMode, satMode) void
+  %if SLibIsValidCoderContext()
+    %assign rtwCtx = ::CompiledModel.RTWContext
+    %assign retVal = FEVAL("rtwprivate", "rtwcgtlc", binaryOp, rtwCtx, ...
+      yLabel, yDT,  u1Label, u1DT, u2Label, u2DT, roundMode, satMode)
+    %assign headers = retVal[3]
+    %foreach idx = SIZE(headers, 1)
+      %<FcnTrackHeaderFileUsage(headers[idx], TLC_FALSE, TLC_FALSE)>
+    %endforeach
+    %return retVal
+  %else
+    %%START_ASSERT
+    %error "This fixpoint operator is not available if the TLC command is invoked offline"
+    %%END_ASSERT
+  %endif
+%endfunction
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Lookup Table Global "Enum-Style" Values
+%%
+%assign searchTrivial     = 0
+%assign searchPow2        = 1
+%assign searchEven        = 2
+%assign searchUneven      = 3
+%%
+%assign interpolateTrivial     = 0
+%assign interpolateBigProduct  = 1
+%assign interpolateLambda      = 2
+%assign interpolatePow2        = 3
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%include "fixptmul.tlc"
+%include "fixptdiv.tlc"
+%include "fixptcast.tlc"
+%include "fixptadd.tlc"
+%include "fixpterror.tlc"
+%include "fixpt_tunable_param_cast.tlc"
+%include "fixpt_code_gen_time_calc.tlc"
+%include "fixpt_preprocessor_guards.tlc"
+%include "fixptmultiword.tlc"
+%include "fixptcomment.tlc"
+
+%endif %% _FIXPTLIB_
+
+%% [EOF] %%

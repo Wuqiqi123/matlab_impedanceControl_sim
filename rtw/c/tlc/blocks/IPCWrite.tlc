@@ -1,0 +1,48 @@
+%% 
+%% 
+%%
+%% Copyright 2008 The MathWorks, Inc.
+%%
+%% Abstract: 
+%%   Code generation support for IPCWrite block
+
+%implements  "IPCWrite" "C"
+
+%% Function: Start ============================================================
+%% Abstract:
+%%   Perform Start function
+%%
+%function Start(block, system) Output
+
+  %<GENERATE_TYPE(block, "Start", IPCFile, system)>
+
+%endfunction
+ 
+%% Function: InitializeConditions =============================================
+%% Abstract:
+%%   Perform InitializeConditions function
+%%
+%function InitializeConditions(block, system) Output
+
+  %<GENERATE_TYPE(block, "InitializeConditions", IPCFile, system)>
+
+%endfunction
+    
+%% Function: Outputs ===========================================================
+%% Abstract:
+%%   Run the TLC output script created during the rtwgen process for the
+%%   block.
+%%
+%function Outputs(block, system) Output
+
+  %<GENERATE_TYPE(block,"Outputs", IPCFile, system)>
+
+%endfunction
+
+%function Terminate(block, system) Output
+
+  %<GENERATE_TYPE(block, "Terminate", IPCFile, system)>
+  
+%endfunction
+
+%% [eof] msfunction.tlc

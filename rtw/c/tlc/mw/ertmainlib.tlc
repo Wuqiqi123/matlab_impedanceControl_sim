@@ -1,0 +1,1674 @@
+%% 
+%% 
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   Library file to create a sample main for ERT code format
+%%   for a given model.
+%%
+%selectfile NULL_FILE
+
+%include "ertmain_grtinterface.tlc"
+
+%function FcnMdlName() void
+  %return Name
+%endfunction
+
+%function FcnNumST() void
+  %return NumSynchronousSampleTimes
+%endfunction
+
+%function FcnGetPublicModelHeaderFile() void
+  %assign mdlHeaderFile = SLibGetFileNameForCode("mdl_hdr")
+  %return "%<mdlHeaderFile>.h"
+%endfunction
+
+%function FcnGetPeriodFromTID(tid) void
+  %return SampleTime[tid].ClockTickStepSize
+%endfunction
+
+%function FcnIsERTMalloc() void
+  %assign isERTMalloc = TLC_FALSE
+  %% Please comment out this line to get back default ert target.
+  %assign isERTMalloc = TLC_FALSE && ...
+     MultiInstanceERTCode && ...
+    !GenerateErtSFunction && !GenerateClassInterface && ...
+    !ExportFunctionsMode && !GenerateGRTWrapper
+  %return isERTMalloc
+%endfunction
+
+%function FcnGenerateRtOneStep(callSite) 
+  %assign rootSystem = System[NumSystems-1]
+  %assign reqInsts = LibGetSystemField(rootSystem,"ReqRootPrmHdrDataInsts")
+  
+  %if GenerateClassInterface 
+    %assign paramProto = "void"
+    %assign paramName = ""
+  %elseif FcnIsERTMalloc()
+    %assign paramProto = "model_data_struct* modelData"
+    %assign paramName =  "modelData"
+  %elseif !reqInsts.SimStructInst && !EmptyRealTimeObject
+    %assign paramProto = "%<::tSimStructType> *const %<::tSimStruct>"
+    %assign paramName = "%<::tSimStruct>"
+  %else
+    %assign paramProto = "void"
+    %assign paramName = ""
+  %endif
+ 
+  %if (callSite) 
+    %return "rt_OneStep(%<paramName>)"
+  %else
+    %% generate function definition if it's not called from callSite
+    %openfile fcnAbstract
+%<FcnRTOneStepDescription()>\
+    %closefile fcnAbstract
+    %createrecord fcnRec {Name "rt_OneStep"; Returns "void"; Params paramProto; Abstract fcnAbstract; ...
+      Category "model"; GeneratedBy "ertmainlib.tlc"; Type "Utility"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %assign fcnBanner = SLibDumpFunctionBanner(fcnRec)
+    %assign fcnProtoType = "void rt_OneStep(%<paramProto>)"
+    %undef fcnRec
+    %return fcnBanner + "\n" + fcnProtoType + ";\n" + fcnProtoType
+  %endif
+%endfunction
+
+%function FcnGenerateRtMdlPtr()
+  %assign rootSystem = System[NumSystems-1]
+  %assign reqInsts = LibGetSystemField(rootSystem,"ReqRootPrmHdrDataInsts")
+
+  %openfile retBuf
+  %if FcnIsERTMalloc() && ...
+    !reqInsts.SimStructInst && !EmptyRealTimeObject 
+    %<::tSimStructType> *%<::tSimStruct> = &(modelData->%<tSimStruct>);
+  %endif
+  %closefile retBuf
+  %return retBuf
+%endfunction
+%%
+%% Functions for creating the appropriate scheduler
+%%
+
+%function FcnGenNonClassicInterfaceModelInitFcnBody() Output
+  %<GenerateModelInitFcnName()>(%<SLibModelFcnArgs("Initialize",TLC_TRUE,"")>);  
+%endfunction
+
+%function FcnGenerateLocalModelInitializeFcn() Output
+  %% Export function doesn't support classic call interface
+  %assert SLibIsExportFcnDiagram() && !GenerateClassInterface
+  /* Local function to initialize the model */
+  %<FcnGenNonClassicInterfaceModelInitFcnBody()>
+%endfunction
+
+%function FcnGenerateModelInitialize() Output
+  /* Initialize model */
+  %if !GenerateClassInterface
+    %<FcnGenNonClassicInterfaceModelInitFcnBody()>
+  %else %%in class gen mode
+    %<::CPPObjectName>.initialize();
+  %endif
+%endfunction
+
+%function FcnGenerateModelRegistration() Output
+  %assert UsingMalloc
+  
+  %assign fcnParams = SLibModelFcnArgs("Registration",TLC_TRUE,"")
+  /* Allocate model data */
+  %<::tSimStruct> = %<Name>(%<fcnParams>);
+%endfunction
+
+%function FcnGenNonClassicInterfaceModelTermFcnBody() Output
+  %<GenerateNonClassicInterfaceModelTermFcnName()>(%<SLibModelFcnArgs("Terminate",TLC_TRUE,"")>);
+%endfunction
+
+%function FcnGenerateLocalModelTerminateFcn() Output
+  %% Export function doesn't support classic call interface
+  %assert SLibIsExportFcnDiagram() && !GenerateClassInterface
+  %% Should have selected the option to generate model terminate function
+  %assert IncludeMdlTerminateFcn
+  /* Local function to terminate the model */
+  %<FcnGenNonClassicInterfaceModelTermFcnBody()>
+%endfunction
+
+%function FcnGenerateModelTerminate() Output
+    
+  /* Disable rt_OneStep() here */
+
+  %if IncludeMdlTerminateFcn
+    /* Terminate model */
+    %if !GenerateClassInterface
+      %<FcnGenNonClassicInterfaceModelTermFcnBody()>
+    %else
+      %<::CPPObjectName>.terminate();
+    %endif
+  %endif
+%endfunction
+
+%function ERTSimulateOneStep() Output
+  %%  Simulate the model step behavior if 
+  %%  1. The MAT-file logging is selected;
+  %%  2. External Mode option is selected;
+  %%  3. ForceSimulatedRTOneStep is set;
+  %%  4. StopReqestedFlag is accessed.
+  %assign forceOneStep = EXISTS("ForceSimulatedRTOneStep")
+  
+  %assign simulateStep = MatFileLogging || ExtMode || ...
+    EXISTS("ForceSimulatedRTOneStep") || RTMStopReqAccessed()
+
+  %return simulateStep
+%endfunction
+
+%function ERTStopCheck() Output
+  %if RTMStopReqAccessed()
+    %if TargetOS == "VxWorksExample"
+      %% use inverse logic
+      %assign stopCheck = "(%<RTMGetErrStat()> != %<SLibGetNullDefinitionFromTfl()>) || %<RTMGetStopRequested()>"
+    %else
+      %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+         %assign stopCheck = "!extmodeSimulationComplete() && !extmodeStopRequested()"
+      %else
+        %assign stopCheck = "(%<RTMGetErrStat()> == %<SLibGetNullDefinitionFromTfl()>) && !%<RTMGetStopRequested()>"
+      %endif
+    %endif
+  %else
+    %if TargetOS == "VxWorksExample"
+      %% use inverse logic
+      %assign stopCheck = "%<RTMGetErrStat()> != %<SLibGetNullDefinitionFromTfl()>"
+    %else
+      %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+         %assign stopCheck = "!extmodeSimulationComplete()>"
+      %else
+        %assign stopCheck = "%<RTMGetErrStat()> == %<SLibGetNullDefinitionFromTfl()>"
+      %endif
+    %endif
+  %endif
+  
+  %return stopCheck
+%endfunction
+
+%function PrintERTStopCheckStatus() Output
+  %openfile retBuf
+  %if RTMStopReqAccessed()
+    fprintf(stderr,"Error status: %s; Stop request: %d \n", %<RTMGetErrStat()>,%<RTMGetStopRequested()>);
+  %else
+    fprintf(stderr,"Error status: %s \n", %<RTMGetErrStat()>);
+  %endif
+  %closefile retBuf
+  
+  %return retBuf
+%endfunction
+
+%function ERTGenCodeRunOneStep(simstructArg) Output
+  %openfile retBuf
+  %if ERTSimulateOneStep()
+    %if MatFileLogging
+      /* The MAT-file logging option selected; therefore, simulating 
+      * the model step behavior (in non real-time).  Running this
+      * code produces results that can be loaded into MATLAB.
+      */
+      %assign simulateStep = TLC_TRUE
+    %elseif ExtMode
+      /* The External Mode option selected; therefore,
+      *  simulating the model step behavior (in non real-time). 
+      */
+      %assign simulateStep = TLC_TRUE
+    %elseif RTMStopReqAccessed()
+      /* Simulating the model step behavior (in non real-time) to
+      *  simulate model behavior at stop time.
+      */
+      %assign simulateStep = TLC_TRUE
+    %elseif EXISTS("ForceSimulatedRTOneStep")
+      /* Simulating step behavior */
+      %assign simulateStep = TLC_TRUE
+    %endif
+    while (%<ERTStopCheck()>) {
+    %if ExtMode
+      %assign buffsRec   = ::CompiledModel.CachedCodeBuffsForRootSys
+      %if ISFIELD(buffsRec,"ExtModeHeader") && !WHITE_SPACE(buffsRec.ExtModeHeader)
+        %<buffsRec.ExtModeHeader>\
+      %endif
+      %<FcnGenerateExtModeOneStep()>
+    %endif
+      %<FcnGenerateRtOneStep(TLC_TRUE)>;
+    }
+  %else
+    %assign period = FcnGetPeriodFromTID(0)
+    /* Attach rt_OneStep to a timer or interrupt service routine with
+    * period %<period> seconds (the model's base sample time) here.  The
+    * call syntax for rt_OneStep is 
+    *
+    *  %<FcnGenerateRtOneStep(TLC_TRUE)>;
+    */
+    printf("Warning: The simulation will run forever. "
+    "Generated ERT main won't simulate model step behavior. "
+    "To change this behavior select the 'MAT-file logging' option.\n");
+    fflush(%<SLibGetNullDefinitionFromTfl()>);
+    
+    %if GenerateClassInterface && (!RealTimeModelAccessed)
+      while(1) {
+        /*  Perform other application tasks here */
+        }
+    %else
+      %if SuppressErrorStatus
+        while(1) {
+      %else
+        while (%<ERTStopCheck()>) {
+      %endif
+        /*  Perform other application tasks here */
+      } 
+    %endif
+
+  %endif
+  %closefile retBuf
+  
+  %return retBuf
+  
+%endfunction
+
+%function FcnSimpleNonOSMain() Output
+  %assign fcnReturns = "int_T"
+  %assign fcnParams = "int_T argc, const char *argv[]"
+  %if ::CompiledModel.StandaloneSubsystemTesting == 2
+    %% The following file is in test/toolbox/rtw/targets/ert/standalone_subsystem
+    %include "standalonetesting.tlc"
+    %% If the standalone testing is on, we test memory initialization.
+    %<FcnGenMainForMemInitTesting()>
+    %assign fcnName = "main1"
+    %assign fcnAbstract = ""
+  %else
+    %assign fcnName = "main"
+    %openfile fcnAbstract
+The example "main" function illustrates what is required by your
+application code to initialize, execute, and terminate the generated code.
+Attaching rt_OneStep to a real-time clock is target specific.  This example
+illustrates how you do this relative to initializing the model.
+    %closefile fcnAbstract
+  %endif
+  
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "main"; GeneratedBy "ertmainlib.tlc"; Type "Main"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    %assign rootSystem = System[NumSystems-1]
+    %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+    %assign needRTMdl = !reqInsts.SimStructInst && !::CompiledModel.EmptyRealTimeObject
+    %assign needMdlParam = !reqInsts.ParamsInst && ...
+      !SLibPrmBufferIsEmpty("SimulinkGlobal", "Instance")
+    %if FcnIsERTMalloc()
+      model_data_struct *modelData;
+      %if needRTMdl
+        %<::tSimStructType> *%<::tSimStruct>;
+      %endif
+      modelData = (model_data_struct*) malloc(sizeof(*modelData));
+      %if needRTMdl
+        %<::tSimStruct> = &(modelData->%<tSimStruct>);
+      %endif
+      %if needMdlParam
+        modelData->%<LibGetParametersStruct()> = %<LibGetParametersStruct()>;
+      %endif
+    %endif
+   
+    %if MultiInstanceERTCode && !UsingMalloc  && !GenerateClassInterface ...
+      && !SLibIsExportFcnDiagram()
+      %% Local variable to suppress warning
+      %<::tSimStructType> *const %<::tSimStruct> = %<::tSimStructPtr>; 
+    %endif
+    
+    %if UsingMalloc
+      %assert needRTMdl
+      %<::tSimStructType> *%<::tSimStruct>;
+    %endif
+    
+    %if ExtMode == 1
+      %if !ExtModeXCP || ExtModeXCPClassicInterface
+         /* External mode */
+         rtParseArgsForExtMode(argc, argv);
+      %else
+        extmodeErrorCode_T errorCode = EXTMODE_SUCCESS;
+
+        /* Parse External Mode command line arguments */
+        errorCode = extmodeParseArgs(argc, argv);
+        if (errorCode != EXTMODE_SUCCESS) {
+            return (errorCode);
+        }
+      %endif
+    %else
+      
+      /* Unused arguments */
+      (void)(argc);
+      (void)(argv);
+    %endif
+
+    %if needRTMdl
+      %assign simstructArg = ::tSimStruct
+    %else
+      %assign simstructArg = ""
+    %endif
+    
+    %if UsingMalloc
+      
+      %<FcnGenerateModelRegistration()>
+      
+      if (%<simstructArg> == NULL) {
+        (void)fprintf(stderr,"Memory allocation error during model "
+        "registration");
+        return(1);
+      }
+      %if !SuppressErrorStatus
+        if (rtmGetErrorStatus(%<simstructArg>) != NULL) {
+          (void)fprintf(stderr,"Error during model registration: %s\n",
+          rtmGetErrorStatus(%<simstructArg>));
+          %<FcnGenerateModelTerminate()>
+          return(1);
+        }      
+      %endif
+      
+    %endif
+      
+    %% Pack model data into RTM
+    %<FcnPackModelDataIntoRTM()>      
+        
+    %if MatFileLogging && SeparateRegistrationFcn      
+      /* Matfile logging */
+      %<SLibGenLoggingStart()>      
+    %endif
+    
+    %<FcnGenerateModelInitialize()>
+
+    %if ExtMode
+      %<SLibGenERTExtModeInit()>
+    %endif   
+    
+    %<ERTGenCodeRunOneStep(simstructArg)>
+
+    %% If SuppressErrorStatus is true, RTMGetErrStat() 
+    %% is always (void 0). The following code is 
+    %% dead code. Should not generate
+    %openfile tmpbuf    
+    
+    %if MatFileLogging
+      /* Matfile logging */
+      %<SLibGenLoggingStop("MATFILE")>
+    %endif
+    
+    %<FcnGenerateModelTerminate()>
+
+    %if (ExtMode == 1)
+      %if (ExtModeXCP && !ExtModeXCPClassicInterface)
+        /* External Mode reset */
+        extmodeReset();
+      %else
+         /* External mode */
+         rtExtModeShutdown(%<NumRuntimeExportedRates>);
+      %endif
+    %endif
+
+    %closefile tmpbuf
+    %if SuppressErrorStatus && !RTMStopReqAccessed() && !UsingMalloc
+      %if !WHITE_SPACE(tmpbuf)
+        /* The option 'Remove error status field in real-time model data structure' 
+        * is selected, therefore the following code does not need to execute.
+        */
+        #if 0
+        %<tmpbuf>
+        #endif
+      %endif
+    %else
+      %<tmpbuf>\
+    %endif
+    return 0;
+  }
+%endfunction
+
+%function GetErtModelFcnArgs(fcn,isCallSite,tid)
+  %assign updateContStates = ...
+    (ISEQUAL(tid,0) || ISEQUAL(tid, "")) && (NumContStates > 0)
+  %switch fcn
+    %case "OutputUpdate"
+      %if updateContStates
+        %assign argList = SLibModelFcnArgs("UpdateContStates",isCallSite,tid)
+      %else
+        %assign argList = SLibModelFcnArgs("OutputUpdate",isCallSite,tid)
+      %endif
+      %break
+    %case "Update"
+      %if updateContStates
+        %assign argList = SLibModelFcnArgs("UpdateContStates",isCallSite,tid)
+      %else
+        %assign argList = SLibModelFcnArgs("RootUpdate",isCallSite,tid)
+      %endif
+      %break
+    %default
+      %assign argList = SLibModelFcnArgs(fcn,isCallSite,tid)
+      %break
+  %endswitch
+  %return argList
+%endfunction
+
+%function FcnCallMdlStep(tid) Output
+  %if GenerateSampleERTMain && SLibIsAsyncTaskOnlyModel() && ...
+    !LibIsDeploymentDiagram()
+    %% step function is empty, does not exist.
+    %return 
+  %endif
+  %assign outputReturn = ""
+  %assign updateFcnName = ""
+  %assign updateArgList = ""
+      
+  %assign OriginalGenerateSampleERTMain = ConfigSet.GenerateSampleERTMain
+  %if LibIsDeploymentDiagram() && (GenerateSampleERTMain || ...
+    OriginalGenerateSampleERTMain || RateBasedStepFcn) && (!SLibGenerateNativeThreads())
+    %<SLibDeploymentCallERTEntryPoints(tid)>
+  %else
+     %if (GenerateSampleERTMain || OriginalGenerateSampleERTMain || RateBasedStepFcn)...
+      && SLibIsPeriodicRateGrouping() && (!SLibGenerateNativeThreads())
+      %assign tidSuffix = tid
+    %else
+      %assign rootSystem.CurrentTID = ""
+      %assign tidSuffix = ""
+    %endif
+    
+    %if CombineOutputUpdateFcns
+      %assign outputReturn = SLibModelStepFcnReturn("ReturnIdentifier")
+      %assign outputFcnName = SLibModelStepFcnName(tidSuffix)
+      %assign outputArgList = GetErtModelFcnArgs("OutputUpdate",TLC_TRUE,tid)
+    %else
+      %assign outputFcnName = FcnGetModelOutputFcnNameFromCoderDictionary(tidSuffix)
+      %assign outputArgList = GetErtModelFcnArgs("Output",TLC_TRUE,tid)
+      %assign updateFcnName = FcnGetModelUpdateFcnNameFromCoderDictionary(tidSuffix)
+      %assign updateArgList = GetErtModelFcnArgs("Update",TLC_TRUE,tid)
+    %endif
+    %if !ISEMPTY(outputReturn)
+      %assign outputReturn  = outputReturn + " = "
+    %endif
+    %<outputReturn> %<outputFcnName>(%<outputArgList>);
+    /* Get model outputs here */
+    
+    %if updateFcnName != ""
+      %assign buffsRec   = ::CompiledModel.CachedCodeBuffsForRootSys
+      %if ExtMode == 1
+        %assign rootSystem = System[NumSystems-1]
+        %assign isPeriodicRateGrouping = SLibIsMultiRateAndPeriodicRateGrouping(rootSystem)
+        %if !isPeriodicRateGrouping
+          %assign tidTemp = ""
+        %else
+          %assign tidTemp = tid
+        %endif
+        %if ISFIELD(buffsRec,"ExtModeTrailer%<tidTemp>") && ...
+          !WHITE_SPACE(buffsRec.ExtModeTrailer%<tidTemp>)
+          %assign tmpBuff = buffsRec.ExtModeTrailer%<tidTemp>
+          %<tmpBuff>\
+        %endif   
+      %endif
+      %if MatFileLogging
+        %if ISEQUAL(tid, "") || ISEQUAL(tid, 0)
+          %if ISFIELD(buffsRec,"LogBuffer") && !WHITE_SPACE(buffsRec.LogBuffer)
+            %<buffsRec.LogBuffer>\
+          %endif
+        %endif
+      %endif
+      %<updateFcnName>(%<updateArgList>);
+    %endif
+  %endif
+%endfunction
+
+%function FcnRTOneStepDescription() Output
+Associating rt_OneStep with a real-time clock or interrupt service routine
+is what makes the generated code "real-time".  The function rt_OneStep is
+always associated with the base rate of the model.  Subrates are managed
+by the base rate from inside the generated code.  Enabling/disabling
+interrupts and floating point context switches are target specific.  This
+example code indicates where these should take place relative to executing
+the generated code step function.  Overrun behavior should be tailored to
+your application needs.  This example simply sets an error status in the
+real-time model and returns from rt_OneStep.
+%endfunction
+
+%function FcnSingleRateWithoutOS() void
+  %<SetCurrentUtilsIncludesIdx("main_util_incl")>  
+  %<SLibCacheCodeToFile("mainSrc_data_defn", ...
+    LibERTMainDeclareVariables(TLC_TRUE,TLC_TRUE))>
+  %openfile tmpFcnBuf
+  %% Comments generation by FcnRTOneStepDescription is moved inside FcnGenerateRtOneStep
+  %<FcnGenerateRtOneStep(TLC_FALSE)>
+  {
+    %assign firstTid = FixedStepOpts.TID01EQ? 1:0
+    %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface && CombineOutputUpdateFcns
+        extmodeErrorCode_T errorCode = EXTMODE_SUCCESS;
+        extmodeSimulationTime_T currentTime = (extmodeSimulationTime_T) 0;
+    %endif
+
+    static boolean_T OverrunFlag = %<GET_TYPE_ID_REPLACEMENT("false")>;
+    %<SLibDeclareFcnProtoCtlVariables()>\
+
+    %<FcnGenerateRtMdlPtr()>
+    /* Disable interrupts here */
+
+    /* Check for overrun */
+    if (OverrunFlag) {
+      %if GenerateClassInterface
+        %if RealTimeModelAccessed
+          %if !SuppressErrorStatus
+          rtmSetErrorStatus(%<CPPObjectName>.getRTM(), "Overrun");
+          %endif
+        %endif
+      %else
+        %if !SuppressErrorStatus
+	%<RTMSetErrStat("\"Overrun\"")>;
+        %endif
+      %endif
+	return;
+    }
+    OverrunFlag = %<GET_TYPE_ID_REPLACEMENT("true")>;
+    
+    /* Save FPU context here (if necessary) */
+    /* Re-enable timer or interrupt here */
+    /* Set model inputs here */
+
+    /* Step the model */
+    %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface && CombineOutputUpdateFcns
+      currentTime = (extmodeSimulationTime_T) %<RTMGetTaskTimeForTID(firstTid)>;
+    %endif
+    %<FcnCallMdlStep("")>\
+
+    %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface && CombineOutputUpdateFcns
+        /* Trigger External Mode event */
+        errorCode = extmodeEvent(%<firstTid>,currentTime);
+        if (errorCode != EXTMODE_SUCCESS) {
+            /* Code to handle External Mode event errors
+               may be added here */
+        }
+    %endif
+
+    /* Indicate task complete */ 
+    OverrunFlag = %<GET_TYPE_ID_REPLACEMENT("false")>;
+
+    /* Disable interrupts here */
+    /* Restore FPU context here (if necessary) */
+    /* Enable interrupts here */
+
+    %if (ExtMode == 1) && (!ExtModeXCP || ExtModeXCPClassicInterface)
+      rtExtModeCheckEndTrigger();
+    %endif
+  }
+  
+  %<FcnSimpleNonOSMain()>\
+  %closefile tmpFcnBuf
+  %<SetCurrentUtilsIncludesIdx("")>
+  %return tmpFcnBuf
+%endfunction %% SingleRateWithoutOS
+
+%function LibInitStr(length) void
+  %assign initStr = ""
+  %assign comma   = ""
+  %foreach idx = length
+    %assign initStr = initStr + "%<comma>0"
+    %assign comma = ","
+  %endforeach
+  %return "{%<initStr>}"
+%endfunction
+
+
+%function FcnMultiRateSingletaskingWithoutOS() void
+  %<SetCurrentUtilsIncludesIdx("main_util_incl")>
+  %<SLibCacheCodeToFile("mainSrc_data_defn", ...
+    LibERTMainDeclareVariables(TLC_TRUE,TLC_TRUE))>
+  %openfile tmpFcnBuf
+  
+  %<FcnGenerateRtOneStep(TLC_FALSE)>
+  {
+    static boolean_T OverrunFlag = %<GET_TYPE_ID_REPLACEMENT("false")>;
+     %<SLibDeclareFcnProtoCtlVariables()>\
+    
+     %<FcnGenerateRtMdlPtr()>
+     /* Disable interrupts here */
+
+    /* Check for overrun */
+    
+    if (OverrunFlag) {
+      %if !SuppressErrorStatus
+      %<RTMSetErrStat("\"Overrun\"")>;
+      %endif
+      return;
+    }
+    OverrunFlag = %<GET_TYPE_ID_REPLACEMENT("true")>;
+    /* Save FPU context here (if necessary) */
+    /* Re-enable timer or interrupt here */
+    /* Set model inputs here */
+
+    /* Step the model for base rate */
+    %<FcnCallMdlStep(0)>\
+
+    /* Indicate task complete */
+    OverrunFlag = %<GET_TYPE_ID_REPLACEMENT("false")>;
+
+    /* Disable interrupts here */
+    /* Restore FPU context here (if necessary) */
+    /* Enable interrupts here */
+
+    %if (ExtMode == 1) && (!ExtModeXCP || ExtModeXCPClassicInterface)
+      rtExtModeCheckEndTrigger();
+    %endif
+  }
+
+  %<FcnSimpleNonOSMain()>\
+  %closefile tmpFcnBuf
+  %<SetCurrentUtilsIncludesIdx("")>
+  %return tmpFcnBuf
+%endfunction
+
+%function ERTMainCheckRTMTaskRunsThisBaseStep(idx)
+  %if SuppressMultiTaskScheduler
+    %return "(taskCounter[%<idx>] == 0)"
+  %else
+    %return "((boolean_T)%<RTMTaskRunsThisBaseStep(idx)>)"
+  %endif
+%endfunction
+
+%function ERTMainGenSchedulerCode()
+  %openfile retBuf
+  %if SuppressMultiTaskScheduler
+    %% scheduler code in main 
+    %foreach i = NumSynchronousSampleTimes-1
+      %assign limit = FcnComputeTaskTickLimit(i+1)
+      taskCounter[%<i+1>]++;
+      if (taskCounter[%<i+1>] == %< FcnComputeTaskTickLimit(i+1)>) {
+        taskCounter[%<i+1>]=0;
+        }
+    %endforeach
+  %endif
+  %closefile retBuf
+  
+  %return retBuf
+%endfunction
+
+%function EventFlagsFunction(fcnPref,eventflags)
+  %openfile tmpBuf
+  %if InlineSetEventsForThisBaseRateFcn
+    %assign tid01Eq = FixedStepOpts.TID01EQ
+    %if LibGetNumSyncPeriodicTasks() > 2
+      for (i = %<1+tid01Eq>; i < %<FcnNumST()>; i++) {
+        if %<ERTMainCheckRTMTaskRunsThisBaseStep("i")> {
+          if (%<eventflags>[i]) {
+            OverrunFlags[0] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+            OverrunFlags[i] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+            %if !SuppressErrorStatus
+              /* Sampling too fast */
+              %<LibSetRTModelErrorStatus("\"Overrun\"")>;
+            %endif
+            return;
+          } 
+          %<eventflags>[i] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+        }
+      }
+    %elseif LibGetNumSyncPeriodicTasks() == 2
+      %assign lstTid = FcnNumST()-1
+      if %<ERTMainCheckRTMTaskRunsThisBaseStep(lstTid)> {
+        if (%<eventflags>[%<lstTid>]) {
+          OverrunFlags[0] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+          OverrunFlags[%<lstTid>] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+          %if !SuppressErrorStatus
+            /* Sampling too fast */
+            %<LibSetRTModelErrorStatus("\"Overrun\"")>;
+          %endif
+          return;
+        } 
+        %<eventflags>[%<lstTid>] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+      }
+    %endif
+    %<ERTMainGenSchedulerCode()>
+  %else
+    %assign fcnName = "%<fcnPref>SetEventsForThisBaseStep"
+    
+    %if MultiInstanceERTCode
+      %<fcnName>(%<eventflags>, %<::tSimStruct>);
+    %else
+      %<fcnName>(%<eventflags>);
+    %endif
+  %endif
+  %closefile tmpBuf
+  
+  %return tmpBuf
+%endfunction
+
+%function FcnCallEventFlagsFunction(fcnPref) Output
+ 
+  %if InlineSetEventsForThisBaseRateFcn
+    /*
+    * For a bare-board target (i.e., no operating system), the 
+    * following code checks whether any subrate overruns, 
+    * and also sets the rates that need to run this time step.  
+    */
+    %<EventFlagsFunction(fcnPref,"eventFlags")>
+  %else
+    /*
+    * For a bare-board target (i.e., no operating system), the rates
+    * that execute this base step are buffered locally to allow for
+    * overlapping preemption.  The generated code includes function
+    * %<fcnName>() which sets the rates
+    * that need to run this time step.  The return values are 1 and 0
+    * for true and false, respectively.
+    */
+    %<EventFlagsFunction(fcnPref,"eventFlags")>
+  %endif
+  
+%endfunction
+
+%function FcnInitializeTaskCounter()
+  %assign initStr = ""
+  %assign comma   = ""
+  %foreach idx = NumSynchronousSampleTimes
+    %assign initStr = initStr + "%<comma>%<FcnComputeTaskTickOffset(idx)>"
+    %assign comma = ","
+  %endforeach
+  %return "{%<initStr>}"
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibERTMainDeclareVariables =============
+%% Abstract:
+%%   Declare local or global variables used in ERT main function.
+%%   
+%%   Arguments:
+%%       globalVariables: TLC_TRUE to declare global variables, 
+%%                        otherwise local variables
+%%       bareboard:       TLC_TRUE to declare variables for bareboard ERT main
+%%
+%function LibERTMainDeclareVariables(globalVariables, bareboard)
+  %openfile retBuf
+  
+  %if !globalVariables
+    %if bareboard
+      static boolean_T OverrunFlags[%<FcnNumST()>] = %<LibInitStr(NumSynchronousSampleTimes)>;
+      %if InlineSetEventsForThisBaseRateFcn
+        static  boolean_T eventFlags[%<FcnNumST()>] = %<LibInitStr(NumSynchronousSampleTimes)>; /* Model has %<FcnNumST()> rates */
+      %endif
+    %endif
+    %if SuppressMultiTaskScheduler
+      static  int_T taskCounter[%<FcnNumST()>] = %<FcnInitializeTaskCounter()>;
+    %endif
+    %% local variables
+    %if LibNumDiscreteSampleTimes() > 2
+      int_T i;
+    %endif
+    %if !InlineSetEventsForThisBaseRateFcn
+      boolean_T eventFlags[%<FcnNumST()>]; /* Model has %<FcnNumST()> rates */
+    %endif
+  %endif
+  %if !globalVariables && bareboard
+    %<SLibDeclareFcnProtoCtlVariables()>\
+  %endif
+  
+  %if UsingMalloc && globalVariables && bareboard
+    const char *RT_MEMORY_ALLOCATION_ERROR = "memory allocation error"; 
+  %endif
+  
+  %closefile retBuf
+
+  %return retBuf
+%endfunction
+
+%function FcnMultiRateMultitaskingWithoutOS() void
+  %<SetCurrentUtilsIncludesIdx("main_util_incl")> 
+  %<SLibCacheCodeToFile("mainSrc_data_defn", ...
+    LibERTMainDeclareVariables(TLC_TRUE,TLC_TRUE))>
+  %openfile tmpFcnBuf
+  
+  %assign tid01Eq = FixedStepOpts.TID01EQ
+  %<FcnGenerateRtOneStep(TLC_FALSE)>
+
+  {
+    %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+        extmodeErrorCode_T errorCode = EXTMODE_SUCCESS;
+        extmodeSimulationTime_T currentTime = (extmodeSimulationTime_T) 0;
+    %endif
+
+    %<LibERTMainDeclareVariables(TLC_FALSE,TLC_TRUE)>
+    %<FcnGenerateRtMdlPtr()>
+    
+    /* Disable interrupts here */
+
+    /* Check base rate for overrun */
+    if (OverrunFlags[0]) {
+      %if !SuppressErrorStatus
+        %<RTMSetErrStat("\"Overrun\"")>;
+      %endif
+      return;
+    }
+    OverrunFlags[0] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+
+    /* Save FPU context here (if necessary) */
+    /* Re-enable timer or interrupt here */
+
+    %<FcnCallEventFlagsFunction("%<Name>_")>\
+    
+    /* Set model inputs associated with base rate here */
+
+    %assign rootSystem.CurrentTID = 0
+    /* Step the model for base rate */
+    %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+      %if NumContStates == 0
+        currentTime = (extmodeSimulationTime_T) %<RTMGetTaskTimeForTID(0)>;
+      %endif
+    %endif
+    %<FcnCallMdlStep(0)>\
+
+    %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+      %if NumContStates == 0
+        %% If the model contains continuous states, the extmodeEvent()
+        %% for the base rate needs to be invoked inside the modelStep0 
+        /* Trigger External Mode event */
+        errorCode = extmodeEvent(%<tid01Eq>,currentTime);
+        if (errorCode != EXTMODE_SUCCESS) {
+            /* Code to handle External Mode event errors
+               may be added here */
+        }
+      %endif
+    %endif
+    
+    /* Indicate task for base rate complete */
+    OverrunFlags[0] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+    
+    %if LibGetNumSyncPeriodicTasks() > 2
+      %% Multiple subrates
+      /* Step the model for any subrate */
+      for (i = %<1+tid01Eq>; i < %<FcnNumST()>; i++) {
+        %if InlineSetEventsForThisBaseRateFcn
+          /* If task "i" is running, don't run any lower priority task */
+          if (OverrunFlags[i]) {
+            return; 
+          }
+          
+        %endif
+        if (eventFlags[i]) {
+          
+          %if !InlineSetEventsForThisBaseRateFcn
+            
+            if (OverrunFlags[i]) {
+              %if !SuppressErrorStatus
+                %<RTMSetErrStat("\"Overrun\"")>;
+              %endif
+              return;
+            }
+            
+          %endif
+          OverrunFlags[i] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+          
+          /* Set model inputs associated with subrates here */
+          
+          /* Step the model for subrate "i" */
+          %if GenerateSampleERTMain && SLibIsPeriodicRateGrouping() 
+            switch(i) {
+              %foreach idx = LibGetNumSyncPeriodicTasks() - 1
+                %assign tid = idx + 1 + tid01Eq
+                case %<tid> :
+                %assign rootSystem.CurrentTID = tid
+                %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+                  currentTime = (extmodeSimulationTime_T) %<RTMGetTaskTimeForTID(tid)>;
+                %endif
+                %<FcnCallMdlStep(tid)>\
+                %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+                    /* Trigger External Mode event */
+                    errorCode = extmodeEvent(%<tid>,currentTime);
+                    if (errorCode != EXTMODE_SUCCESS) {
+                        /* Code to handle External Mode event errors
+                           may be added here */
+                    }
+                %endif
+
+                break;
+              %endforeach
+              default : 
+              break;
+            }
+          %else
+            %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+              currentTime = (extmodeSimulationTime_T) %<RTMGetTaskTimeForTID(i)>;
+            %endif
+
+            %<FcnCallMdlStep("i")>\
+
+            %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+                /* Trigger External Mode event */
+                errorCode = extmodeEvent(%<i>,currentTime);
+                if (errorCode != EXTMODE_SUCCESS) {
+                    /* Code to handle External Mode event errors
+                       may be added here */
+                }
+            %endif
+          %endif
+          
+          /* Indicate task complete for sample time "i" */
+          OverrunFlags[i] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+          %if InlineSetEventsForThisBaseRateFcn
+            eventFlags[i] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+          %endif
+        }
+      }
+    %else
+
+      %% Single subrate
+      %assign tid = FcnNumST()-1
+      %if InlineSetEventsForThisBaseRateFcn
+        /* If task 1 is running, don't run any lower priority task */
+        if (OverrunFlags[1]) {
+          return; 
+        }
+        
+      %endif
+      /* Step the model for subrate */
+      if (eventFlags[%<tid>]) { 
+      %if !InlineSetEventsForThisBaseRateFcn
+        if (OverrunFlags[%<tid>]) {
+          %if !SuppressErrorStatus
+            %<RTMSetErrStat("\"Overrun\"")>;
+          %endif
+          return;
+        }
+      %endif
+      OverrunFlags[%<tid>] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+      
+      /* Set model inputs associated with subrates here */
+      
+      %assign rootSystem.CurrentTID = tid
+      /* Step the model for subrate %<tid> */
+      %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+        currentTime = (extmodeSimulationTime_T) %<RTMGetTaskTimeForTID(tid)>;
+      %endif
+      %<FcnCallMdlStep(tid)>\
+      %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+          /* Trigger External Mode event */
+          errorCode = extmodeEvent(%<tid>,currentTime);
+          if (errorCode != EXTMODE_SUCCESS) {
+              /* Code to handle External Mode event errors
+                 may be added here */
+          }
+      %endif
+      
+      /* Indicate task complete for subrate */
+      OverrunFlags[%<tid>] = %<GET_TYPE_ID_REPLACEMENT("false")>; 
+      %if InlineSetEventsForThisBaseRateFcn
+        eventFlags[%<tid>] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+      %endif
+      }    
+    %endif
+
+    /* Disable interrupts here */
+    /* Restore FPU context here (if necessary) */
+    /* Enable interrupts here */
+    
+    %if (ExtMode == 1) && (!ExtModeXCP || ExtModeXCPClassicInterface)
+      /* Ext mode check end trigger */
+      rtExtModeCheckEndTrigger();
+    %endif
+  }
+
+  %<FcnSimpleNonOSMain()>\
+  %closefile tmpFcnBuf
+  %<SetCurrentUtilsIncludesIdx("")>
+  %return tmpFcnBuf
+%endfunction
+
+
+%function FcnGenerateMultitaskingOSCode() Output
+  %assign tid01Eq = FixedStepOpts.TID01EQ
+  %foreach i = LibGetNumSyncPeriodicTasks() - 1
+    %assign tid = i + 1 + tid01Eq
+    %assign rootSystem.CurrentTID = tid
+    %assign fcnName = "tSubRate_%<tid>"
+    %assign fcnReturns = "static int_T"
+    %assign fcnParams = "SEM_ID sem"
+    %assign fcnAbstract = ""
+    %assign fcnCategory = "main"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+      Abstract fcnAbstract; Category fcnCategory; GeneratedBy "ertmainlib.tlc"; Type "Step"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      %<SLibDeclareFcnProtoCtlVariables()>\
+
+      while(1) {
+	semTake(sem, WAIT_FOREVER);
+        
+	/* Set model inputs associated to subrate here */
+        
+        /* Step the model for sample time for tid */ 
+	%<FcnCallMdlStep(tid)>\
+	
+        /* Write model outputs associated to subrate here */
+      }
+      return(1);
+    }
+  %endforeach
+  %<LibERTMainDeclareVariables(TLC_TRUE,TLC_FALSE)>
+  %assign fcnName = "tBaseRate"
+  %assign fcnReturns = "static int_T"
+  %assign fcnParams = "SEM_ID sem, SEM_ID startStopSem, SEM_ID taskSemList[]"
+  %assign fcnAbstract = ""
+  %assign fcnCategory = "main"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract fcnAbstract; Category fcnCategory; GeneratedBy "ertmainlib.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    %<LibERTMainDeclareVariables(TLC_FALSE,TLC_FALSE)>
+    while(1) {
+      if (%<ERTStopCheck()>) {
+        %<PrintERTStopCheckStatus()>
+	semGive(startStopSem);
+	return(1);
+      }
+        
+      if (semTake(sem,NO_WAIT) != ERROR) {
+	logMsg("Rate for BaseRate task too fast.\n",0,0,0,0,0,0);
+      } else {
+	semTake(sem, WAIT_FOREVER);
+      }
+      
+      %assign firstSubrateTID = 1 + tid01Eq
+      %if LibGetNumSyncPeriodicTasks() > 2
+        %% multiple subrates
+        %assign ifarg = ERTMainCheckRTMTaskRunsThisBaseStep("i")
+        for (i = %<firstSubrateTID>; i < %<FcnNumST()>; i++) {
+	  if %<ifarg> {
+	    semGive(taskSemList[i]);
+	    if (semTake(taskSemList[i],NO_WAIT) != ERROR) {
+	      logMsg("Rate for SubRate task %d is too fast.\n",i,0,0,0,0,0);
+	      semGive(taskSemList[i]);
+	    }
+	  }
+	}
+      %else
+        %% Single subrate
+	%assign ifarg = ERTMainCheckRTMTaskRunsThisBaseStep("%<firstSubrateTID>")
+	if %<ifarg> {
+	  semGive(taskSemList[%<firstSubrateTID>]);
+	  if (semTake(taskSemList[%<firstSubrateTID>],NO_WAIT) != ERROR) {
+	    logMsg("Rate for SubRate task %d is too fast.\n",%<firstSubrateTID>,0,0,0,0,0);
+	    semGive(taskSemList[%<firstSubrateTID>]);
+	  }
+	}
+      %endif
+       
+      %<ERTMainGenSchedulerCode()>
+      
+      /* Set model inputs associated with base rate here */
+  
+      /* Step the model for base rate */
+      %<FcnCallMdlStep(0)>\
+            
+    %if ExtMode == 1
+      /* External mode */
+      rtExtModeCheckEndTrigger();
+    %endif
+    }
+  }
+%endfunction
+
+%function FcnGenerateSingletaskingOSCode() Output
+  %assign fcnName = "tBaseRate"
+  %assign fcnReturns = "static int_T"
+  %assign fcnParams = "SEM_ID sem, SEM_ID startStopSem"
+  %assign fcnAbstract = ""
+  %assign fcnCategory = "main"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract fcnAbstract; Category fcnCategory; GeneratedBy "ertmainlib.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    int_T i;
+    %<SLibDeclareFcnProtoCtlVariables()>\
+
+    while(1) {
+      if (%<ERTStopCheck()>) {
+        %<PrintERTStopCheckStatus()>
+	semGive(startStopSem);
+	return(1);
+      }
+      
+      if (semTake(sem,NO_WAIT) != ERROR) {
+	logMsg("Rate for SingleRate task too fast.\n",0,0,0,0,0,0);
+      } else {
+	semTake(sem, WAIT_FOREVER);
+      }
+        
+      /* Set model inputs here */
+      
+      /* Step the model */
+      %if FcnNumST() > 1
+        %<FcnCallMdlStep(0)>\
+      %else
+         %<FcnCallMdlStep("")>\
+      %endif
+            
+      %if ExtMode == 1
+        /* External mode */
+        rtExtModeCheckEndTrigger();
+      %endif
+    }
+
+    return(1);
+  }
+%endfunction
+
+%function FcnSchedulerWithOS() void
+  %<SetCurrentUtilsIncludesIdx("main_util_incl")>
+  %assign singleTasking = SLibSingleTasking()
+  %openfile tmpFcnBuf
+  /* ANSI C headers */
+  #include <float.h>
+  #include <stdio.h>
+  #include <stdlib.h>
+  #include <string.h>
+  #include <ctype.h>
+  
+  /* VxWorks headers */
+  #include <vxWorks.h>
+  #include <taskLib.h>
+  #include <sysLib.h>
+  #include <semLib.h>
+  #include <rebootLib.h>
+  #include <logLib.h>
+
+  /* this sets the standard stack size for spawned tasks used by the model.
+   * this can be changed by compiling with '-DSTACK_SIZE=nnn' where nnn is
+   * the stack size desired.
+   */
+  #ifndef STACK_SIZE
+  #define STACK_SIZE 16384
+  #endif
+  
+  %if ExtMode
+    %% VxWorks needs this as a global
+    SEM_ID startStopSem;
+    %assign fcnName = "PrintUsageMsg"
+    %assign fcnReturns = "static void"
+    %assign fcnParams = "void"
+    %openfile fcnAbstract
+Print message describing the usage of rt_main (i.e., how it should be
+invoked - API).
+    %closefile fcnAbstract
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "main"; GeneratedBy "ertmainlib.tlc"; Type "Utility"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>);
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      printf("\nInvalid command line arguments:\n");
+      printf(
+      "Usage: "
+      "\t %<FcnMdlName()>_main(priority, port, optStr, port)\n\nwhere:\n\n"
+      "\tint_T  priority     The task priority for spawned tasks\n"
+      "\tint_T  port         The TCP port used for external communication\n"
+      "\tchar_T *optStr      Options\n");
+      
+      printf("optStr is an option string of the form:\n\t"
+      "-option1 val1 -option2 val2 -option3\n\n");
+
+      printf("\tValid options are:\n");
+      printf("\t-tf 20    - sets final time to 20 seconds\n");
+      printf("\t-w        - The simulation waits for the host to connect before starting\n");
+    } /* end PrintUsageMsg */
+    
+    %assign fcnName = "CountStrs"
+    %assign fcnReturns = "static int"
+    %assign fcnParams = "const char_T *str"
+    %assign fcnAbstract = "Count the number of space delimited strings."
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "main"; GeneratedBy "ertmainlib.tlc"; Type "Utility"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      int          count   = 0;
+      const char_T *strPtr = str;
+      
+      while(*strPtr != '\0') {
+        /* find substring */
+        while (isspace(*strPtr)) strPtr++;
+        count++;
+        strPtr++;
+        
+        /* move over this substring */
+        while ((!isspace(*strPtr)) && (*strPtr != '\0')) strPtr++;
+      }
+      return(count);
+    } /* end CountStrs */
+    
+    %assign fcnName = "GetNextStr"
+    %assign fcnReturns = "static char_T *"
+    %assign fcnParams = "char_T *str, char_T **strPtrNext"
+    %openfile fcnAbstract
+Assuming an input string that consists of space seperators return a pointer
+to the next string, replace the space delimiter with '\0' and return
+a pointer to the next non-white space character (or NULL if end of string).
+
+str = "  cat dog";
+
+GetNextStr returns:
+    strPtr     = pointer to 'c' (or NULL if no non-space char)
+    strPtrNext = pointer to 'd' (or NULL if end of string)
+    %closefile fcnAbstract
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "main"; GeneratedBy "ertmainlib.tlc"; Type "Utility"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns>%<fcnName>(%<fcnParams>)
+    {
+      int_T  done    = %<GET_TYPE_ID_REPLACEMENT("true")>; /* assume */
+      char_T *strPtr = %<SLibGetNullDefinitionFromTfl()>; /* assume */
+      
+      *strPtrNext = %<SLibGetNullDefinitionFromTfl()>; /* assume */
+      
+      /*
+      * Find beginning of this sub-string.
+      */
+      while (isspace(*str)) {
+        str++;
+        if (*str == '\0') {
+          /* reached end of string */
+          goto EXIT_POINT;
+        }
+      }
+      
+      strPtr = str++;
+      
+      /*
+      * Find end of this sub-string and make sure that it terminates with '\0'.
+      */
+      while (!isspace(*str) && (*str != '\0')) {
+        str++;
+      }
+      if (*str != '\0') {
+        done = %<GET_TYPE_ID_REPLACEMENT("false")>;
+        *str = '\0';
+      }
+      
+      /*
+      * Return a pointer to the next subString (or NULL) if at string end.
+      */
+      if (!done) {
+        str++;
+        while(isspace(*str)) {
+          str++;
+          if (*str == '\0') {
+            break;
+          }
+        }
+        *strPtrNext = (*str == '\0') ? %<SLibGetNullDefinitionFromTfl()> : str;
+      } else {
+        *strPtrNext = %<SLibGetNullDefinitionFromTfl()>;
+      }
+      
+      EXIT_POINT:
+      return(strPtr);
+    } /* end GetNextOptionStr */
+
+  %endif %% ExtMode
+  
+  %if !singleTasking
+    %<FcnGenerateMultitaskingOSCode()>\
+  %else
+    %<FcnGenerateSingletaskingOSCode()>\
+  %endif
+
+  %assign fcnName = FcnMdlName() + "_main"
+  %assign fcnReturns = "int_T"
+  %if ExtMode
+    %assign fcnParams = "int_T priority, char_T *optStr,int_T port"
+  %else
+    %assign fcnParams = "int_T priority"
+  %endif
+  %openfile fcnAbstract
+Spawn %<FcnMdlName()>_main as an independent VxWorks task from your
+application code, specifying its O/S priority
+  %closefile fcnAbstract
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "main"; GeneratedBy "ertmainlib.tlc"; Type "Main"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    const char *status;
+    real_T requestedSR, actualSR;
+    int_T  VxWorksTIDs[%<FcnNumST()>];
+    SEM_ID rtTaskSemaphoreList[%<FcnNumST()>];
+    %if ExtMode
+      %% VxWorks needs to access tstartStopSem from other modules, so it is not
+      %% declared in the local scope here
+      SEM_ID rtClockSem;
+      int    optStrLen  = strlen(optStr);
+      int    argc       = 0;
+      char_T **argv     = %<SLibGetNullDefinitionFromTfl()>;
+    %else
+      SEM_ID rtClockSem, startStopSem;      
+    %endif
+    
+    %if !ERTSimulateOneStep()
+      printf("Warning: The simulation will run forever. "
+      "To change this behavior select the 'MAT-file logging' option.\n");
+      fflush(%<SLibGetNullDefinitionFromTfl()>);
+    %endif
+    
+    %% for VxWorks we need to parse the options string
+    %if ExtMode
+      /* 
+      * Parse option string.
+      */
+      if ((optStr != %<SLibGetNullDefinitionFromTfl()>) && (optStrLen > 0)) {
+        int    i;
+        int    count;
+        char_T *thisStr;
+        char_T *nextStr;
+        
+        /*
+        * Convert to lower case.
+        */
+        for (i=0; i<optStrLen; i++) {
+          optStr[i] = tolower(optStr[i]);
+        }
+        
+        /*
+        * Convert error string to standard argc and argv format. 
+        */
+        
+        /* count strings and allocate an argv */
+        argc = CountStrs(optStr) + 1;
+
+        argv = (char **)calloc(argc,sizeof(char *));
+        if (argv == %<SLibGetNullDefinitionFromTfl()>) {
+          (void)fprintf(stderr,
+          "Memory allocation error while parsing options string.");
+          exit(EXIT_FAILURE);
+        }
+        
+        /* populate argv & terminate the individual substrings */
+        argv[0] = "dummyProgramName";
+        i=1;
+        nextStr = optStr;
+        while ((nextStr != %<SLibGetNullDefinitionFromTfl()>) && (thisStr = GetNextStr(nextStr, &nextStr)) != %<SLibGetNullDefinitionFromTfl()> && ( i < argc )) {
+          argv[i] = thisStr;
+          i++;
+        }
+        
+          rtParseArgsForExtMode(argc, (const char_T **)argv);
+          rtExtModeTornadoSetPortInExtUD(port);
+
+        free(argv);
+        argv = %<SLibGetNullDefinitionFromTfl()>;
+      }
+      
+    %endif %% ExtMode
+
+    if (priority <= 0 || priority > 255-(%<FcnNumST()>)+1) {
+      priority = 30;
+    }
+    
+    rtClockSem   = semBCreate(SEM_Q_PRIORITY, SEM_EMPTY);
+    startStopSem = semBCreate(SEM_Q_PRIORITY, SEM_EMPTY);
+    
+    %<FcnGenerateModelInitialize()>
+    
+    %if ExtMode
+      rtExtModeTornadoStartup(%<RTMGet("RTWExtModeInfo")>,
+      %<NumRuntimeExportedRates>,
+      (boolean_T *)&%<RTMGetStopRequested()>,
+      priority,
+      STACK_SIZE,
+      startStopSem);
+    %endif
+    
+    %assign period = FcnGetPeriodFromTID(0)
+    requestedSR = 1.0 / %<period>;
+
+    sysAuxClkDisable();
+    sysAuxClkRateSet((int_T)(requestedSR + 0.5));
+
+    actualSR = (real_T) sysAuxClkRateGet();
+    printf("Actual sample rate in Hertz: %f\n",actualSR);
+    %%
+    %if !singleTasking
+      %assign firstSubrateTID = 1 + FixedStepOpts.TID01EQ
+      %foreach i = NumSynchronousSampleTimes - firstSubrateTID
+        %assign idx = i + firstSubrateTID
+        %assign taskName = "tRate%<idx>"
+        
+        rtTaskSemaphoreList[%<idx>] = semBCreate(SEM_Q_PRIORITY, SEM_EMPTY);
+        
+        VxWorksTIDs[%<idx>] = taskSpawn("%<taskName>",
+        priority + %<idx>, VX_FP_TASK, STACK_SIZE, (FUNCPTR)tSubRate_%<idx>,
+        (int_T) rtTaskSemaphoreList[%<idx>], 0, 0, 0, 0, 0, 0, 0, 0, 0);
+      %endforeach
+    %endif
+    
+    VxWorksTIDs[0] = taskSpawn("tBaseRate",
+    priority, VX_FP_TASK, STACK_SIZE, (FUNCPTR)tBaseRate, (int_T) rtClockSem, 
+    (int_T) startStopSem, (int_T) rtTaskSemaphoreList, 0, 0, 0, 0, 0, 0, 0);
+    
+    if (sysAuxClkConnect((FUNCPTR) semGive, (int_T) rtClockSem) == OK) {
+      rebootHookAdd((FUNCPTR) sysAuxClkDisable);
+      printf("\nSimulation starting\n");
+      sysAuxClkEnable();
+    }
+    
+    semTake(startStopSem, WAIT_FOREVER);
+    
+    sysAuxClkDisable();
+    taskDelete(VxWorksTIDs[0]);
+    
+    semDelete(rtClockSem);
+    semDelete(startStopSem);
+    
+    %if ExtMode
+      rtExtModeTornadoCleanup(%<NumRuntimeExportedRates>);
+    %endif
+
+    %assign firstSubrateTID = 1 + FixedStepOpts.TID01EQ
+    %if (FcnNumST() > firstSubrateTID ) && !singleTasking
+      %foreach i = NumSynchronousSampleTimes - firstSubrateTID
+        %assign idx = i + firstSubrateTID
+        taskDelete(VxWorksTIDs[%<idx>]);
+        semDelete(rtTaskSemaphoreList[%<idx>]);
+      %endforeach
+    %endif
+    
+    %<FcnGenerateModelTerminate()>\
+    
+    return(EXIT_SUCCESS);
+  }
+  %closefile tmpFcnBuf
+  %<SetCurrentUtilsIncludesIdx("")>
+  %return tmpFcnBuf
+%endfunction
+
+%function FcnGenerateMainFunctions(retDesc) void
+  %assign singleTasking = SLibSingleTasking()
+  %assign delim = "*   "
+  %if (SLibGenerateNativeThreads() || ...
+    ISEQUAL(TargetOS, "NativeThreadsExample"))
+    %% Generate threaded ert main. 
+    %if !retDesc  
+      %assign isPC = FEVAL("ispc")
+      %if isPC  
+        %include "ertwinthread.tlc"
+      %else
+        %include "ertposixthread.tlc"
+      %endif
+    %endif
+    %return retDesc ? ...
+      "%<delim>Embedded Coder example for multicore system\n" ...
+      "%<delim>to be deployed on a operating system.\n" : ...
+      SLibGenerateThreadedMain()
+    
+  %elseif NumSynchronousSampleTimes == 1
+    
+    %% Single rate
+    
+    %if TargetOS != "BareBoardExample"
+      %return retDesc ? ...
+	"%<delim>Embedded Coder example single rate main\n" ...
+	"%<delim>to be deployed on a multitasking operating system.\n" : ...
+	FcnSchedulerWithOS()
+    %else
+      %return retDesc ? ...
+	"%<delim>Embedded Coder example single rate main assuming\n" ...
+	"%<delim>no operating system.\n" : ...
+	FcnSingleRateWithoutOS()
+    %endif
+  
+  %elseif !singleTasking
+  
+    %% Multirate/Multitasking
+    
+    %if TargetOS != "BareBoardExample"
+      %return retDesc ? ...
+	"%<delim>Embedded Coder example multiple rate main tailored\n" ...
+	"%<delim>to the VxWorks operating system.  This example code contains a\n" ...
+	"%<delim>deterministic implementation of a rate monotonic scheduler deployed\n" ...
+	"%<delim>on a multitasking operating system.\n" : ...
+	FcnSchedulerWithOS()
+    %else
+      %return retDesc ? ...
+	"%<delim>Embedded Coder example multiple rate main assuming\n" ...
+	"%<delim>no operating system.  This example code contains a deterministic\n" ...
+	"%<delim>implementation of a rate monotonic scheduler.\n" : ...
+	FcnMultiRateMultitaskingWithoutOS()
+    %endif
+  
+  %else
+  
+    %% Multirate/Singletasking
+    
+    %if TargetOS != "BareBoardExample"
+      %return retDesc ? ...
+	"%<delim>Embedded Coder example multiple rate main tailored\n" ...
+	"%<delim>to the VxWorks operating system.  This example code contains an\n" ...
+	"%<delim>inplementation of a singletasking process implemented on a multitasking\n" ...
+	"%<delim>operating system.\n" : ...
+	FcnSchedulerWithOS()
+    %else
+      %return retDesc ? ...
+	"%<delim>Embedded Coder example multi-rate singletasking\n" ...
+	"%<delim>main assuming no operating system.\n" : ...
+	FcnMultiRateSingletaskingWithoutOS()
+    %endif
+  
+  %endif
+%endfunction
+
+%function SLibDeclareImportedChildCoderDataGroups() Output
+  %if !ISEMPTY(::CompiledModel.CoderDataGroups)  
+    %assign instanceIdx = 1
+    %foreach idx = SIZE(::CompiledModel.CoderDataGroups.CoderDataGroup, 1)
+      %assign group = ::CompiledModel.CoderDataGroups.CoderDataGroup[idx]
+      %if (group.AsStructure == "Standalone") && ...
+        group.IsInstanceSpecific && !group.SingleInstMdlRef
+        /* %<group.Identification> for %<group.GraphicalPath> */
+        static %<group.Type> %<group.Name>_%<instanceIdx>;
+        %assign instanceIdx = instanceIdx + 1
+      %endif
+    %endforeach  
+  %endif
+%endfunction
+  
+%function SLibCreateSampleMain() void
+
+  %assign ::GeneratingMainFunction = TLC_TRUE
+  
+  %openfile tmpFcnBuf
+  %if FcnIsERTMalloc()
+    %assign typeDef = SLibDeclareModelFcnArgs(TLC_FALSE)
+    %<SLibCacheCodeToFile("mdlFcnArgs_typedef", typeDef)>
+    %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+    %assign needMdlParam = !reqInsts.ParamsInst && ...
+      !SLibPrmBufferIsEmpty("SimulinkGlobal", "Instance")
+    %if needMdlParam
+      static %<::tParametersType> %<LibGetParametersStruct()> = {
+        %<SLibGetPrmBuffer("SimulinkGlobal", "Instance")>
+      }; 
+    %endif
+  %else
+    %<SLibDeclareModelFcnArgs(TLC_TRUE)>\
+    %<SLibDeclareImportedChildCoderDataGroups()>
+  %endif
+  %<SLibDeclareGlobalVariablesForCPPClass()>\
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_data_defn", tmpFcnBuf)>
+
+  %openfile tmpFcnBuf
+  /*
+   * Auto generated example main program for model: %<FcnMdlName()>
+   *
+   * Simulink Coder version : %<Version>
+   %if GenerateFullHeader
+   * %<CorCPPForBuildLogsandComments()> source code generated on : %<TLC_TIME>
+   %endif
+   *
+   * Description:
+   %<FcnGenerateMainFunctions(1)>\
+   *
+   * For more information:
+   *   o Simulink Coder User's Guide
+   *   o Embedded Coder User's Guide
+   *   o matlabroot/rtw/c/ert/ert_main.c
+   %if TargetOS == "VxWorksExample"
+     %if (ExtMode == 1) && (ExtModeXCP == 1)
+       %<SLibReportErrorWithId("RTW:tlc:ExtModeXCPVxWorks")>
+     %else
+       %assign warnTxt="The 'VxWorksExample' option for 'TargetOS' parameter will be removed in a future release."
+       %<LibReportWarning(warnTxt)>\
+     %endif
+   %endif
+   *   o Type 'ecodertutorial' in MATLAB
+   *
+   %if (TargetOS == "BareBoardExample") || (TargetOS == "NativeThreadsExample")
+     * For a real-time operating system deployment example, reconfigure the
+     * "Target operating system" option to "VxWorksExample".
+   %elseif TargetOS == "VxWorksExample"
+     * For a bare board (i.e., no real-time operating system) deployment
+     * example, reconfigure the "Target operating system" option to
+     * "BareBoardExample".
+   %else
+     %assign errTxt = "Unknown TargetOS: %<TargetOS>"
+     %<LibReportFatalError(errTxt)>
+   %endif
+   */
+  %closefile tmpFcnBuf
+  
+  %<SLibCacheCodeToFile("mainSrc_ban", tmpFcnBuf)>
+  %<SLibCacheCodeToFile("mainSrc_fcn_defn", FcnGenerateMainFunctions(0))>
+  
+  %openfile tmpFcnBuf
+
+  %if  (TargetOS == "BareBoardExample") || (TargetOS == "NativeThreadsExample")
+    #include <stdio.h> /* This ert_main.c example uses printf/fflush */
+  %endif
+  #include "%<FcnGetPublicModelHeaderFile()>" /* Model's header file */
+  %<SLibIncludeUsedCoderTypesFilenames()>
+  %if ExtMode
+    %if !ExtModeXCP || ExtModeXCPClassicInterface
+      #include "ext_work.h" /* External mode header file */
+    %else
+      #include "ext_mode.h" /* External mode header file */
+    %endif
+  %endif
+  %if MatFileLogging
+    #include "rt_logging.h"
+    %if ::CompiledModel.RTWStatesLogging==1
+      #include "rt_logging_mmi.h"
+    %endif
+  %endif
+  %closefile tmpFcnBuf
+  
+  %<SLibCacheCodeToFile("mainSrc_incl", tmpFcnBuf)>
+  
+  %<SLibCacheCodeToFile("mainSrc_defines", LibDeclareERTDefines(NumSystems-1))>
+
+  %assign ::GeneratingMainFunction = TLC_FALSE
+%endfunction
+

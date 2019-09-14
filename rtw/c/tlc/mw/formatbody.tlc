@@ -1,0 +1,147 @@
+%% ============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   This file gets the cached body code and formats it into the
+%%   ::CompiledModel.ModelFiles fields
+%%
+%% Copyright 1994-2013 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%if isRAccel
+%include "raccel_parallel.tlc"
+%endif
+
+%% ============================================================================
+%% This file is responsible for generating the model.c file for the various 
+%% code formats. Currently supported code formats are:
+%% grt, grt_malloc, s-function (with accelerator)
+%%
+
+%if EXISTS("_FORMATBODY_") == 0
+%assign _FORMATBODY_ = 1
+
+%realformat "CONCISE"
+
+%% Function: SLibFormatBody ====================================================
+%% Abstract:
+%%   Function to create and cache the model.c file sections.
+%%
+%function SLibFormatBody() void
+  %assign isSfcnFmt            = (CodeFormat == "S-Function")
+  %assign isSfcnFmtAndNotAccel = isSfcnFmt && !Accelerator
+  
+  %if !IsModelReferenceTarget()
+    
+    %% Banner
+    %openfile tmpBuf
+  
+    %%
+    %% For Accelerator, generate a comment about the appearance of
+    %% symbols based on Simulink Coder license
+    %%
+    %if Accelerator
+      %<LibGetAccelDisclaimer()>
+    %endif
+  
+    /*
+    * %<Name>.%<LangFileExt>
+    * 
+    %<SLibCommonHeaderInfo()>\
+    */
+    %closefile tmpBuf
+    %<SLibCacheCodeToFile("mdl_src_ban", tmpBuf)>
+  
+    %% Necessary includes
+    %openfile tmpBuf
+    %if !SLibIsERTCodeFormat()
+      #include <math.h>
+    %endif
+    %<SLibIncludeModelHeader()>
+    %<SLibIncludePrivateHeader()>
+    %closefile tmpBuf
+    %<SLibCacheCodeToFile("baseMdl_src_incl", tmpBuf)>
+ 
+    %%
+    %% Global variables
+    %%  o Non-finites are in memory (S-function)
+    %%  o Grounds may be in memory
+    %%
+    %openfile tmpBuf
+    %if isSfcnFmtAndNotAccel
+      %% 
+      %% Create a fake access to nan so that the side-effect of the function causes
+      %% declaration of non-finites
+      %%
+      %assign nanVariable = LibRealNonFinite("nan")
+      
+      %if ((GenUtilsSrcInSharedLocation == 1) || !SLibIsCompactFileFormat())
+      #if defined(MATLAB_MEX_FILE)
+        #include "rt_nonfinite.%<LangFileExt>"
+      #endif
+      %endif
+
+      static const char_T *RT_MEMORY_ALLOCATION_ERROR = ...
+        "memory allocation error in generated S-Function";
+    %endif
+    %closefile tmpBuf
+    %if !WHITE_SPACE(tmpBuf)
+      %<SLibCacheCodeToFile("mdl_src_decl", tmpBuf)>
+    %endif
+  
+    %%
+    %% Extern function prototype
+    %%
+    %if isSfcnFmtAndNotAccel
+      %<SLibSetSfcnExternProtos(LibGetModelName())>
+    %endif
+  %endif %% %if !IsModelReferenceTarget()
+  
+  
+  %% This buffer may contains variable definition, and therefore,
+  %% must be dumped before root system functions
+  %% 
+  %openfile tmpBuf
+  %<SLibDumpSourceCodeCache()>\
+  %if Accelerator
+      %<LibReportDiagnosticForAccel()>
+  %endif
+  %if IsModelReferenceSimTarget()
+	  %<SLibAddToNonSharedIncludes("slsv_diagnostic_codegen_c_api.h")>
+  %endif
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("baseMdl_cached_source_code", tmpBuf)>
+  
+  %%
+  %% Place code for all systems (including root) into ModelFiles
+  %%
+  %openfile autoFunctions
+  %if NumAsynchronousSampleTimes > 0 && !IsModelReferenceTarget()
+    %<FcnGenAsyncTopSSCode()>
+  %endif
+  
+  %<SLibGenerateFNIStubsForModelBlocks()>
+  
+  %if SLibIsERTCodeFormat()
+    %<SLibErtAutoFunctions()>
+  %else
+    %foreach sysIdx = NumSystems
+      %<SLibGetSystemBodyCache(System[sysIdx])>\
+    %endforeach
+    %% Dumps rapid accelerator parallel code if required
+    %if isRAccel
+    %<SLibDumpRapidAcceleratorParallelModelFunctions()>
+    %endif
+  %endif
+  %closefile autoFunctions
+
+  %assert (!IsModelReferenceTarget() || WHITE_SPACE(autoFunctions))
+  %<SLibCacheCodeToFile("baseMdl_fcn_defn", autoFunctions)>
+%endfunction  
+
+%endif %% _FORMATBODY_
+
+%% [EOF] formatbody.tlc

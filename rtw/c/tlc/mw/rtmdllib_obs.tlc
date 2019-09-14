@@ -1,0 +1,473 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2016 The MathWorks, Inc.
+%%
+%% Abstract:
+%%      Library to support the obsolete calls that do not
+%%      take a "system" argument.  To be used temporarily
+%%      in the interim before the system argument is explicitly
+%%      added to RTMs* calls.
+%%
+
+%% The following function is a utility function for the routines
+%% below; it infers the system index if it is not in scope
+%function FcnInferredSystemAndAccessRTMArgDef() void
+  %with ::CompiledModel
+    %if !EXISTS(SystemIdx)
+      %assign s = NumSystems-1
+      %assign d = "by default"
+    %else
+      %assign s = SystemIdx
+      %assign d = "from enclosing scope"
+    %endif
+    %return System[System[s].ReusedParentSystemIdx]
+  %endwith
+  
+%endfunction 
+
+%function RTMDispatchToAccessFcn(recordName, fcnGetOrSet, optIdx, ...
+  optSetVal, rtmName) void
+  
+  %return RTMsDispatchToAccessFcn(FcnInferredSystemAndAccessRTMArgDef(), recordName, ...
+                                  fcnGetOrSet, optIdx, optSetVal, rtmName)
+  
+%endfunction
+
+%function RTMSet(recordName, initVal) void
+  
+  %return RTMsSet(FcnInferredSystemAndAccessRTMArgDef(), recordName, initVal)
+  
+%endfunction
+
+%function RTMuSet(recordName, initVal) void
+  
+  %return RTMsuSet(FcnInferredSystemAndAccessRTMArgDef(), recordName, initVal)
+  
+%endfunction
+
+%function RTMSetIdxed(recordName, fldIdx, initVal) void
+  
+  %return RTMsSetIdxed(FcnInferredSystemAndAccessRTMArgDef(), recordName, fldIdx, initVal)
+  
+%endfunction
+
+%function RTMuSetIdxed(recordName, fldIdx, initVal) void
+  
+  %return RTMsuSetIdxed(FcnInferredSystemAndAccessRTMArgDef(), recordName, fldIdx, initVal)
+
+%endfunction
+
+%function RTMGet(recordName) void
+  
+  %return RTMsGet(FcnInferredSystemAndAccessRTMArgDef(), recordName)
+  
+%endfunction
+
+%function RTMuGet(recordName) void
+  
+  %return RTMsuGet(FcnInferredSystemAndAccessRTMArgDef(), recordName)
+  
+%endfunction
+
+%function RTMGetIdxed(recordName, fldIdx) void
+  
+  %return RTMsGetIdxed(FcnInferredSystemAndAccessRTMArgDef(), recordName, fldIdx)
+  
+%endfunction
+
+%function RTMIs(recordName) void
+  
+  %return RTMsIs(FcnInferredSystemAndAccessRTMArgDef(), recordName)
+  
+%endfunction
+
+%function RTMGetTaskTimeCounterForTID(tid) void
+  
+  %return RTMsGetTaskTimeCounterForTID(FcnInferredSystemAndAccessRTMArgDef(), tid)
+  
+%endfunction
+
+%function RTMGetTaskTimeForTID(tid) void
+  
+  %return RTMsGetTaskTimeForTID(FcnInferredSystemAndAccessRTMArgDef(), tid)
+  
+%endfunction
+
+%function RTMGetTaskTimeForTIDGivenRTM(rtm, tid) void
+  
+  %return RTMsGetTaskTimeForTIDGivenRTM(FcnInferredSystemAndAccessRTMArgDef(), rtm, tid)
+
+%endfunction
+
+%function RTMGetTaskTime() void
+  
+  %return RTMsGetTaskTime(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMIsContinuousTask() void
+  
+  %return RTMsIsContinuousTask(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMIsSampleHit(tid) void
+  
+  %return RTMsIsSampleHit(FcnInferredSystemAndAccessRTMArgDef(), tid)
+  
+%endfunction
+
+%function RTMIsSpecialSampleHit(sti, tid) void
+  
+  %return RTMsIsSpecialSampleHit(FcnInferredSystemAndAccessRTMArgDef(), sti, tid)
+  
+%endfunction
+
+%function RTMChkMemAndReturnIfErr(ptr) void
+  
+  %return RTMsChkMemAndReturnIfErr(FcnInferredSystemAndAccessRTMArgDef(), ptr)
+  
+%endfunction
+
+%function RTMSetBlkStateChange() void
+  
+  %return RTMsSetBlkStateChange(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMClearBlkStateChange() void
+  
+  %return RTMsClearBlkStateChange(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMGetBlkStateChange() void
+  
+  %return RTMsGetBlkStateChange(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMSetContTimeOutputInconsistentWithStateAtMajorStep() void
+  s
+  %return RTMsSetContTimeOutputInconsistentWithStateAtMajorStep(FcnInferredSystemAndAccessRTMArgDef() )
+  
+%endfunction
+
+%function RTMClearContTimeOutputInconsistentWithStateAtMajorStep() void
+  
+  %return RTMsClearContTimeOutputInconsistentWithStateAtMajorStep(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMGetContTimeOutputInconsistentWithStateAtMajorStep() void
+  
+  %return RTMsGetContTimeOutputInconsistentWithStateAtMajorStep(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMGetErrStat() void
+  
+  %if SuppressErrorStatus
+    %assign buff = "((void*) 0)"
+  %else
+    %assign buff = RTMsGetErrStat(FcnInferredSystemAndAccessRTMArgDef())
+  %endif
+  
+  %return buff
+  
+%endfunction
+
+%function RTMSetErrStat(errStat) void
+  
+  %if SuppressErrorStatus
+    %assign buff = "((void) 0)"
+  %else
+    %assign buff = RTMsSetErrStat(FcnInferredSystemAndAccessRTMArgDef(), errStat)
+  %endif
+  
+  %return buff
+  
+%endfunction
+
+%function RTMSetSolverNeedsReset() void
+  
+  %return RTMsSetSolverNeedsReset(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMSetBlockStateForSolverChangedAtMajorStep() void
+  
+  %return RTMsSetBlockStateForSolverChangedAtMajorStep(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMGetAbsTolVector() 
+
+  %return RTMsGetAbsTolVector(FcnInferredSystemAndAccessRTMArgDef())
+
+%endfunction
+
+%function RTMGetAbsTolControlVector() 
+
+  %return RTMsGetAbsTolControlVector(FcnInferredSystemAndAccessRTMArgDef())
+
+%endfunction
+
+  
+%function RTMModelMthsSet(fldName, sVal) void
+  
+  %return RTMsModelMthsSet(FcnInferredSystemAndAccessRTMArgDef(), fldName, sVal)
+
+%endfunction
+
+%function RTMSolverSet(fldName,sVal) void
+  
+  %return RTMsSolverSet(FcnInferredSystemAndAccessRTMArgDef(), fldName,sVal)  
+  
+%endfunction
+
+%function RTMSolverGet(fldName) void
+
+  %return RTMsSolverGet(FcnInferredSystemAndAccessRTMArgDef(), fldName)
+
+%endfunction
+
+%function RTMSolverIs(fldName) void
+
+  %return RTMsSolverIs(FcnInferredSystemAndAccessRTMArgDef(), fldName)
+
+%endfunction
+
+%function RTMIsSolverComputingJacobian() void
+
+  %return RTMsSolverIs(FcnInferredSystemAndAccessRTMArgDef(), "ComputingJacobian")
+
+%endfunction
+
+%function RTMIsSolverRequestingReset() void
+
+  %return RTMsSolverIs(FcnInferredSystemAndAccessRTMArgDef(), "RequestingReset")
+
+%endfunction
+
+%function RTMIsSolverCheckingCIC() void
+
+  %return RTMsSolverIs(FcnInferredSystemAndAccessRTMArgDef(), "CheckingCIC")
+
+%endfunction
+
+%function RTMSolverAssertCheck() void
+  
+  %return RTMsSolverAssertCheck(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMLoggingSet(recordName, initVal) void
+  
+  %return RTMsLoggingSet(FcnInferredSystemAndAccessRTMArgDef(), recordName, initVal)
+  
+%endfunction
+  
+%function RTMLoggingGet(recordName) void
+  
+  %return RTMsLoggingGet(FcnInferredSystemAndAccessRTMArgDef(), recordName)
+  
+%endfunction
+  
+%function RTMGetModelSSFromIR() void
+  
+  %return RTMsGetModelSS(FcnInferredSystemAndAccessRTMArgDef(),TLC_TRUE)
+  
+%endfunction
+
+%function RTMGetModelSS() void
+  
+  %return RTMsGetModelSS(FcnInferredSystemAndAccessRTMArgDef(),TLC_FALSE)
+  
+%endfunction
+
+%function RTMUpdateIntegerAbsoluteTime() void
+  
+  %return RTMsUpdateIntegerAbsoluteTime(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMUpdateRealAbsoluteTime() void
+  
+  %return RTMsUpdateRealAbsoluteTime(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMUpdateRealAbsoluteTimeForTID(tid) void
+  
+  %return RTMsUpdateRealAbsoluteTimeForTID(FcnInferredSystemAndAccessRTMArgDef(),tid)
+  
+%endfunction
+
+%function RTMUpdateIntegerAbsoluteTimeForTID(tid) void
+  
+  %return RTMsUpdateIntegerAbsoluteTimeForTID(FcnInferredSystemAndAccessRTMArgDef(),tid)
+  
+%endfunction
+
+
+%function RTMUpdateSubrateTaskTime(subRateIdx) void
+  
+  %return RTMsUpdateSubrateTaskTime(FcnInferredSystemAndAccessRTMArgDef(), subRateIdx)
+  
+%endfunction
+
+%function RTMTaskRunsThisBaseStep(subRateIdx) void
+  
+  %return RTMsTaskRunsThisBaseStep(FcnInferredSystemAndAccessRTMArgDef(), subRateIdx)
+  
+%endfunction
+
+%function RTMUpdateTaskCounter(subRateIdx) void
+  
+  %return RTMsUpdateTaskCounter(FcnInferredSystemAndAccessRTMArgDef(), subRateIdx)
+  
+%endfunction
+
+%function RTMGetStopRequested() void
+  
+  %return RTMsGetStopRequested(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMSetStopRequested(srq) void
+  
+  %return RTMsSetStopRequested(FcnInferredSystemAndAccessRTMArgDef(), srq)
+  
+%endfunction
+
+%function RTMStopReqAccessed() void
+  
+  %return RTMsStopReqAccessed(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMRegisterDataType(dtypeName) void
+  
+  %return RTMsRegisterDataType(FcnInferredSystemAndAccessRTMArgDef(), dtypeName)
+  
+%endfunction
+
+%function RTMGenOpaqueTypedef() void
+  
+  %return RTMsGenOpaqueTypedef(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMGenRtMdlTypedef() void
+  
+  %return RTMsGenRtMdlTypedef(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMGenMacroDefines(macroLoc) void
+  
+  %return RTMsGenMacroDefines(FcnInferredSystemAndAccessRTMArgDef(), macroLoc)
+  
+%endfunction
+
+%function RTMGenSfcnFwdingMacros() void
+  
+  %return RTMsGenSfcnFwdingMacros(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMAddExternRTModelDecl() Output
+  
+  %return RTMsAddExternRTModelDecl(FcnInferredSystemAndAccessRTMArgDef())
+  
+%endfunction
+
+%function RTMTNextWasAdjusted(tid) void
+  
+  %return RTMsGetIdxed(FcnInferredSystemAndAccessRTMArgDef(), "TNextWasAdjusted", tid)
+  
+%endfunction
+
+%function RTMVarNextHitTime(varTsIdx) void  
+  %assign retStr = RTMsGetIdxed(FcnInferredSystemAndAccessRTMArgDef(), "VarNextHitTime", varTsIdx)
+  %if !GenRTModel
+    %assign retStr = "_%<retStr>"
+  %endif
+  %return retStr  
+%endfunction
+
+%% DocFunction{Sample Time Functions}: RTMSetVarNextHitTimeTNextMin ===================
+%% Abstract:
+%%   Generates code to set the next variable hit time. Blocks with
+%%   variable sample time must call this function in their output functions.
+%%
+%function RTMSetVarNextHitTimeTNextMin(varTid, tNextMin) void
+    %%real_T tNextMin;
+    %assign tid = %<varTid>
+    %if IsModelReferenceForASimstructBasedTarget()
+      %assign idx = %<tid>
+    %else
+      %assign idx = CAST("Number", ::CompiledModel.SampleTime[tid].PeriodAndOffset[1])
+    %endif
+    %return "%<RTMuSetIdxed("VarNextHitTime", "%<idx>", tNextMin)>"
+%endfunction %% RTMSetVarNextHitTimeTNextMin
+
+%function RTMSetVarNextHitTimeInf(varTid) void
+    %return RTMSetVarNextHitTimeTNextMin(varTid, LibRealNonFinite("-inf"))
+%endfunction %% RTMSetVarNextHitTimeInf
+
+%% Function: RTMResetNextVHTDueToEnable ======================================
+%% Abstract:
+%%   This method is called by a block's private enable method to properly 
+%%   handle variable sample time inside an enabled subsystem.
+%%   The subsystem will be calling BdSystemOutput before the sampleHit 
+%%   vector is updated so we need to set the block's entry to true to 
+%%   make sure it gets to run its output function in the next opportunity
+%%
+%function RTMResetNextVHTDueToEnable(varTid) void  
+  %assign tid = %<varTid>
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign idx = %<tid>
+  %else
+    %assign idx = CAST("Number", ::CompiledModel.SampleTime[tid].PeriodAndOffset[1])
+  %endif
+  %openfile buffer
+  /* Force a sample hit at this major time step */
+  %if IsModelReferenceForASimstructBasedTarget()
+    %<FcnGenSpecialAccess(FcnInferredSystemAndAccessRTMArgDef(), "SampleHit", "set", 2, ...
+      ["%<tid>", "0"], "1", ::tSimStruct)>;
+  %else
+    %<RTMuSetIdxed("SampleHit", tid, 1)>; 
+  %endif
+  %<RTMuSetIdxed("TaskTime", tid, LibGetT())>;
+  %<RTMuSetIdxed("VarNextHitTime", "%<idx>", LibGetT())>;
+  %closefile buffer
+  %return buffer
+%endfunction %% RTMResetNextVHTDueToEnable
+
+%% Function: RTMGetEvaluatingF0ForJacobian ======================================
+%% Abstract:
+%% Get the flag that indicates evaluation of f(x0) for Jacobian computation 
+%% using perturbation (see g1349135)
+%function RTMGetEvaluatingF0ForJacobian() void  
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMsGet(FcnInferredSystemAndAccessRTMArgDef() , "MdlRefSfcnS")
+    %return "ssGetEvaluatingF0ForJacobian(%<simS>)"
+  %endif
+  %return RTMsGet(FcnInferredSystemAndAccessRTMArgDef(), "EvaluatingF0ForJacobian")
+%endfunction %% RTMGetEvaluatingF0ForJacobian
+
+%% Function: RTMGetIsZCEvaluationForRefine ======================================
+%% Abstract:
+%% Get the flag that indicates evaluation of f(x0) for Jacobian computation 
+%% using perturbation (see g1349135)
+%function RTMGetIsZCEvaluationForRefine() void  
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMsGet(FcnInferredSystemAndAccessRTMArgDef() , "MdlRefSfcnS")
+    %return "ssGetIsZCEvaluationForRefine(%<simS>)"
+  %endif
+  %return RTMsGet(FcnInferredSystemAndAccessRTMArgDef(), "IsZCEvaluationForRefine")
+%endfunction %% RTMGetIsZCEvaluationForRefine

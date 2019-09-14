@@ -1,0 +1,77 @@
+%% ============================================================================
+%% 
+%% 
+%%
+%% Abstract:
+%%   This system file creates <model>_msf.c for the S-Function wrapper.
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+
+%include "sfcnutil.tlc"
+
+%% ============================================================================
+%% Setup of some common variables
+%%
+%with ::CompiledModel
+
+%assign thisSystem = System[GetBaseSystemIdx()]
+%assign sFunctionName = GetModelrefSFunctionName(Name)
+  
+%openfile tmpBuf
+#if !defined(S_FUNCTION_NAME)
+#define S_FUNCTION_NAME %<sFunctionName>
+#endif
+#define S_FUNCTION_LEVEL 2
+/* So mdlEnable and mdlDisable will be defined in the simstruc.h */  
+#if !defined(RTW_GENERATED_S_FUNCTION)
+#define RTW_GENERATED_S_FUNCTION
+#endif
+%if LibIsSystemField(thisSystem, "FcnCallInputInfo")
+  #define S_FUNCTION_EXPORTS_FUNCTION_CALLS
+  #define MODELREF_EXPORTS_FUNCTION_CALLS
+%endif
+
+#include <stdio.h>
+#include <math.h>
+#include "simstruc.h"
+#include "fixedpoint.h"
+
+%% We do not need the following .h file. However,
+%% model_mdl.h includes rt_logging.h 
+#define rt_logging_h
+%assign mdlTypesHdrFileName = SLibGetFileNameForCode("mdl_types_hdr")
+%if !WHITE_SPACE(mdlTypesHdrFileName)
+  #include "%<mdlTypesHdrFileName>.h"
+%endif
+
+%% Include subsystem.h
+%assign fileName = SLibGetSystemOutputHdrFileBaseName(thisSystem)
+#include "%<fileName>.h"
+
+%% Private file is required for const parameter typede
+%<SLibIncludePrivateHeader()>
+
+%closefile tmpBuf
+%<SLibCacheCodeToFile("mdlsfcn_src_incl", tmpBuf)>
+
+%% Global parameter definitions (all in SimulinkGlobal)
+%if !SLibPrmBufferIsEmpty("UnstructuredSimulinkGlobal", "Instance")
+  %openfile tmpBuf
+  /* Model block global parameters (%<::AutoOrDefaultStorageClass> storage) */
+  %<SLibGetPrmBuffer("UnstructuredSimulinkGlobal", "Instance")>
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("mdlsfcn_data_defn", tmpBuf)>
+%endif
+
+%% For protected models, we may put definitions in model.c
+%if !SLibPrmBufferIsEmpty("UnstructuredSimulinkGlobalProtInlined", "Instance")
+  %assert SLibIsGeneratingSimTargetForProtectedModel()
+  %assign instance = SLibGetPrmBuffer("UnstructuredSimulinkGlobalProtInlined", "Instance")
+  %<SLibCacheCodeToFile("mdl_data_defn", instance)>
+%endif
+  
+%% Cache information for writing out the SimTarget Sfunction wrapper (model_msf.c)
+%<SLibWriteMdlRefExportedMdlInfo()> %% TODO: Do we need to do this?
+%endwith
+

@@ -1,0 +1,240 @@
+%%
+%% $Revision $ 
+%% 
+%%
+%% Abstract:
+%%      TLC file for the VxWorks Task Block.
+%%
+%% Copyright 2003-2018 The MathWorks, Inc.
+
+%implements "vxtask1" "C"
+
+%include "vxlib.tlc"
+
+
+
+%% Function: BlockTypeSetup ================================================
+%% Abstract:
+%%      One-time setup to track function name uniqueness.
+%%      
+%function BlockTypeSetup(block, system) void
+  %<LibAddToCompiledModel("VxWorksTaskNames", [])>
+%endfunction
+
+%% Function: BlockInstanceSetup ================================================
+%% Abstract:
+%%      Find and cache the needed Block records and names related to this block.
+%%      Generate warnings if I/O not connected. Cache an extern declaration to
+%%      the stopSem to provide graceful exit on overrun.
+%%
+%function BlockInstanceSetup(block, system) void
+  %addtorecord block AsyncCallerGenCode TLC_TRUE
+  %% Get the Block record of the f-c ss that this task block is in
+  %assign sysIdx = system.CallSites[0][2]
+  %assign blkIdx = system.CallSites[0][3]
+  %assign taskBlock = CompiledModel.System[sysIdx].Block[blkIdx]
+  %assign sourceType = IDNUM(taskBlock.ControlInputPort.SignalSrc[0])
+  
+  %% Determine the outer, masked ss name; it is the users view of Task block.
+  %if BlockCommentType == "BlockSIDComment"
+    %assign rtwName = FEVAL("coder.internal.convertBlockSIDNameToRTWName", "%<LibGetModelName()>", taskBlock.Name)
+    %assign sysId = %<SYSNAME(rtwName)>[0]
+  %else
+    %assign sysId = %<SYSNAME(taskBlock.Name)>[0]
+  %endif
+  %assign idIdx = %<IDNUM(sysId)>[1] - 1
+  %assign parentName = CompiledModel.Subsystem[idIdx].Name
+  %assign TaskBlockName = STRING(LibUnmangledPathName(parentName))
+  %addtorecord block taskBlockName TaskBlockName
+
+  %% Get the Block for the downstream f-c ss, warn and return if there is none
+  %assign connected = TLC_FALSE
+  %foreach cidx = SIZE(SFcnSystemOutputCall,1)
+    %if LibIsEqual(SFcnSystemOutputCall[cidx].BlockToCall, "unconnected")
+      %continue
+    %else
+      %assign connected = TLC_TRUE
+      %break
+    %endif
+  %endforeach
+  %if !connected
+    %assign wrnTxt = "The output for VxWorks Task block '%<TaskBlockName>' is " ...
+      "unconnected.  No code will be generated for this block."
+    %<LibReportWarning(wrnTxt)>
+    %return
+  %endif
+  %assign SSBlock = LibGetFcnCallBlock(block,0)
+  %addtorecord block ssBlock SSBlock
+
+  %% Warn if the input to the task block is unconnected
+  %assign sourceType = IDNUM(taskBlock.ControlInputPort.SignalSrc[0])
+  %if sourceType[0]  == "G"
+    %assign wrnTxt = "The input for VxWorks Task block '%<TaskBlockName>' is " ...
+      "unconnected. No call will be made to the system: %<SSBlock.Name>"
+    %<LibReportWarning(wrnTxt)>
+  %endif
+
+  %% Add TaskName and semaphore name to the block
+  %assign TaskName = SFcnParamSettings.TaskName
+  %addtorecord block taskName TaskName
+  %assign TaskSemaphoreName = "%<TaskName>_semaphore"
+  %addtorecord block taskSemaphoreName TaskSemaphoreName
+  
+  %% Ensure uniqueness of Task function name
+  %foreach idx = SIZE(::CompiledModel.VxWorksTaskNames,1)
+    %if (::CompiledModel.VxWorksTaskNames[idx] == taskName)
+      %assign errTxt = "The Task function name '%<taskName>' is not unique, change the 'Task name' parameter to prevent duplicate function names."
+      %<LibBlockReportError(block,errTxt)>
+    %endif
+  %endforeach
+  %assign ::CompiledModel.VxWorksTaskNames = ...
+   ::CompiledModel.VxWorksTaskNames + taskName
+ 
+  %% Declare stopSem as external so model can be stopped if function-call
+  %% subsystem can't keep up with semaphore rate.
+  %openfile buffer
+  extern SEM_ID stopSem;
+  %closefile buffer
+  %<LibCacheFunctionPrototype(buffer)>
+%endfunction
+  
+%% Function: Start =============================================================
+%% Abstract:
+%%      Create semaphore and spawn the task function
+%%
+%function Start(block, system) Output
+  %if ISFIELD(block, "ssBlock")
+    /* VxWorks Task Block: '%<Name>' (%<ParamSettings.FunctionName>) */
+    /* VxWorks binary semaphore for task: %<taskName> */
+    {
+    %% Declare the semaphore variable depending on the CodeFormat.
+    %if UsingMalloc == 1
+      %<LibBlockPWork(SemID,"","",0)> = malloc(sizeof(SEM_ID));
+      %<RTMChkMemAndReturnIfErr("%<LibBlockPWork(SemID,"","",0)>")>
+    %else
+      static SEM_ID %<taskSemaphoreName>;
+      %<LibBlockPWork(SemID,"","",0)> = (void *)&%<taskSemaphoreName>;
+    %endif
+    }
+    
+    %% Setup the semaphore depending on the CodeFormat and spawn
+    %% the function-call subsystem as a task.
+    /* VxWorks Task Block: '%<Name>' (%<ParamSettings.FunctionName>) */
+    /* Spawn task: %<taskName> with priority %<CAST("Number",SFcnParamSettings.Priority)> */
+    *(SEM_ID *)%<LibBlockPWork(SemID,"","",0)> = semBCreate(SEM_Q_PRIORITY, SEM_EMPTY);
+    if (%<LibBlockPWork(SemID,"","",0)> == NULL) {
+      printf("semBCreate call failed for block %<taskName>.\n");
+    }
+    %if PurelyIntegerCode
+      %assign taskOptions = 0
+    %else
+      %assign taskOptions = "VX_FP_TASK"
+    %endif
+    %<LibBlockIWork(TaskID,"","",0)> = taskSpawn("%<taskName>",
+                                                 %<SFcnParamSettings.Priority>, 
+                                                 %<taskOptions>, 
+                                                 %<SFcnParamSettings.StackSize>, 
+                                                 (FUNCPTR)%<taskName>, 
+                                                 0, 0, 0, 0, 0, 0, 0,0, 0, 0);
+    if (%<LibBlockIWork(TaskID,"","",0)> == ERROR) {
+      printf("taskSpawn call failed for block %<taskName>.\n");
+    }
+    
+  %endif
+%endfunction
+
+%% Function: Outputs ===========================================================
+%% Abstract:
+%%      Generate the intertask synchronization code. This task block outputs
+%%      code which calls semGive(). A separate 'Task' function is created which
+%%      calls the downstream f-c ss when is receives the semaphore. The 'Task'
+%%      function is spawned as a VxWorks Task in MdlStart.
+%%
+%function Outputs(block, system) Output
+  %if !ISFIELD(block, "ssBlock")
+    %return
+  %endif
+  %% This block provides the semGive when it is called.
+  /* VxWorks Task Block: '%<Name>' (%<ParamSettings.FunctionName>) */
+  /* Release semaphore for system task: %<taskName> */
+  semGive(*(SEM_ID *)%<LibBlockPWork(SemID,"","",0)>);
+
+  %if !block.GenCodeForTopAsyncSS
+    %% Don't generate code for downstream f-c subsystem
+    %% if GenCodeForTopAsyncSS is not set yet.
+    %return
+  %endif
+  %% Call the downstream f-c subsystem, it can inline
+  %openfile tmpBuf
+  %<LibBlockExecuteFcnCall(block, 0)>\
+  %closefile tmpBuf
+  %% Always create a function for this Task block which will wrap downstream function
+  %% in a infinite for loop waiting on a semaphore.
+  %openfile funcbuf
+  /* VxWorks Task Block: '%<Name>' (%<ParamSettings.FunctionName>) */
+  /* Spawned with priority: %<CAST("Number",SFcnParamSettings.Priority)> */
+  void %<taskName>(void)
+  {
+    /* Wait for semaphore to be released by system: %<taskBlockName> */
+    for(;;) {
+      if (semTake(*(SEM_ID *)%<LibBlockPWork(SemID,"","",0)>,NO_WAIT) != ERROR) {
+	logMsg("Rate for Task %<taskName>() too fast.\n",0,0,0,0,0,0);
+	#if STOPONOVERRUN
+	logMsg("Aborting real-time simulation.\n",0,0,0,0,0,0);
+	semGive(stopSem);
+	return(ERROR);
+	#endif
+      } else {
+	semTake(*(SEM_ID *)%<LibBlockPWork(SemID,"","",0)>, WAIT_FOREVER);
+      }
+      %% Manage the async counter
+      %if LibNeedAsyncCounter(block,0)
+	%if SFcnParamSettings.ParentManageT
+	  /* Use the upstream clock tick counter for this Task. */
+	  %<LibSetAsyncClockTicks(block,0, ...
+	    LibGetCallerClockTickCounter(block), ...
+	    LibGetCallerClockTickCounterHigh(block))>
+	%else
+	  /* Use a clock tick counter managed by this Task. */
+	  %<LibSetAsyncClockTicks(block,0, ...
+	    "tickGet()", ...
+	    "")>
+	%endif
+      %endif
+      %% An alternate approach to manage time for this asynchronous task is to
+      %% utilize the models base rate counter (provided the resolution of the
+      %% base rate is sufficient). The base rate counter will be double
+      %% bufferred to ensured data integrity if this block sets a priority. For
+      %% this case, no block tlc code is needed. See vxtask1.c for how to select
+      %% the base rate counter.
+      %if WHITE_SPACE(tmpBuf)
+	/* Nothing to do for system: '%<ssBlock.Name>' */
+      %else
+	/* Call the system: '%<ssBlock.Name>' */
+	%<tmpBuf>\
+      %endif
+    }
+  }
+  
+  %closefile funcbuf
+  %assign srcFile = LibGetModelDotCFile()
+  %<LibSetSourceFileSection(srcFile, "Functions", funcbuf)>
+%endfunction
+	
+%% Function: Terminate =========================================================
+%% Abstract:
+%%      Cleanup the VxWorks Task
+%%
+%function Terminate(block, system) Output
+  %if ISFIELD(block, "ssBlock")
+    /* VxWorks Task Block: '%<Name>' (%<ParamSettings.FunctionName>) */
+    /* Destroy task: %<taskName> */
+    taskDelete(%<LibBlockIWork(TaskID,"","",0)>);
+    %if UsingMalloc == 1
+      rt_FREE(%<LibBlockPWork(SemID,"","",0)>);
+    %endif
+    
+  %endif
+%endfunction
+
+%% [EOF] vxtask1.tlc

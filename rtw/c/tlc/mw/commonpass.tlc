@@ -1,0 +1,748 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%   This system file makes a code format independent pass through the
+%%   model.
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%if EXISTS("_COMMONPASS_") == 0
+%assign _COMMONPASS_ = 1
+
+%selectfile STDOUT
+%if RTWVerbose
+### Initial pass through model to cache user defined code
+%endif
+%selectfile NULL_FILE
+
+%<LibAddToCompiledModel("InCommonPass",1)>
+
+%% Load Model reference blocks' interfaces from binfo information mat-file.
+%<LoadModelReferenceBlocksInterface()>
+
+
+%%
+%% Validate the binding between CGTypes and SLTypes
+%%
+%assign numBuiltInTypes = ::CompiledModel.DataTypes.NumSLBuiltInDataTypes
+%with ::CompiledModel.CGTypes
+  %foreach i = numBuiltInTypes
+    %if !ISFIELD(CGType[i], "SLTypeIdx") || CGType[i].SLTypeIdx != i
+      %error "Invalide Type binding of CGType[%<i>]."
+    %endif
+  %endforeach
+%endwith
+%undef numBuiltInTypes
+
+%if SLibFcnProtoCtrlActive() || GenerateClassInterface
+  %assign ::RTWCPPStepPrototypeRecord = ""
+  %include "ertfcnprotocontrol.tlc"
+%endif
+
+%% ============================================================================
+%% Before code generation begins, make a pass through the model and:
+%%
+%%   o Initialize UserDefinedRWork, UserDefinedIWork, and UserDefinedPWork
+%%     to zero.  This initialization must be performed before calling the
+%%     block's BlockInstanceSetup function since it is there that the user
+%%     will define (redefine) their work vectors.
+%%
+%%   o Execute each blocks "BlockInstanceSetup" function.
+%%
+%%   o Execute a blocks "BlockTypeSetup" function the first time the block
+%%     type is encountered.
+%%
+%%   o Promote defined RWork, IWork, PWork and DWork into parent scope.
+%% 
+%%   o Initialize each block output as not needed to be declared in function
+%%     scope. This will be used to track block output signals that are not in
+%%     the global BlockIO vector, and hence need to be locally declared in the
+%%     appropriate functions.
+%%
+%%   o Force expression folding off if the block is not compliant.
+%%
+%%   o Force scalar expanded input expressions off unless otherwise specified.
+%%
+
+%% ============================================================================
+%% Loop through the System records and ...
+%% 
+%foreach sysIdx = NumSystems
+  %assign system = System[sysIdx]
+  %with system
+
+  %foreach blkIdx = NumBlocks+NumVirtualOutportBlocks
+    %assign block = Block[blkIdx]
+    %with block
+      
+    %if Type != "Opaque"
+
+      %% Promote RWork defines into parent scope if the block defines RWorks
+      %if ISFIELD(block,"NumRWorkDefines")
+          %foreach idx = NumRWorkDefines
+              %assign work = RWorkDefine[idx]
+              %if !ISFIELD(block,"%<work.Name>")
+                  %assign %<work.Name> = work
+                  %assign block = block + %<work.Name>
+              %endif
+          %endforeach
+      %endif
+
+      %% Promote IWork defines into parent scope if the block defines IWorks
+      %if ISFIELD(block,"NumIWorkDefines")
+          %foreach idx = NumIWorkDefines
+              %assign work = IWorkDefine[idx]
+              %assign %<work.Name> = work
+              %assign block = block + %<work.Name>
+          %endforeach
+      %endif
+
+      %% Promote IWork defines into parent scope if the block defines PWorks
+      %if ISFIELD(block,"NumPWorkDefines")
+          %foreach idx = NumPWorkDefines
+              %assign work = PWorkDefine[idx]
+              %if !ISFIELD(block,"%<work.Name>")
+                  %assign %<work.Name> = work
+                  %assign block = block + %<work.Name>
+              %endif
+          %endforeach
+      %endif
+
+      %% Promote DWork into parent scope.
+      
+      %if block.NumDWork > 0
+	%foreach idx = block.NumDWork
+	  %assign work = DWork[idx]
+	  %assign %<work.Name> = work
+	  %assign block = block + %<work.Name>
+	%endforeach
+      %endif
+      
+    %endif %% Type != "Opaque"
+
+    %addtorecord block BlkSysIdx SystemIdx
+    
+    %% Execute the block's BlockTypeSetup function
+    %% if it hasn't been called yet (note that S-function
+    %% blocks are special)
+    %assign ::CurrentSFcnBlockName = ""
+    %if Type == "S-Function"
+      %assign sfuncName = ParamSettings.FunctionName
+      %if LibSystemIsReusedLibraryFcn(system)
+        %assign ::CurrentSFcnBlockName = sfuncName
+      %endif
+      %assign _globalVar = "BlockTypeSetupForSFunction_%<sfuncName>"
+    %elseif Type == "M-S-Function"
+      %assign msfunName =  ParamSettings.MFile
+      %assign _globalVar = "BlockTypeSetupForBlockType_%<msfunName>"
+    %elseif Type == "Lookup_n-D"
+      %assign _globalVar = "BlockTypeSetupForBlockType_Lookup_n_D"
+    %else
+      %assign _globalVar = "BlockTypeSetupForBlockType_%<Type>"
+    %endif
+ 
+    %if !EXISTS("%<_globalVar>")
+      %<GENERATE(block, "BlockTypeSetup", system)>\
+      %assign %<_globalVar> = 1
+    %endif
+    
+    %% Reset S-function name if one was assigned
+    %assign ::CurrentSFcnBlockName = ""
+
+    %% Execute the block's BlockInstanceSetup function
+    %assign ::BlockFcn = "BlockInstanceSetup"
+
+    %<GENERATE(block, "BlockInstanceSetup", system)>\
+    %assign ::BlockFcn = "Unknown"
+ 
+    %if block.UseTLC
+      %if block.TLCExprCompliant
+        %%
+        %% Disallow scalar expanded expression (unless otherwise specified)
+        %% This is why:
+        %%   Suppose we have a block with multiple input expressions, at least
+        %%   one wide, at one scalar.  Then expansion of the scalar inputs
+        %%   causes those inputs to be duplicated which harms throughput.
+        %%
+        %%   For example, say we have a Sum block with a wide input "u1"
+        %%   and scalar input "u2".  If we accept expressions at the scalar 
+        %%   input we will end up with something like
+        %%
+        %%   for (i = 0; i < 10; i++) {
+        %%     output[i] = sin(cos(u1[i])) + sin(cos(u2));
+        %%   }
+        %%
+        %%   Here we see sin(cos(u2)) repeatedly and calculated due to scalar
+        %%   expansion of an expression.
+        %%
+        %foreach opIdx = NumDataOutputPorts
+          %if LibBlockOutputSignalWidth(opIdx) > 1
+            %foreach ipIdx = NumDataInputPorts
+              %if LibBlockInputSignalWidth(ipIdx) == 1 && ...
+                !block.DataInputPort[ipIdx].AllowScalarExpandedExpr
+                %<SLibSetBlockInputSignalIsNotExpr(block.DataInputPort[ipIdx])>
+              %endif
+            %endforeach
+          %endif
+        %endforeach
+      %else
+        %%
+        %% Check expression folding compliance
+        %% If not compliant, don't allow nonconst expressions at the
+        %% output port, nor (nonconst) expressions at the input ports.
+        %%
+        %foreach ipIdx = NumDataInputPorts
+          %<SLibSetBlockInputSignalIsNotExpr(block.DataInputPort[ipIdx])>
+        %endforeach
+        %<SLibSetBlockOutputSignalsAreNotExpr(block)>
+      %endif
+    %endif
+    %endwith %% block
+  %endforeach
+
+  %% Check each non-virtual system for the existence of RTWdata in a 
+  %% empty subsystem.  If EmptySubsysInfo exists and RTWdata.TLCFile
+  %% exists, execute the designated TLC file. This loop is used for the
+  %% custom code block, but can also be used to call a tlc file for any
+  %% other empty subsystems that have RTWdata records by assigning the
+  %% field TLCFile to be the name of the tlc file.  Note: the RTWdata
+  %% attached to a block should be processed by that blocks own tlc file.
+  %if EXISTS("EmptySubsysInfo")
+    %with EmptySubsysInfo
+      %foreach idx = NumRTWdatas
+	%assign temp = RTWdata[idx]
+        %if ISFIELD(temp,"IncludePath")
+          %addincludepath temp.IncludePath
+        %endif
+	%if ISFIELD(temp,"TLCFile")
+	  %if FILE_EXISTS(GENERATE_FILENAME(temp.TLCFile))
+	    %<GENERATE_TYPE(temp, "ProcessRTWdata", temp.TLCFile, system)>
+	  %else
+	    %if system.Type != "root"
+	      %assign sysName = LibUnmangledPathName(system.Name)
+	    %else
+	      %assign sysName = ::CompiledModel.Name
+	    %endif
+	    %openfile errTxt
+	    
+	    
+Cannot locate TLC file %<temp.TLCFile>.tlc
+
+A block specified RTWData without a corresponding TLC file. \
+RTWData must include the TLC file name.  For example,
+
+data.Foo = '1';
+data.TLCFile = 'foofile';
+set_param(gcb, 'RTWData', data);
+
+RTWData {
+  Foo     "1"
+  TLCFile "foofile"
+}
+
+The specified TLC file either does not exist, or is not on the TLC \
+path, or is incorrect.
+
+The block was located in system: %<sysName> 
+	    %closefile errTxt
+	    %<LibReportError(errTxt)>
+	  %endif
+	%endif
+      %endforeach
+    %endwith
+  %endif    
+  
+  %endwith %% system
+%endforeach
+
+%% clean up
+%undef system, block, param, bo, work, temp
+
+
+%% =============================================================================
+%% Loop through the Block Output records and attach the following three fields
+%% to each record:
+%%
+%% RequiredInBlockIO:
+%%      This setting determines if the block output needs to be declared in the
+%%      global BlockIO structure. This is true if a) if it is a TestPoint, b) it
+%%      is not constant valued and it is required in the global scope.
+%%
+%% RequiredInConstBlockIO:
+%%      This setting determines if the block output needs to be declared in the
+%%      global ConstBlockIO structure. Firstly the initial value of this setting
+%%      depends on the level that InlineInvariantSignals is set to, i.e.,
+%%
+%%   -> If InlineInvariantSignals=0, then RequiredInConstBlockIO=1 for all
+%%      invaraint block outputs.
+%%  
+%%   -> If InlineInvariantSignals=1, then it is assumed (at this time) that
+%%      none of the invariant block outputs are required in the ConstBlockIO
+%%      structure, i.e., we expect all of these signals to be #def'ed to their
+%%      (invariant) initial values in model.h  This assumption will be corrected
+%%      during the process of code generation, for those invaraint signals that
+%%      are referenced by their address. Hence after all the code has been
+%%      generated into model.c and model.prm, we will end up with the *minimal*
+%%      number of invariant block outputs marked as required in the 
+%%      ConstBlockIO structure.
+%%
+%% Also keep a count of a) the number of signals in the BlockIO structure,
+%% b) the number of signals in the ConstBlockIO structure, c) the number
+%% of signals that are invariant in the BlockIO structure, and d) the number
+%% of external signals.
+%%
+%<LibAddIdentifier(BlockOutputs, "NumModelReferenceRootOutput", 0)>
+%<LibAddIdentifier(BlockOutputs, "NumSignalsInBlockIO", 0)>
+%<LibAddIdentifier(BlockOutputs, "NumSignalsInConstBlockIO", 0)>
+%<LibAddIdentifier(BlockOutputs, "NumExportedGlobalSignals", 0)>
+%<LibAddIdentifier(BlockOutputs, "NumImportedExternSignals", 0)>
+%<LibAddIdentifier(BlockOutputs, "NumImportedExternPointerSignals", 0)>
+%<LibAddIdentifier(BlockOutputs, "NumInPlaceOPTSignals", 0)>
+%<LibAddIdentifier(BlockOutputs, "NumAccessibleSignals", 0)>
+
+%assign nMdlRefOut    = 0
+%assign nInBlkIO      = BlockOutputs.NumGlobalBlockOutputs
+%assign nConstExpr    = BlockOutputs.NumConstOutputExpr
+%assign nInConstBlkIO = 0
+%assign nExtGlobal    = 0
+%assign nImpExtern    = 0
+%assign nImpExternPtr = 0
+%assign nCustom       = 0
+%assign nPRPortVar    = 0
+
+%assign baseSystemIdx = GetBaseSystemIdx()
+
+%with ::CompiledModel.ZcRec
+  %assign numZc = 0
+  %foreach blkIdx = NumBlkZcRecs
+    %assign blkRec = BlkZcRec[blkIdx]
+    %assign numZc = numZc + blkRec.NumZcSignalInfos
+  %endforeach
+  %assign numEntries = 2*numZc
+  %assign ::ZcRecMap = Vector(%<numEntries>) [0@%<numEntries>]
+  %assign mapIdx = 0
+  %foreach blkIdx = NumBlkZcRecs
+    %assign blkRec = BlkZcRec[blkIdx]
+    %foreach sigIdx = blkRec.NumZcSignalInfos
+      %assign ::ZcRecMap[mapIdx * 2] = blkIdx
+      %assign ::ZcRecMap[mapIdx * 2 + 1] = sigIdx
+    %assign mapIdx = mapIdx + 1
+    %endforeach
+  %endforeach
+%endwith
+
+%if IsModelReferenceTarget()
+  %assign intf = System[baseSystemIdx].Interface
+  %foreach idx = intf.NumCanonicalInputArgDefs
+    %assign argdef = intf.CanonicalInputArgDef[idx]
+    %if argdef.ConnectedToSimulinkFunction == "yes"
+      %<LibAccessThisSysFcnArg(argdef, "Start", "Global")>
+      %<SLibAccessArg(argdef, "Start", 0, 0)>
+    %endif
+  %endforeach
+  %foreach idx = intf.NumCanonicalOutputArgDefs
+    %assign argdef = intf.CanonicalOutputArgDef[idx]
+    %if argdef.ConnectedToSimulinkFunction == "yes"
+      %<LibAccessThisSysFcnArg(argdef, "Start", "Global")>
+      %<SLibAccessArg(argdef, "Start", 0, 0)>
+    %endif
+  %endforeach
+%endif
+
+%foreach boIdx = BlockOutputs.NumGlobalBlockOutputs
+  %assign globalBO = BlockOutputs.GlobalBlockOutput[boIdx]
+  %assign reqInBlkIO = 0
+  
+  %if SIZE(globalBO.SigSrc,1) > 0
+    %assign srcSys = ::CompiledModel.System[globalBO.SigSrc[0]]
+    %assign srcBlk = srcSys.Block[globalBO.SigSrc[2]]
+    
+    %if ISEQUAL(srcBlk.TID, "constant") 
+      %% Mark this block so that its Outputs function gets
+      %% generated in mdlStart outside of #if 0 ... #endif
+      %<SETFIELD(srcBlk, "NeedOutputsFcnInMdlStart", 1)>
+    %endif
+  %endif
+
+  %if globalBO.OwnerSysIdx[0] != -1 && ...
+    globalBO.OwnerSysIdx[0] > baseSystemIdx
+    %% This signal is allocated by the parent, and should not be initialized
+    %% Currently this is the case for buffers feeding the root output
+    %% ports of referenced models
+    %%
+    %assert(IsModelReferenceTarget())
+    %assign nMdlRefOut = nMdlRefOut + 1
+    %assign reqInBlkIO = 1
+  %endif
+  
+  %assign required = [%<!ISEMPTY(globalBO.SigSrc)>, %<reqInBlkIO>]  
+  %<LibAddIdentifier(globalBO, "RequiredInBlockIO", required)>
+%endforeach
+%assign BlockOutputs.NumModelReferenceRootOutput = nMdlRefOut
+
+%foreach boIdx = BlockOutputs.NumExternalBlockOutputs
+  %assign externBO = BlockOutputs.ExternalBlockOutput[boIdx]
+  
+  %if SIZE(externBO.SigSrc,1) > 0
+    %assign srcSys = ::CompiledModel.System[externBO.SigSrc[0]]
+    %assign srcBlk = srcSys.Block[externBO.SigSrc[2]]
+    
+    %if ISEQUAL(srcBlk.TID, "constant")
+      %% Mark this block so that its Outputs function gets
+      %% generated in mdlStart outside of #if 0 ... #endif
+      %<SETFIELD(srcBlk, "NeedOutputsFcnInMdlStart", 1)>
+    %endif
+  %endif
+  
+  %switch externBO.StorageClass
+    %case "ExportedGlobal"
+      %assign nExtGlobal = nExtGlobal + 1
+      %break
+    %case "ImportedExtern"
+      %assign nImpExtern = nImpExtern + 1
+      %break
+    %case "ImportedExternPointer"
+      %assign nImpExternPtr = nImpExternPtr + 1
+      %break
+    %case "Custom"
+      %assign nCustom = nCustom + 1
+      %break  
+    %default
+      %% Only removed reusable CSC can be of Auto storage class.
+      %if !SLibOmitRecord(externBO)
+        %assign errTxt = "Unknown storage class: %<externBO.StorageClass>"
+        %<LibReportFatalError(errTxt)>
+      %endif
+  %endswitch
+  %if ISFIELD(externBO, "AutosarPRPortVarIdx")
+      nPRPortVar = nPRPortVar + 1
+  %endif
+%endforeach    
+
+%foreach boIdx = BlockOutputs.NumConstBlockOutputs
+  %assign constBO = BlockOutputs.ConstBlockOutput[boIdx]
+  
+  %if constBO.RequiredInConstBlockIO
+    %assign nInConstBlkIO = nInConstBlkIO + 1
+  %elseif InlineInvariantSignals == 0 || ::CompiledModel.PadderActive
+    %assign constBO.RequiredInConstBlockIO = 1
+    %assign nInConstBlkIO = nInConstBlkIO + 1
+  %endif
+
+  %if SIZE(constBO.SigSrc,1) > 0
+    %assign srcSys = ::CompiledModel.System[constBO.SigSrc[0]]
+    %assign srcBlk = srcSys.Block[constBO.SigSrc[2]]
+
+    %%
+    %% If the initial value is empty then it implies that SL and the normal
+    %% TLC library functions cannot initialize this signal. This could be due
+    %% to the fact that the data type of signal is not known to Simulink. In
+    %% such an event, check if the block target file has "BlockInitialValues"
+    %% method, that can provide the required initialization. If this method
+    %% does not exist in the block target file, then mark the block so that
+    %% its Outputs function gets generated in mdlStart outside the #if 0 ...
+    %% #endif statements.
+    %%
+    
+    %if ISEMPTY(constBO.InitialValue)
+      
+      %assign initInMdlStart = 0
+      
+      %if LibBlockFunctionExists(srcBlk, "BlockInitialValues")
+	%assign vType = "Y%<constBO.SigSrc[3]>"
+	%with srcSys
+	  %assign initVal = GENERATE(srcBlk,"BlockInitialValues",srcSys,vType)
+	%endwith %% srcSys
+	%if WHITE_SPACE(initVal)
+	  %assign warnTxt = "Ignoring bogus initial output value."
+	  %<LibReportWarning(warnTxt)>
+	  %assign initInMdlStart = 1
+	%else
+	  %<LibAddIdentifier(constBO, "CustomInitialValue", initVal)>
+	%endif
+      %else
+	%assign initInMdlStart = 1
+      %endif
+
+      %if initInMdlStart
+	%assign initVal = [0]
+	%<LibAddIdentifier(constBO, "CustomInitialValue", initVal)>
+	%assign constBO.RequiredInConstBlockIO = 1
+	%assign constBO.DoNotConstify = 1
+	%assign nInConstBlkIO = nInConstBlkIO + 1
+	%<SETFIELD(srcBlk, "NeedOutputsFcnInMdlStart", 1)>
+      %endif
+      %undef initInMdlStart, vType, initVal
+    %endif
+    
+    %if ::GenCPP
+      %assign constBO.DoNotConstify = 1
+    %endif
+  %endif
+%endforeach
+
+%assign BlockOutputs.NumSignalsInBlockIO             = nInBlkIO
+%assign BlockOutputs.NumSignalsInConstBlockIO        = nInConstBlkIO
+%assign BlockOutputs.NumExportedGlobalSignals        = nExtGlobal
+%assign BlockOutputs.NumImportedExternSignals        = nImpExtern
+%assign BlockOutputs.NumImportedExternPointerSignals = nImpExternPtr
+%assign BlockOutputs.NumInPlaceOPTSignals            = nCustom + nPRPortVar
+
+%% A block output signal is not included in the global memory map if
+%% it is written to by more than one block (reused).
+%%
+%assign nInBlkIOExtMode = 0
+%foreach boIdx = BlockOutputs.NumGlobalBlockOutputs
+  %if BlockOutputs.GlobalBlockOutput[boIdx].NumReusedBlockOutputs == 0
+    %assign nInBlkIOExtMode = nInBlkIOExtMode + 1
+  %endif
+%endforeach
+
+%% Total number of accessible signals for external mode.
+%assign BlockOutputs.NumAccessibleSignals            = ...
+  nInBlkIOExtMode + nExtGlobal + nImpExtern + nImpExternPtr + nCustom
+
+%% =============================================================================
+%% Loop through the ExternalInputs records and attach the following to
+%% determine the number of external signals.
+%%
+
+%<LibAddIdentifier(ExternalInputs, "NumAutoSignals", 0)>
+%<LibAddIdentifier(ExternalInputs, "NumExportedGlobalSignals", 0)>
+%<LibAddIdentifier(ExternalInputs, "NumImportedExternSignals", 0)>
+%<LibAddIdentifier(ExternalInputs, "NumImportedExternPointerSignals", 0)>
+%<LibAddIdentifier(ExternalInputs, "NumInPlaceOPTSignals", 0)>
+
+%assign nAuto         = 0
+%assign nExtGlobal    = 0
+%assign nImpExtern    = 0
+%assign nImpExternPtr = 0
+%assign nPRPortVar    = 0
+
+%foreach eiIdx = ExternalInputs.NumExternalInputs
+  %assign ei = ExternalInputs.ExternalInput[eiIdx]
+  %switch ei.StorageClass
+    %case "Auto"
+      %assign nAuto = nAuto + 1
+      %break
+    %case "ExportedGlobal"
+      %assign nExtGlobal = nExtGlobal + 1
+      %break
+    %case "ImportedExtern"
+      %assign nImpExtern = nImpExtern + 1
+      %break
+    %case "ImportedExternPointer"
+      %assign nImpExternPtr = nImpExternPtr + 1
+      %break
+    %case "Custom"
+      %assign nCustom = nCustom + 1
+      %break
+    %default
+      %assign errTxt = "Unknown storage class: %<ei.StorageClass>"
+      %<LibReportFatalError(errTxt)>
+  %endswitch
+  %if ISFIELD(ei, "AutosarPRPortVarIdx")
+      %assign nPRPortVar = nPRPortVar + 1
+  %endif
+%endforeach
+      
+%assign ExternalInputs.NumAutoSignals                  = nAuto
+%assign ExternalInputs.NumExportedGlobalSignals        = nExtGlobal
+%assign ExternalInputs.NumImportedExternSignals        = nImpExtern
+%assign ExternalInputs.NumImportedExternPointerSignals = nImpExternPtr
+%assign ExternalInputs.NumInPlaceOPTSignals            = nCustom + nPRPortVar
+
+%% =============================================================================
+%% Loop through the ExternalOutputs records and attach the following to
+%% determine the number of external signals.
+%%
+
+%<LibAddIdentifier(ExternalOutputs, "NumAutoSignals", 0)>
+%<LibAddIdentifier(ExternalOutputs, "NumExportedGlobalSignals", 0)>
+%<LibAddIdentifier(ExternalOutputs, "NumImportedExternSignals", 0)>
+%<LibAddIdentifier(ExternalOutputs, "NumImportedExternPointerSignals", 0)>
+%<LibAddIdentifier(ExternalOutputs, "NumInPlaceOPTSignals", 0)>
+
+%assign nAuto         = 0
+%assign nExtGlobal    = 0
+%assign nImpExtern    = 0
+%assign nImpExternPtr = 0
+%assign nPRPortVar    = 0
+
+%foreach eoIdx = ExternalOutputs.NumExternalOutputs
+  %assign eo = ExternalOutputs.ExternalOutput[eoIdx]
+  %switch eo.StorageClass
+    %case "Auto"
+      %assign nAuto = nAuto + 1
+      %break
+    %case "ExportedGlobal"
+      %assign nExtGlobal = nExtGlobal + 1
+      %break
+    %case "ImportedExtern"
+      %assign nImpExtern = nImpExtern + 1
+      %break
+    %case "ImportedExternPointer"
+      %assign nImpExternPtr = nImpExternPtr + 1
+      %break
+    %case "Custom"
+      %assign nCustom = nCustom + 1
+      %break
+    %default
+      %assign errTxt = "Unknown storage class: %<eo.StorageClass>"
+      %<LibReportFatalError(errTxt)>
+  %endswitch
+  %if ISFIELD(eo, "AutosarPRPortVarIdx")
+      %assign nPRPortVar = nPRPortVar + 1
+  %endif
+%endforeach
+      
+%assign ExternalOutputs.NumAutoSignals                  = nAuto
+%assign ExternalOutputs.NumExportedGlobalSignals        = nExtGlobal
+%assign ExternalOutputs.NumImportedExternSignals        = nImpExtern
+%assign ExternalOutputs.NumImportedExternPointerSignals = nImpExternPtr
+%assign ExternalOutputs.NumInPlaceOPTSignals            = nCustom + nPRPortVar
+
+%% =============================================================================
+%% Add total number of external signals (block io + external inputs) to
+%% ::CompiledModel for future reference.
+%%
+
+%<LibAddToCompiledModel("NumInPlaceOPTSignals", ...
+  BlockOutputs.NumInPlaceOPTSignals + ...
+  ExternalInputs.NumInPlaceOPTSignals + ...
+  ExternalOutputs.NumInPlaceOPTSignals )>
+
+%<LibAddToCompiledModel("NumExportedGlobalSignals", ...
+  BlockOutputs.NumExportedGlobalSignals + ...
+  ExternalInputs.NumExportedGlobalSignals + ...
+  ExternalOutputs.NumExportedGlobalSignals)>
+
+%<LibAddToCompiledModel("NumImportedExternSignals", ...
+  BlockOutputs.NumImportedExternSignals + ...
+  ExternalInputs.NumImportedExternSignals + ...
+  ExternalOutputs.NumImportedExternSignals)>
+
+%<LibAddToCompiledModel("NumImportedExternPointerSignals", ...
+  BlockOutputs.NumImportedExternPointerSignals + ...
+  ExternalInputs.NumImportedExternPointerSignals + ...
+  ExternalOutputs.NumImportedExternPointerSignals)>
+
+
+%% =============================================================================
+%% Add total number of external dwork to ::CompiledModel for future reference.
+%%
+
+%assign nCustom       = 0
+%assign nExtGlobal    = 0
+%assign nImpExtern    = 0
+%assign nImpExternPtr = 0
+%assign nActDWork     = 0
+%assign numDWorks = ::CompiledModel.DWorks.NumDWorks
+
+%% Function: FcnSetOptimizedAwayInTLC ==========================================
+%% Abstract:
+%%   Optimize away some dworks in TLC, e.g. for model reference block
+%%   whose model interface reveals that it does not have dwork.  This
+%%   should only be used for the dworks of model reference blocks, since
+%%   NumDWorks is subject to misinterpretation with respect to this optimization.
+%%   We have made sure that where NumDWorks is used we take this 
+%%   optimization into account with the assumption that it will only
+%%   apply to the dworks of model reference blocks.
+%function FcnSetOptimizedAwayInTLC(dwRec) void
+  %if 0 == dwRec.IsLocalScratchDWork && !ISFIELD(dwRec, "VarGroupIdx")
+    %assert dwRec.StorageClass == "Auto"
+    %assign dwRec.OptimizedAwayInTLC = 1
+  %elseif dwRec.SigSrc[0] != -1 && dwRec.SigSrc[2] != -1 && ...
+    ISFIELD( System[dwRec.SigSrc[0]], "Block")
+    %%
+    %% It is possible that the system contains no block when there
+    %% are terminate blocks
+    %%
+    %assign block = ::CompiledModel.System[dwRec.SigSrc[0]].Block[dwRec.SigSrc[2]]
+    %if 1 == block.DeletedInIR
+      %assign dwRec.OptimizedAwayInTLC = 1
+    %elseif "ModelReference" == block.Type
+      %% Model reference block SIM target always registers one dwork. 
+      %% However, the dwork may be optimized for the target.
+      %assign blockInterface = GetModelrefInterface(block)
+      %if !blockInterface.HasDWork
+        %assign isDimSizeDWork = TLC_FALSE
+        %if ISFIELD(dwRec, "MdlRefBlkOutputDimSize")
+          %assign isDimSizeDWork = (dwRec.MdlRefBlkOutputDimSize == 1)
+        %endif
+        %% If the dwork is used as a dimsize dwork, do not optimize out
+        
+        %assign isMassMatrixDWork = TLC_FALSE
+        %if blockInterface.ModelIsLinearlyImplicit
+          %assign isMassMatrixDWork = (dwRec.Origin == "MASSMATRIX")
+        %endif
+        %% If the dwork is used for Mass Matrix offset, do not optimize out
+
+        %assign hasPWork = (dwRec.Origin == "PWORK")
+        %% If there is a pwork, do not optimize out
+
+        %assign isInitStatusDWork = TLC_FALSE
+        %if ISFIELD(dwRec, "DWorkForInitStatus")
+          %assign isInitStatusDWork = (dwRec.DWorkForInitStatus == 1)
+        %endif
+        %% If dwork is used to track initialization status, do not optimize out.
+        
+        %if !isDimSizeDWork && !isMassMatrixDWork && !hasPWork && !isInitStatusDWork
+          %assign dwRec.OptimizedAwayInTLC = 1
+        %endif
+      %endif
+    %endif
+  %endif
+%endfunction
+  
+%foreach dwIdx = numDWorks
+  %assign dwRec = ::CompiledModel.DWorks.DWork[dwIdx]
+  %switch dwRec.StorageClass
+  %case "Custom"
+    %assign nCustom = nCustom + 1
+    %break
+  %case "ExportedGlobal"
+    %assign nExtGlobal = nExtGlobal + 1
+    %break
+  %case "ImportedExtern"
+    %assign nImpExtern = nImpExtern + 1
+    %break
+  %case "ImportedExternPointer"
+    %assign nImpExternPtr = nImpExternPtr + 1
+    %break   
+  %default
+    %% Only removed reusable CSC can be of Auto storage class.
+    %if SLibOmitDWorkRecord(dwRec)
+      %break
+    %endif
+    %<FcnSetOptimizedAwayInTLC(dwRec)>
+    %if !dwRec.OptimizedAwayInTLC && ...
+      (!dwRec.IsLocalScratchDWork || dwRec.VarGroupVarIdx > -1)
+       %assign nActDWork = nActDWork + 1
+     %endif
+  %endswitch
+%endforeach
+
+%<LibAddToCompiledModel("NumCustomDWork", nCustom)>
+
+%<LibAddToCompiledModel("NumExportedGlobalDWork", nExtGlobal)>
+
+%<LibAddToCompiledModel("NumImportedExternDWork", nImpExtern)>
+
+%<LibAddToCompiledModel("NumImportedExternPointerDWork", nImpExternPtr)>
+
+%<LibAddToCompiledModel("NumNonExternalDWork", nActDWork)>
+
+%undef bo, boIdx, nInBlkIO, nInConstBlkIO, currentStackSize
+%undef ei, eiIdx, nAuto, nExtGlobal, nImpExtern, nImpExternPtr, nActDWork
+
+%assign ::CompiledModel.InCommonPass = 0
+
+%endif  %% _COMMONPASS_
+
+%% [EOF] commonpass.tlc

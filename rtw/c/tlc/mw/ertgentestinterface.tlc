@@ -1,0 +1,115 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%   This file creates and writes the contents of model_testinterface.c and
+%%   model_testinterface.h files. These files contain test interface functions
+%%   for non-inlined subsystems, root model and exported functions.
+%%   The interface provides a graphical I/O to function I/O mapping for a 
+%%   subsystem.
+%%
+%%   This is an example file demonstrating the use of SystemGraphicalMap API
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%%
+
+%selectfile NULL_FILE
+%include "ertsystemgraphmaplib.tlc"
+%include "erttestinterfacelib.tlc"
+
+%if !EXISTS("_ERT_GEN_TESTINTERFACE_")
+  %assign _ERT_GEN_TESTINTERFACE_ = 1
+  
+  %% Include a comment indicating the file's contents and description
+  %openfile userTopCode
+  /*
+   * This file contains functions which provide a graphical input/output 
+   * interface to Simulink Coder generated code for subsystems and 
+   * root-model. For each non-inlined subsystem, the following test interface 
+   * functions are generated. 
+   *   o Test interface initialize function (always)
+   *   o Test interface output function (always, output + update is required)
+   *   o Test interface enable/disable function (if required)
+   *
+   * For the root model the following functions are generated
+   *   o Test interface for model_initialize
+   *   o Test interface for model_step (Single Tasking mode only)
+   * Note, interface functions for root model are not generated if either the
+   * model is configured to "Generate Reusable Code" or if Export Function
+   * feature is used for generating code for Function-call systems
+   * 
+   * The output test interface functions has graphical inputs and outputs as 
+   * function arguments. The interface functions can be used in test drivers 
+   * for testing code generated for subsystems and/or the model.
+   *
+   * Example test driver for subsystem S1 (psuedocode)
+   * -------------------------------------------------
+   * S1 has one scalar input and one scalar output. Test Driver will run for
+   * N time steps
+   
+     extern DataType1 inputTestVector[N];  --> input values over N time steps
+     extern DataType2 expOutputVector[N];  --> expected values of output
+     extern DataType2 testOutputVector[N]; --> write test output values here
+     
+     void S1_TestDriver()
+     {
+       Initialize subsystem by calling test interface initialize function
+       S1_Initialize_TestInterface();
+     
+       Run S1 test interface output function for N time steps
+       for(i=0; i<N; i++) {
+         S1_Output_TestInterface(inputTestVector[i], &testOutputVector[i]);
+       }
+       
+       Compare testOutputVector with expOutputVector
+     }
+   * 
+   * Test interface for a subsystem is generated only if 
+   * - The subsystem is single-rate and non-inlined, i.e. subsystem code is 
+   *   encapsulated in a function. (Simulink Coder system code is 
+   *   "Function" or "Reusable Function")
+   * - The subsystem does not have any continuous-time blocks
+   * - The subsystem is not a "Enabled" or "Triggered" subsystem
+   * - The subsystem is not a Action subsystem - SWITCH-CASE, IF, WHILE, FOR
+   * - The model does not have blocks that depend on absolute time
+   *
+   */
+   
+  %closefile userTopCode
+  %<SLibCacheCodeToFile("testif_src_incl", userTopCode)>
+  
+  %% #include Driver Header file in Driver Source file
+  %openfile inclCode
+  %assign driverFileName = SLibGetFileNameForCode("testdriver_hdr") + ".h"
+  #include "%<driverFileName>"
+  #include <string.h>
+  %closefile inclCode
+  %<SLibCacheCodeToFile("testif_src_incl", inclCode)>
+  
+  %% By default, add model.h and model_private.h for global data and functions
+  %openfile mdlHdrCode
+  
+  /* Include model header for global data and model functions */
+  %<SLibIncludeModelHeader()>
+  %<SLibIncludePrivateHeader()>  
+  %closefile mdlHdrCode
+  %<SLibCacheCodeToFile("testif_hdr_incl", mdlHdrCode)>
+  
+  %openfile unusedDefine
+  #define UNUSED_IO(x) (void) (x)
+  
+  %closefile unusedDefine
+  
+  %<SLibCacheCodeToFile("testif_hdr_define", unusedDefine)>
+  
+  %if (SLibGetNumSubsystemInterfaces() > 0) && !SLibNeedAbsoluteTime()
+    %<SLibWriteSubsystemTestInterfaces()>
+  %endif
+  %<SLibWriteExpFcnsTestInterface()>
+  %<SLibWriteRootModelTestInterface()>
+  
+%endif %% _ERT_GEN_TESTINTERFACE_
+
+%% [EOF] ertgentestinterface.tlc

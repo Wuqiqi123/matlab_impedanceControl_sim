@@ -1,0 +1,5 @@
+# Copyright 1994-2018 The MathWorks, Inc.
+# 
+# This template makefile is not used. Accelerator builds are re-directed to use
+# the corresponding template makefile in the ert folder.
+ 

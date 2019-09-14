@@ -1,0 +1,12 @@
+# --*-conf-*---
+# Local Words for sbspell and sbcheck -check typos
+# This file is automatically maintained by sbspell.
+# Copyright 2018 The MathWorks, Inc.
+
+ LocalWords:  tmf POSIX gmake Iwhere proj myfile rtwgensettings MAKECMD
+ LocalWords:  Toolchain TOOLCHAIN NUMST NCSTATES BUILDARGS ALLOCATIONFCN
+ LocalWords:  ONESTEPFCN TERMFCN MODELREFS LDFLAGS MODELLIB RSPFILE MDLREFINC
+ LocalWords:  ifneq mak rsp RTM RTMODEL DMODEL DRT DNUMST DTID DNCSTATES DMT
+ LocalWords:  DHAVESTDIO DMAT DONESTEPFCN DTERMFCN DMULTI DCLASSIC
+ LocalWords:  DALLOCATIONFCN CFLAGS noregistrylookup ifeq PRECOMP LD SYSLIBS
+ LocalWords:  OBJS notdir addsuffix subst LIBCMD Fo cn del

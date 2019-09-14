@@ -1,0 +1,184 @@
+%%
+%% Copyright 2015-2017 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   This system TLC library file contains functions that are related to 
+%%   Simulink VarGroups
+%%
+%if EXISTS("_VARGROUPLIB_") == 0
+%assign _VARGROUPLIB_ = 1
+
+%% Function: SLibVarGroupIsStruct ================================================
+%% Abstract:
+%%   Returns TLC_TRUE if a given vargroup is generated as a structure
+%%
+%function SLibVarGroupIsStruct(aVarGroupIdx) void
+  %assert ::CompiledModel.VarGroups.NumVarGroups > aVarGroupIdx
+  %assert -1 < aVarGroupIdx
+  %assign varGroup = ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx]
+  %assert 0 == varGroup.PackageAsStruct || -1 < varGroup.CGTypeIdx
+  %return 1 == varGroup.PackageAsStruct
+%endfunction
+
+%% Function: SLibVarGroupLocalName ===============================================
+%% Abstract:
+%%   Returns the local name of a given vargroup
+%%
+%function SLibVarGroupLocalName(aVarGroupIdx) void
+  %assert ::CompiledModel.VarGroups.NumVarGroups > aVarGroupIdx
+  %assert -1 < aVarGroupIdx
+  %return ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx].LocalName
+%endfunction
+
+%% Function: SLibVarGroupSystemIdx =============================================
+%% Abstract:
+%%   Returns the owner system index of a given vargroup
+%%
+%function SLibVarGroupSystemIdx(aVarGroupIdx) void
+  %assert ::CompiledModel.VarGroups.NumVarGroups > aVarGroupIdx
+  %assert -1 < aVarGroupIdx
+  %return ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx].SysIdx
+%endfunction
+
+
+%% Function: SLibVarGroupNumElements =============================================
+%% Abstract:
+%%   Returns the number of elements in a given vargroup
+%%
+%function SLibVarGroupNumElements(aVarGroupIdx) void
+  %assert ::CompiledModel.VarGroups.NumVarGroups > aVarGroupIdx
+  %assert -1 < aVarGroupIdx
+  %return ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx].NumVarGroupElements
+%endfunction
+
+%% Function: SLibVarGroupElementSource ===========================================
+%% Abstract:
+%%   Returns the source record idnum string for a given vargroup and element index
+%%
+%function SLibVarGroupElementSource(aVarGroupIdx, aElementIdx) void
+  %assert SLibVarGroupNumElements(aVarGroupIdx) > aElementIdx
+  %assert -1 < aElementIdx
+  %return ...
+    ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx].VarGroupElements[aElementIdx]
+%endfunction
+
+%% Function: SLibDefineVarGroupElement ===========================================
+%% Abstract:
+%%   Returns true if a given vargoup element is defined the associated data
+%%   structure.
+%%
+%function SLibDefineVarGroupElement(aVarGroupIdx, aElementIdx) void
+  %assign systemIdx = SLibVarGroupSystemIdx(aVarGroupIdx)
+  %assign varGroupElement = SLibVarGroupElementSource(aVarGroupIdx, aElementIdx)
+  %assign res = SLibNeedGenDataDefFromVarGroup(varGroupElement, systemIdx)
+  %return TLC_TRUE == res[0] || !WHITE_SPACE(res[2])
+%endfunction
+
+%% Function: SLibVarGroupCGTypeIndex ==================================================
+%% Abstract:
+%%   Returns the CGType index for a vargoup
+%%
+%function SLibVarGroupCGTypeIdx(aVarGroupIdx) void
+  %assign varGroupTypeIdx = ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx].CGTypeIdx
+  %if LibCGTypeIsMatrix(varGroupTypeIdx)
+    %assign varGroupTypeIdx = SLibGetBaseTypeForVarGroupUsedAsMatrix(varGroupTypeIdx)
+  %endif
+  %return varGroupTypeIdx
+%endfunction
+
+%% Function: SLibVarGroupElementName =============================================
+%% Abstract:
+%%   Returns the vargroup element name for a given vargroup and element index
+%%
+%function SLibVarGroupElementName(aVarGroupIdx, aElementIdx) void
+  %assert SLibVarGroupNumElements(aVarGroupIdx) > aElementIdx
+  %assert -1 < aElementIdx
+  %assign varGroup = ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx]
+  %if 0 == varGroup.PackageAsStruct
+    %return varGroup.VarGroupElementIds[aElementIdx]
+  %endif
+  %assign cgTypeIdx = SLibVarGroupCGTypeIdx(aVarGroupIdx)
+  %return LibCGTypeMemberName(cgTypeIdx, aElementIdx)
+%endfunction
+
+%% Function: SLibVarGroupSetElementName ==========================================
+%% Abstract:
+%%   Returns the vargroup element name for a given vargroup and element index
+%%
+%function SLibVarGroupSetElementName(aVarGroupIdx,aElementIdx,aNewIdentifier) void
+  %assert SLibVarGroupNumElements(aVarGroupIdx) > aElementIdx
+  %assert -1 < aElementIdx
+  %assign varGroup = ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx]
+  %if 0 == varGroup.PackageAsStruct
+    %assign varGroup.VarGroupElementIds[aElementIdx] = aNewIdentifier
+  %endif
+  %assign cgTypeIdx = SLibVarGroupCGTypeIdx(aVarGroupIdx)
+  %return CGMODEL_ACCESS("CGType.Member.SetName", STRING(cgTypeIdx), STRING(aElementIdx), aNewIdentifier)
+%endfunction
+
+%% Function: SLibVarGroupElementType =============================================
+%% Abstract:
+%%   Returns the vargroup element CG type index for a given vargroup
+%%   and element index
+%%
+%function SLibVarGroupElementType(aVarGroupIdx, aElementIdx) void
+  %assert SLibVarGroupNumElements(aVarGroupIdx) > aElementIdx
+  %assert -1 < aElementIdx
+  %assign varGroup = ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx]
+  %if 0 == varGroup.PackageAsStruct
+    %return varGroup.VarGroupElementCGTypes[aElementIdx]
+  %endif
+  %assign cgTypeIdx = SLibVarGroupCGTypeIdx(aVarGroupIdx)
+  %return LibCGTypeMemberCGTypeIdx(cgTypeIdx, aElementIdx)
+%endfunction
+
+%% Function: SLibVarGroupElementIsVolatile ====================================
+%% Abstract:
+%%   Returns whether the vargroup element is volatile
+%%
+%function SLibVarGroupElementIsVolatile(aVarGroupIdx, aElementIdx) void
+  %assert SLibVarGroupNumElements(aVarGroupIdx) > aElementIdx
+  %assert -1 < aElementIdx
+  %assign source = SLibVarGroupElementSource(aVarGroupIdx,aElementIdx)
+  %assign idnum = IDNUM(source)
+  %if idnum[0] == "W"
+    %assign dwRec =  ::CompiledModel.DWorks.DWork[idnum[1]]
+    %return ISFIELD(dwRec, "IsDataTransferVolatileDWork") && ...
+      (dwRec.IsDataTransferVolatileDWork == 1)
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+%% Function: LibGetVarGroupCategory ==========================================
+%% Abstract:
+%%   Returns the vargroup category for a given vargroup index
+%%
+%function LibGetVarGroupCategory(varGroupIdx) void
+  %return CGMODEL_ACCESS("VarGroups.Category",varGroupIdx)
+%endfunction
+
+%% Function: SLibGetRecordVarGroupIdx ===========================================
+%% Abstract:
+%%   Returns the VarGroupIdx of a data record. Returns [-1, -1] if it doesn't exist.
+%%
+%function SLibGetRecordVarGroupIdx(aDataRec) void
+  %assign retVal = [-1, -1]
+  %if ISFIELD(aDataRec, "VarGroupIdx")
+    %assign retVal = aDataRec.VarGroupIdx
+  %endif
+  %return retVal
+%endfunction
+
+%% Function: SLibIsLocalVariableRecordType =====================================
+%% Abstract:
+%%   Returns true if and only if the provided record type corresponds to a local variable
+%%
+%function SLibIsLocalVariableRecordType(aVarGroupIdx, aElementIdx) void
+  %assign idNum = IDNUM(SLibVarGroupElementSource(aVarGroupIdx, aElementIdx))
+  %assign recType = idNum[0]
+  %return recType == "L" || recType == "LDW" || recType == "S"
+%endfunction
+
+
+%endif%%  _VARGROUPLIB_

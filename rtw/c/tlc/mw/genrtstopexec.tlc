@@ -1,0 +1,106 @@
+%%
+%%  
+%%
+%% Abstract:
+%%   TLC file for generating stop execution (assert) via Target Function Library (TFL).
+%%
+%% Copyright 2007-2010 The MathWorks, Inc.
+
+%implements "genrtstopexec" "C"
+
+%% Function: rt_stopexec =======================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header and source file contents for stop execution by calling rt_stopexec
+%%
+%function rtStopExecution(fctInfo,fileH,fileC) void
+ 
+  %% Create header file contents
+  %openfile buf
+ /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+  
+  %openfile buf
+  #include "%<LibGetModelName()>.h"
+  
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+  %assign fcnName = fctInfo.FcnName
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>void %<fctInfo.FcnName>(bool exp);
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+
+  %<FcnGenCloseExternCForCPP()>
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+    
+  %% Create source file contents
+  %openfile buf
+ /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %assign hdr_name = fctInfo.FileName + ".h"
+  %openfile buf
+  #include "%<hdr_name>"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>
+
+  %openfile buf
+  %if GenCPP
+  extern "C" {
+  %endif
+  %assign fcnReturns = "void"
+  %assign fcnParams = "bool exp"
+  %openfile fcnAbstract
+  Stop execution when exp evaluates to false
+  %closefile fcnAbstract
+
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtstopexec.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    if (!exp) {
+      static char msg[256];
+      %if ::isRAccel
+        char simulationTime[64];
+        const char_T* modelName = "%<LibGetModelName()>";
+        sprintf(simulationTime, "%lf", ssGetT(rtS));
+        sprintf(msg, "<diag_root><diag id=\"Simulink:tools:rapidAccelAssertion\"><arguments><arg type = \"string\">%s</arg><arg type = \"string\">%s</arg></arguments></diag></diag_root>", modelName, simulationTime);
+      %else
+        sprintf(msg, "Assertion detected at time %f", %<LibGetT()>);
+      %endif
+      %assign errMsg = "msg"
+      %<RTMSetErrStat(errMsg)>;
+    }
+    return;
+  } /* end %<fctInfo.FcnName> */    
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %if GenCPP
+  }
+  %endif
+  
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+
+%endfunction

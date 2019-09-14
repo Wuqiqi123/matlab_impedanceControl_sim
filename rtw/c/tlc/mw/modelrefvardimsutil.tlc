@@ -1,0 +1,1254 @@
+%% ============================================================================
+%% 
+%% 
+%%
+%% Abstract:
+%%   This system file contains helper functions to support vardims signals
+%% for model reference.
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+
+%if EXISTS("_MODELREFVARDIMSUTIL_") == 0
+%assign _MODELREFVARDIMSUTIL_ = 1
+
+
+%% Function SLibGetArgUseCanDimSizeDW =======================================
+%% Abstract:
+%%   Check if a data input/output port or external input/output port uses
+%%   canonical dimsize dwork
+%function SLibGetArgUseCanDimSizeDW(arg)
+  
+  %return ISFIELD(arg, "CanonicalDimSizeDWorkIdx")
+  
+%endfunction %% end SLibGetArgUseCanDimSizeDW
+
+
+%% Function SLibGetCanDimSizeDWIdxForArg =======================================
+%% Abstract:
+%%   Check if a data input/output port or external input/output port uses
+%%   canonical dimsize dwork
+%function SLibGetCanDimSizeDWIdxForArg(arg)
+  
+  %assert(SLibGetArgUseCanDimSizeDW(arg))
+  %return arg.CanonicalDimSizeDWorkIdx
+  
+%endfunction %% end SLibGetCanDimSizeDWIdxForArg
+
+
+%% Function SLibGetArgUseSharedDimSizeDW =======================================
+%% Abstract:
+%%   Check if a data input/output port or external input/output port uses
+%%   shared dwork as dimsize dwork
+%function SLibGetArgUseSharedDimSizeDW(arg)
+  
+  %return ISFIELD(arg, "DimSizeDWork")
+  
+%endfunction %% end SLibGetArgUseSharedDimSizeDW
+
+
+%% Function SLibGetArgIsVarDims ============================================
+%% Abstract:
+%%   Check if a data input/output port or external input/output port is variable 
+%%   dimensions mode or it is a nonvirtual bus contains variable-size element
+%function SLibGetArgIsVarDims(arg)
+  
+  %return SLibGetArgUseCanDimSizeDW(arg) || SLibGetArgUseSharedDimSizeDW(arg)
+  
+%endfunction %% end SLibGetArgIsVarDims
+
+
+%% Function SLibGetExternalIOIsVarDims ============================================
+%% Abstract:
+%%   Check if a external input/output is variable dimensions mode or it is a 
+%%   nonvirtual bus contains variable-size element. Canonical
+%%   input/output cannot have field DimSizeDWork
+%function SLibGetExternalIOIsVarDims(canIO)
+  
+  %return SLibGetArgUseCanDimSizeDW(canIO)
+  
+%endfunction %% end SLibGetExternalIOIsVarDims
+
+
+%% Function SLibGetCanIOIsVarDims ============================================
+%% Abstract:
+%%   Check if a canonical input/output is variable dimensions mode. or it is a 
+%%   nonvirtual bus contains variable-size element. Canonical
+%%   input/output cannot have field DimSizeDWork
+%function SLibGetCanIOIsVarDims(canIO)
+  
+  %return SLibGetArgUseCanDimSizeDW(canIO)
+  
+%endfunction %% end SLibGetCanIOIsVarDims
+
+
+%% Function SLibGetCanDWorkIsCanDimSizeDWork =================================
+%% Abstract: 
+%%   Check if a canonical dwork is used as a canonical dimsize dwork
+%function SLibGetCanDWorkIsCanDimSizeDWork(cdwIdx)
+  
+  %if ISFIELD(CanonicalDWorkArgDef[cdwIdx], "IsCanDimSizeDWork")
+    
+    %assign isDimSizeDWork = CanonicalDWorkArgDef[cdwIdx].IsCanDimSizeDWork
+    
+  %else
+      
+    %% Loop through all canonical inputs and outputs to check if 
+    %% any of them use this canonical dwork as canonical dimsize dwork
+    
+    %assign isDimSizeDWork = TLC_FALSE
+    
+    %% check if it is used as an input dim size canonical dwork
+    %foreach argIdx = NumCanonicalInputArgDefs
+      %assign ci = CanonicalInputArgDef[argIdx]
+      %if SLibGetCanIOIsVarDims(ci) && ...
+        cdwIdx == SLibGetCanDimSizeDWIdxForArg(ci)
+        %assign isDimSizeDWork = TLC_TRUE
+        %break
+      %endif
+    %endforeach %% NumCanonicalInputArgDefs
+    
+    %if !isDimSizeDWork
+      %% check if it is used as an output dim size canonical
+      %% dwork for an output port with lower index
+      %foreach argIdx = NumCanonicalOutputArgDefs
+        %assign co = CanonicalOutputArgDef[argIdx]
+        %if SLibGetCanIOIsVarDims(co) && ...
+          cdwIdx == SLibGetCanDimSizeDWIdxForArg(co)
+          %assign isDimSizeDWork = TLC_TRUE
+          %break
+        %endif
+      %endforeach %% end NumCanonicalInputArgDefs
+    %endif
+    
+    %addtorecord CanonicalDWorkArgDef[cdwIdx] IsCanDimSizeDWork isDimSizeDWork
+  %endif
+  
+  %return isDimSizeDWork
+  
+%endfunction %% end SLibGetCanDWorkIsCanDimSizeDWork
+
+%% Function SLibGetDWorkIsCanDimSizeDWorkInBaseSys ==============================
+%% Abstract:
+%%   Check if a dwork is ever used as canonical dimsize dwork in the base system. 
+%%   If so, this dwork won't be used as other type of DWork in base system
+%function SLibGetDWorkIsCanDimSizeDWorkInBaseSys(dwIdx)
+  
+  %if ISFIELD(::CompiledModel.DWorks.DWork[dwIdx], "IsCanDimSizeDWorkInBaseSysem")
+    
+    %assign isCanDimSizeDWork = ::CompiledModel.DWorks.DWork[dwIdx].IsCanDimSizeDWorkInBaseSystem
+    
+  %else
+      
+    %% find the canonical dwork point to this dwork and check
+    %% if it is used as a canonical dimsize dwork
+      
+    %assign isCanDimSizeDWork = TLC_FALSE
+    %assign baseSysIdx = GetBaseSystemIdx()
+    %assign baseSys = ::CompiledModel.System[baseSysIdx]
+    %with baseSys.Interface
+      %foreach cdwIdx = NumCanonicalDWorkArgDefs
+        %assign canDW = CanonicalDWorkArgDef[cdwIdx]
+        %if canDW.FirstSignalSrc == dwIdx
+          %if SLibGetCanDWorkIsCanDimSizeDWork(cdwIdx)
+            %assign isCanDimSizeDWork = TLC_TRUE
+          %endif
+          %break
+        %endif
+      %endforeach
+    %endwith
+    
+    %addtorecord ::CompiledModel.DWorks.DWork[dwIdx] IsCanDimSizeDWorkInBaseSysem isCanDimSizeDWork
+  %endif
+  
+  %return isCanDimSizeDWork
+  
+%endfunction %% end SLibGetDWorkIsCanDimSizeDWorkInBaseSys
+
+
+%% Function SLibGetDimSizeDWorkFullPath ==========================================
+%% Abstract:
+%%   Return the full path of a non-canonical dimsize dwork
+%function SLibGetDimSizeDWorkFullPath(dimSizeDWorkIdx)
+  %assign dworkRec        = ::CompiledModel.DWorks.DWork[dimSizeDWorkIdx]
+  %if ISFIELD(dworkRec, "VarGroupIdx")
+    %assign varGroup        = ::CompiledModel.VarGroups.VarGroup[dworkRec.VarGroupIdx[0]]
+    %assign varGroupTypeIdx = varGroup.CGTypeIdx
+    %assign varGroupType    = ::CompiledModel.CGTypes.CGType[varGroupTypeIdx]
+    %assign memberId        = LibCGTypeMemberName(varGroupTypeIdx, dworkRec.VarGroupIdx[1])
+    %assign memberTypeIdx   = LibCGTypeMemberCGTypeIdx(varGroupTypeIdx, dworkRec.VarGroupIdx[1])
+
+    %if IsModelReferenceTarget()
+      %assign name = varGroup.LocalName
+    %else
+      %assign name = varGroup.Name
+    %endif
+
+    %if IsModelReferenceTarget() || varGroup.IsPointer
+      %assign fullpath = name + "->" + memberId
+    %else
+      %assign fullpath = name + "." + memberId
+    %endif
+    
+    %assign width = LibCGTypeWidth(memberTypeIdx)
+    %if width == 1
+      %assign fullpath = "&" + fullpath
+    %else
+      %assert width > 1
+      %assign fullpath = "&" + fullpath + "[0]"
+    %endif
+  %else
+    %assign dataLayout   = SLibGetDataLayout(dworkRec)
+    %assign name         = dworkRec.Identifier
+    %assign isPointer    = dworkRec.StorageClass == "ImportedExternPointer" ? ...
+      TLC_TRUE : TLC_FALSE
+    %if (isPointer)
+      %assign fullpath   = "%<name>"
+    %else
+      %assign fullpath   = "&%<name>%<dataLayout[3]>"
+    %endif    
+  %endif
+  %return fullpath
+%endfunction %% end SLibGetDimSizeDWorkFullPath
+
+
+%% Function SLibGetDimSizeDWorkFullPathForFcnArg ==============================
+%% Abstract:
+%%   Return the full path of a non-canonical dimsize dwork
+%%
+%function SLibGetDimSizeDWorkFullPathForFcnArg(dimSizeDWorkIdx, baseIdx, cross)
+  %assign dworkRec        = ::CompiledModel.DWorks.DWork[dimSizeDWorkIdx]
+  %if ISFIELD(dworkRec, "VarGroupIdx") && !SLibIsLegacyStorageClassForDataRecord(dworkRec)
+    %assign varGroup        = ::CompiledModel.VarGroups.VarGroup[dworkRec.VarGroupIdx[0]]
+    %assign varGroupTypeIdx = varGroup.CGTypeIdx
+    %assign varGroupType    = ::CompiledModel.CGTypes.CGType[varGroupTypeIdx]
+    %assign memberId        = LibCGTypeMemberName(varGroupTypeIdx, dworkRec.VarGroupIdx[1])
+    %assign memberTypeIdx   = LibCGTypeMemberCGTypeIdx(varGroupTypeIdx, dworkRec.VarGroupIdx[1])
+
+    %% SLibCGIRVarGroupPath doesn't work for non-hierarchical var groups.
+    %% thus we need to generate prefix by ourselves if the input size
+    %% is from root inport.
+    %if LibGetVarGroupCategory(dworkRec.VarGroupIdx[0]) == "ExternalInputSize"
+      %assign fullpath = varGroup.Name + "."
+    %else
+      %assign fullpath = SLibCGIRVarGroupPath(dworkRec.VarGroupIdx[0], baseIdx, cross)
+    %endif
+    %assign fullpath = fullpath + memberId
+  
+    %assign width = LibCGTypeWidth(memberTypeIdx)
+    %if width == 1
+      %assign fullpath = "&" + fullpath
+    %else
+      %assert width > 1
+      %assign fullpath = "&" + fullpath + "[0]"
+    %endif
+  %elseif !SLibIsLegacyStorageClassForDataRecord(dworkRec)
+    %assign dataLayout   = SLibGetDataLayout(dworkRec)
+    %assign name         = dworkRec.Identifier
+    %assign isPointer    = dworkRec.StorageClass == "ImportedExternPointer" ? ...
+      TLC_TRUE : TLC_FALSE
+    %if (isPointer)
+      %assign fullpath   = "%<name>"
+    %else
+      %assign fullpath   = "&%<name>%<dataLayout[3]>"
+    %endif    
+  %else
+    %assign fullpath = LibCustomData(dworkRec, "address", "", "")
+  %endif
+  
+  %return fullpath
+%endfunction %% end SLibGetDimSizeDWorkFullPath
+
+
+%% Function: SLibGetBlockOutputVarDimsIdentifierFromRecord
+%%    From the .rtw file BlockOutputs Record get its base identifier in the
+%%    block I/O structure to be accessed from within the accessSysIdx
+%function SLibGetBlockOutputVarDimsIdentifierFromRecord(dimSizeDWorkIdx, accessSysIdx) void
+  %assign dworkRec        = ::CompiledModel.DWorks.DWork[dimSizeDWorkIdx]
+  %if ISFIELD(dworkRec, "VarGroupIdx")
+    %assign varGroupIdx     = dworkRec.VarGroupIdx[0]
+    %assign varGroup        = ::CompiledModel.VarGroups.VarGroup[dworkRec.VarGroupIdx[0]]
+    %assign varGroupTypeIdx = varGroup.CGTypeIdx
+    %if LibCGTypeIsMatrix(varGroupTypeIdx)
+      %assign varGroupTypeIdx = SLibGetBaseTypeForVarGroupUsedAsMatrix(varGroupTypeIdx)
+    %endif
+    %assign memberId  = LibCGTypeMemberName(varGroupTypeIdx, dworkRec.VarGroupIdx[1])
+    
+    %% SLibCGIRVarGroupPath doesn't work for non-hierarchical var groups.
+    %% thus we need to generate prefix by ourselves if the input size
+    %% is from root inport.
+    %if LibGetVarGroupCategory(dworkRec.VarGroupIdx[0]) == "ExternalInputSize"
+      %assign identiPath = varGroup.Name + "."
+    %else
+      %assign identiPath =  SLibCGIRVarGroupPath(varGroupIdx,accessSysIdx,TLC_FALSE)
+    %endif
+    %assign identipath = identiPath + memberId
+  %else
+    %assign dataLayout   = SLibGetDataLayout(dworkRec)
+    %assign name         = dworkRec.Identifier
+    %assign isPointer    = dworkRec.StorageClass == "ImportedExternPointer" ? ...
+      TLC_TRUE : TLC_FALSE
+    %if (isPointer)
+      %assign identipath   = "%<name>"
+    %else
+      %assign identipath   = "&%<name>%<dataLayout[3]>"
+    %endif    
+  %endif
+  %return identipath
+%endfunction %% end SLibGetBlockOutputVarDimsIdentifierFromRecord
+
+%% Function: SLibGetExternalOutputVarDimsIdentifierFromRecord
+%%    From the .rtw file ExternalOutputs Record get its varGroupIdx and varGroupMemberIdx
+%%    to construct identipath
+%function SLibGetExternalOutputVarDimsIdentifierFromRecord(SizeVarGroupIdx, accessSysIdx) void
+  %assign varGroupIdx = SizeVarGroupIdx[0]
+  %assign varGroupMemberIdx = SizeVarGroupIdx[1]
+  %assign varGroup        = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+  %assign varGroupTypeIdx = varGroup.CGTypeIdx
+  %if LibCGTypeIsMatrix(varGroupTypeIdx)
+    %assign varGroupTypeIdx = SLibGetBaseTypeForVarGroupUsedAsMatrix(varGroupTypeIdx)
+  %endif
+  %assign memberId  = FcnSLibCGIRGetVarGroupMemberName(varGroupIdx, varGroupMemberIdx)
+  %% SLibCGIRVarGroupPath doesn't work for non-hierarchical var groups.
+  %% thus we need to generate prefix by ourselves if the input size
+  %% is from root inport.
+  %if LibGetVarGroupCategory(varGroupIdx) == "ExternalOutputSize"
+    %assign identiPath = varGroup.Name + "."
+  %else
+    %assign identiPath =  SLibCGIRVarGroupPath(varGroupIdx,accessSysIdx,TLC_FALSE)
+  %endif
+  %assign identipath = identiPath + memberId
+  %return identipath
+%endfunction %% end SLibGetExternalOutputVarDimsIdentifierFromRecord
+
+%% Function SLibGetStructDWorkIdxForModelRefBlk ================================
+%% Abstract:
+%%   Get the index to the dwork that is structure for the model reference block.
+%%   For model reference block with only fixed-dims signals, there is only one 
+%%   dwork as the packed structure. For model reference block with var-dims output,
+%%   there are extra dworks as shared dimsize dwork
+%%
+%function SLibGetStructDWorkIdxForModelRefBlk(block)
+  %if ISFIELD(block, "StructDWorkIdx")
+    %assign structDWorkIdx = block.StructDWorkIdx
+  %else
+    %assign structDWorkIdx = -1
+    %foreach dworkIdx = block.NumDWork
+      %if LibCGTypeIsUnknown(::CompiledModel.DWorks.DWork[block.DWork[dworkIdx].FirstRootIdx].CGTypeIdx)
+        %assign structDWorkIdx = dworkIdx
+        %break
+      %endif
+    %endforeach
+    %addtorecord block StructDWorkIdx structDWorkIdx
+  %endif
+  %return structDWorkIdx
+%endfunction %% end SLibGetStructDWorkIdxForModelRefBlk
+
+
+%% Function FcnAddNeededCanDimSizeDWForCanInp ==================================
+%% Abstract:
+%%   Add canonical dimsize dwork for canonical input to the argument list.
+%%   This is called by FcnAddNeededParameters
+%%
+%function FcnAddNeededCanDimSizeDWForCanInp(sysFcn, sysIdx, idx, ...
+  skipCanDWork) void
+
+  %assign ci = CanonicalInputArgDef[idx]
+  %assign skipThisArg = 0
+  %if IDNUM(ci.SignalSrc[0])[0] == "F"
+    %assign skipThisArg = 1
+  %endif	
+  %if IDNUM(ci.SignalSrc[0])[0] == "L"
+    %if (sysFcn != "Output" && sysFcn!= "Update" &&...
+      sysFcn!= "RootUpdate" && sysFcn!= "OutputUpdate")
+      %assign skipThisArg = 1
+    %endif
+  %endif
+  %if skipThisArg==0   
+    %if SLibGetCanIOIsVarDims(ci)
+      %assign cdwIdx = SLibGetCanDimSizeDWIdxForArg(ci)
+      %if !skipCanDWork[cdwIdx]
+        %assign cdw = CanonicalDWorkArgDef[cdwIdx]
+        %assign cTID = System[sysIdx].CurrentTID
+        %assign isRG = SLibSystemFcnPeriodicRateGrouping(System[sysIdx], sysFcn)    
+        %if SysFcnArgNeeded(sysFcn, cdw, cTID, isRG)
+          %assign identi   = LibGetRecordIdentifier(cdw)
+          %assign dwRec    = ::CompiledModel.DWorks.DWork[cdw.FirstSignalSrc]
+          %assign dwWidth  = SLibDWorkWidth(dwRec)
+          %assign dataType = "const " + SLibGetRecordDataTypeName(dwRec, "") + " "
+          %if dwWidth > 1
+            %assign argDef = identi + "[%<dwWidth>]"
+          %else
+            %assign argDef = "*" + identi
+          %endif
+          %<FcnAddParameter(dataType, argDef)>
+        %endif %% if SysFcnArgNeeded
+      %endif %% if !skipCanDWork
+    %endif %% if ISFIELD
+  %endif
+%endfunction %% end FcnAddNeededCanDimSizeDWForCanInp
+
+
+%% Function FcnAddNeededCanDimSizeDWForCanOut ==================================
+%% Abstract:
+%%   Add canonical dimsize dwork for canonical output to the argument list.
+%%   This is called by FcnAddNeededParameters
+%%
+%function FcnAddNeededCanDimSizeDWForCanOut(sysFcn, sysIdx, idx, ...
+  skipCanDWork) void
+  
+  %assign co = CanonicalOutputArgDef[idx]
+  %if SLibGetCanIOIsVarDims(co)    
+    %assign cdwIdx = SLibGetCanDimSizeDWIdxForArg(co)
+    %if !skipCanDWork[cdwIdx]
+      %assign cdw = CanonicalDWorkArgDef[cdwIdx]
+      %assign cTID = System[sysIdx].CurrentTID
+      %assign isRG = SLibSystemFcnPeriodicRateGrouping(System[sysIdx], sysFcn)
+      %if SysFcnArgNeeded(sysFcn, cdw, cTID, isRG)
+        %assign identi   = LibGetRecordIdentifier(cdw)
+        %assign dwRec    = ::CompiledModel.DWorks.DWork[cdw.FirstSignalSrc]
+        %assign dwWidth  = SLibDWorkWidth(dwRec)
+        %assign dataType = SLibGetRecordDataTypeName(dwRec, "") + " "
+        %if dwWidth > 1
+          %assign argDef = identi + "[%<dwWidth>]"
+        %else
+          %assign argDef = "*" + identi
+        %endif
+        %<FcnAddParameter(dataType, argDef)>
+      %endif %% if SysFcnArgNeeded
+    %endif %% if !skipCanDWork
+  %endif %% 
+%endfunction %% end FcnAddNeededCanDimSizeDWForCanOut
+
+
+%function FcnGetModelRefDWork(aArgClass, aCanIOIdx, aCanDWorkIdx) void
+  %% call site
+  %assign canDWork = CanonicalDWorkArgDef[aCanDWorkIdx]
+  %assign dwIdx    = canDWork.FirstSignalSrc %% global idx
+  %assign dwRec    = ::CompiledModel.DWorks.DWork[dwIdx]
+  %assign dwWidth  = SLibDWorkWidth(dwRec)
+  %if dwWidth == 1
+    %return "&" + aArgClass + "VarDims_%<aCanIOIdx>"
+  %else
+    %return aArgClass + "VarDims_%<aCanIOIdx>"
+  %endif
+%endfunction
+
+%% Function FcnGetAdditionalCanDimSizeDWForCanInp ==============================
+%% Abstract:
+%%   Add canonical dimsize dwork for canonical input to the argument list.
+%%   This is called by FcnGetAdditionalArgs
+%%
+%function FcnGetAdditionalCanDimSizeDWForCanInp(sysFcn, sysIdx, ...
+  accessSysIdx, callSiteIdx, idx, comma, args, skipCanDWork) void
+  
+  %if SLibGetCanIOIsVarDims(CanonicalInputArgDef[idx])
+    %assign cTID = System[sysIdx].CurrentTID
+    %assign isRG = SLibSystemFcnPeriodicRateGrouping(System[sysIdx], sysFcn)
+    %assign candIdx = SLibGetCanDimSizeDWIdxForArg(CanonicalInputArgDef[idx])
+    %if !skipCanDWork[candIdx] && ...
+      SysFcnArgNeeded(sysFcn, CanonicalDWorkArgDef[candIdx], cTID, isRG)
+      %%
+      %% We need to be able to access data in the system that
+      %% is writing out this function-call (cs[0].  Previously this was
+      %% %with System[accessSysIdx], but the HStructDeclSystem for
+      %% accessSysIdx and cs[0] is always the same.
+      %%
+      %assign cs = System[sysIdx].CallSites[callSiteIdx]      
+      %assert System[cs[0]].HStructDeclSystemIdx == ...
+        System[accessSysIdx].HStructDeclSystemIdx
+      %with System[cs[0]]
+        %assign ssBlk = System[cs[2]].Block[cs[3]]
+        %with ssBlk %% subsystem block
+          %assign skipThisArg = 0
+          %assign ci = System[sysIdx].Interface.CanonicalInputArgDef[idx]
+          %if IDNUM(ci.SignalSrc[0])[0] == "F"
+            %assign skipThisArg = 1
+          %endif	
+          %if IDNUM(ci.SignalSrc[0])[0] == "L"
+            %if (sysFcn != "Output" && sysFcn!= "Update" &&...
+              sysFcn!= "RootUpdate" && sysFcn!= "OutputUpdate")
+              %assign skipThisArg = 1
+            %endif
+          %endif
+          %if !skipThisArg
+            %%
+            %% genModelRef
+            %%
+            %if IsModelReferenceTarget() && accessSysIdx == NumSystems-1
+              %assign args = args + comma + ...
+                FcnGetModelRefDWork("In", idx, candIdx)
+            %else
+              %assign          ci = CallSiteInfo.CanonicalInputArg[idx]
+              %assign       idNum = IDNUM(ci.SignalSrc[0])
+              %assign   interface = System[System[cs[0]].HStructDeclSystemIdx].Interface
+              %assign canInputArg = interface.CanonicalInputArgDef[idNum[1]]
+              %assign args = args + comma + LibGetRecordIdentifier(interface.CanonicalDWorkArgDef[candIdx])
+              %<SLibAccessArgHelper(interface.CanonicalDWorkArgDef[candIdx],"",...
+                System[accessSysIdx].CurrentTID)>
+            %endif
+            %assign comma = ", "
+          %endif
+        %endwith %% subsystem block
+      %endwith %% System[sysIdx]
+    %endif
+  %endif
+  
+  %return ["%<comma>", "%<args>"]  
+%endfunction %% end FcnGetAdditionalCanDimSizeDWForCanInp
+
+
+%% Function FcnGetAdditionalCanDimSizeDWForCanOut ==============================
+%% Abstract:
+%%   Add canonical dimsize dwork for canonical output to the argument list.
+%%   This is called by FcnGetAdditionalArgs
+%%
+%function FcnGetAdditionalCanDimSizeDWForCanOut(sysFcn, sysIdx, ...
+  accessSysIdx, callSiteIdx, idx, comma, args, skipCanDWork) void
+  
+  %if SLibGetCanIOIsVarDims(CanonicalOutputArgDef[idx])
+    %assign cTID = System[sysIdx].CurrentTID
+    %assign isRG = SLibSystemFcnPeriodicRateGrouping(System[sysIdx], sysFcn)
+    %assign candIdx = SLibGetCanDimSizeDWIdxForArg(CanonicalOutputArgDef[idx])
+    %if !skipCanDWork[candIdx] && ...
+      SysFcnArgNeeded(sysFcn, CanonicalDWorkArgDef[candIdx], cTID, isRG)
+      %%
+      %% We need to be able to access data in the system that
+      %% is writing out this function-call (cs[0].  Previously this was
+      %% %with System[accessSysIdx], but the HStructDeclSystem for
+      %% accessSysIdx and cs[0] is always the same.
+      %%
+      %assign cs = System[sysIdx].CallSites[callSiteIdx]    
+      %assert System[cs[0]].HStructDeclSystemIdx == ...
+        System[accessSysIdx].HStructDeclSystemIdx
+      %with System[cs[0]]
+        %assign ssBlk = System[cs[2]].Block[cs[3]]
+        %with ssBlk %% subsystem block
+          %%
+          %% getModelRef
+          %%
+          %if IsModelReferenceTarget() && accessSysIdx == NumSystems-1
+            %assign args = args + comma + ...
+              FcnGetModelRefDWork("Out", idx, candIdx)
+          %else
+            %assign interface = System[System[cs[0]].HStructDeclSystemIdx].Interface
+            %assign idNum = IDNUM(CallSiteInfo.CanonicalDWorkArg[candIdx].SignalSrc)
+            %assert(ISEQUAL(idNum[0], "dp"))
+            %assign cdIdx = idNum[1]
+            %assign args = args + comma + LibGetRecordIdentifier(interface.CanonicalDWorkArgDef[cdIdx])
+            %<SLibAccessArgHelper(interface.CanonicalDWorkArgDef[cdIdx],"",...
+              System[accessSysIdx].CurrentTID)>
+          %endif
+          %assign comma = ", "
+        %endwith
+      %endwith
+    %endif
+  %endif
+  
+  %return ["%<comma>", "%<args>"]
+%endfunction %% end FcnGetAdditionalCanDimSizeDWForCanOut
+
+
+%% Function SLibDumpSfcnInpDimsMode ==========================================
+%% Abstract:
+%%   Set dimensions model of model reference s-function block input
+%%
+%function SLibDumpSfcnInpDimsMode(idx)
+  %if SLibGetExternalIOIsVarDims(ExternalInput[idx]) && ...
+    !LibCGTypeIsStruct(ExternalInput[idx].CGTypeIdx)
+    %% Function SLibGetExternalIOIsVarDims only checks if the record
+    %% contains canonical dimsize dwork index. For bus signal with vardims
+    %% element(s), the dimensions mode of the signal should be fixed rather
+    %% than variable.
+    %return "ssSetInputPortDimensionsMode(S, %<idx>, VARIABLE_DIMS_MODE);"
+  %else
+    %return "ssSetInputPortDimensionsMode(S, %<idx>, FIXED_DIMS_MODE);"
+  %endif
+%endfunction %% end SLibDumpSfcnInpDimsMode
+
+
+%% Function SLibDumpSfcnOutDimsMode ==========================================
+%% Abstract:
+%%   Set dimensions model of model reference s-function block output
+%%
+%function SLibDumpSfcnOutDimsMode(idx)
+  %if SLibGetExternalIOIsVarDims(ExternalOutput[idx]) && ...
+    !LibCGTypeIsStruct(ExternalOutput[idx].CGTypeIdx)
+    %% Function SLibGetExternalIOIsVarDims only checks if the record
+    %% contains canonical dimsize dwork index. For bus signal with vardims
+    %% element(s), the dimensions mode of the signal should be fixed rather
+    %% than variable.
+    %return "ssSetOutputPortDimensionsMode(S, %<idx>, VARIABLE_DIMS_MODE);"
+  %else
+    %return "ssSetOutputPortDimensionsMode(S, %<idx>, FIXED_DIMS_MODE);"
+  %endif
+%endfunction %% end SLibDumpSfcnOutDimsMode
+
+%function SLibModelHasVarDimsInput()
+  %assign hasVarDimsInp = TLC_FALSE
+  %with ExternalInputs
+  %foreach idx = NumExternalInputs
+    %if SLibGetExternalIOIsVarDims(ExternalInput[idx])
+      %assign hasVarDimsInp = TLC_TRUE
+      %break
+    %endif
+  %endforeach
+  %endwith
+  
+  %return hasVarDimsInp
+%endfunction
+
+%function SLibModelHasVarDimsOutput()
+  %assign hasVarDimsOut = TLC_FALSE
+  %with ExternalOutputs
+  %foreach idx = NumExternalOutputs
+    %if SLibGetExternalIOIsVarDims(ExternalOutput[idx])
+      %assign hasVarDimsOut = TLC_TRUE
+      %break
+    %endif
+  %endforeach
+  %endwith
+  
+  %return hasVarDimsOut
+%endfunction
+
+%function SLibModelOutputSizeDependOnlyInputSize()
+  %return SLibModelHasVarDimsInput() && ...
+    ISFIELD(::CompiledModel, "SignalSizeComputeType") && ...
+    ISEQUAL(::CompiledModel.SignalSizeComputeType, "FromInputSize")
+%endfunction
+ 
+
+%function GenerateModelRefSetDimsCall(subsys, type) void
+  %assign fcnInfo = LibGetFcnInfo(subsys, type, subsys.CurrentTID)
+  %if type == "SetDims"
+    %return LibGenSubsystemFcnCall(["outIdx", "ruleIdx"], fcnInfo, SystemIdx, subsys.SystemIdx, 0)
+  %else
+    %return LibGenSubsystemFcnCall([], fcnInfo, SystemIdx, subsys.SystemIdx, 0)
+  %endif
+%endfunction
+
+%function WriteModelrefSFunctionVarDimsSetDimsMethods(type) Output
+
+  %if SLibModelOutputSizeDependOnlyInputSize()
+    %assign baseSysIdx = GetBaseSystemIdx()
+    %assign fcnEmpty = TLC_FALSE
+    
+    %if type == "SetDims" && !SLibModelHasVarDimsOutput() || ...
+      type == "FinalizeDims" && LibSystemFcnIsEmpty(System[baseSysIdx], "FinalizeDims")
+      %assign fcnEmpty = TLC_TRUE
+    %endif
+
+    %if !fcnEmpty
+      %assign fcnReturns = "static void"
+      %if type == "SetDims" 
+        %assign fcnName = "mdlSetOutputDimsRuleFcn"
+        %assign fcnParams = "SimStruct *S, int outIdx, int ruleIdx"
+      %else
+        %assert type == "FinalizeDims"
+        %assign fcnName = "mdlFinalizeDimsFcn"
+        %assign fcnParams = "SimStruct *S"
+      %endif
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+        Category "model"; GeneratedBy "modelrefvardimsutil.tlc"; Type "FinalizeDims"}
+      %<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<fcnReturns> %<fcnName>(%<fcnParams>)
+
+      %with System[baseSysIdx]
+      {
+        /* call to reusable function */
+        %with Interface
+          %foreach argIdx=NumCanonicalOutputArgDefs
+            %if SLibGetArgIsVarDims(CanonicalOutputArgDef[argIdx])
+              %assign idx = CanonicalOutputArgDef[argIdx].RootOutputIdx
+              %assign co = CanonicalOutputArgDef[argIdx]
+              %assign dataType = SLibGetRecordDataTypeName(co, "")
+              %<dataType> *OutPort_%<argIdx> = ...
+                (%<dataType> *) ...
+                ssGetOutputPortSignal(S, %<idx>);
+            %endif
+          %endforeach
+          %assign vardimsDeclInit = CommonDeclarationAndInitCanIOVarDims(TLC_FALSE, "", 0)
+          %assign hasDwork = %<ModelrefBlockNeedsDwork()>
+          %if hasDwork
+            %assert !IsModelRefScalableBuild()
+            %<tsysMdlrefDWorkType> *dw = (%<tsysMdlrefDWorkType> *) ssGetDWork(S, 0);
+          %endif
+        %endwith
+      %endwith
+      %<vardimsDeclInit[0]> \
+      %<vardimsDeclInit[1]> \
+      %with System[NumSystems-1]
+        %assign subsys = System[NumSystems-2]
+        %<GenerateModelRefSetDimsCall(subsys, type)> \
+      %endwith
+      %assign baseSysIdx = GetBaseSystemIdx()
+      %assign cTID = System[baseSysIdx].CurrentTID
+      %assign isRG = SLibSystemFcnPeriodicRateGrouping(System[baseSysIdx], type)
+      %<SLibGenOutportCurrentDimsWrites(type, cTID, isRG)>
+    }
+    %endif
+  %endif
+  
+%endfunction
+
+
+%% Function: GetInputCurrentDimensions ==============================================================
+%% Abstract:
+%%   Dump the code to get the current input dimensions. The function recursively
+%%   calls itself for bus signal with vardims element(s) whose current size is
+%%   stored in a STRUCT
+%%
+%function GetInputCurrentDimensions(cgTypeId, dst, inpIdx, startOffset) Output
+  %assign eOffset = startOffset
+  %with CGTypes
+    %if LibCGTypeIsStruct(cgTypeId)
+      %% Current size is stored in a struct
+      %foreach idxE = LibCGTypeNumMembers(cgTypeId)
+        %assign eName = LibCGTypeMemberName(cgTypeId, idxE)
+        %assign eDTypeId = LibCGTypeMemberCGTypeIdx(cgTypeId, idxE)
+        %assign eOffset = %<GetInputCurrentDimensions(eDTypeId, dst+"."+eName, inpIdx, eOffset)>
+      %endforeach
+    %else
+      %if LibCGTypeIsMatrix(cgTypeId)
+        %% Current size is stored in an array
+        %assign eWidth = LibCGTypeWidth(cgTypeId)
+        %assign dataType = CGType[LibCGTypeBaseIndex(cgTypeId)].Name
+        %foreach dimIdx = eWidth
+          %<dst>[%<dimIdx>] = ...
+            (%<dataType>)ssGetCurrentInputPortDimensions(S, %<inpIdx>, %<eOffset>);
+          %assign eOffset = eOffset + 1
+        %endforeach
+      %else
+        %% Current size is a scalar of built-in type
+        %assign dataType = CGType[cgTypeId].Name
+        %<dst> = ...
+          (%<dataType>)ssGetCurrentInputPortDimensions(S, %<inpIdx>, %<eOffset>);
+        %assign eOffset = eOffset + 1
+      %endif
+    %endif
+  %endwith
+  
+  %return %<eOffset>
+%endfunction
+
+%% Function: GetOutputCurrentDimensions ==============================================================
+%% Abstract:
+%%   Dump the code to get the current output dimensions. The function recursively
+%%   calls itself for bus signal with vardims element(s) whose current size is
+%%   stored in a STRUCT
+%%
+%function GetOutputCurrentDimensions(cgTypeId, dst, outIdx, startOffset) Output
+  %assign eOffset = startOffset
+  %with CGTypes
+    %if LibCGTypeIsStruct(cgTypeId)
+      %% Current size is stored in a struct
+      %foreach idxE = LibCGTypeNumMembers(cgTypeId)
+        %assign eName = LibCGTypeMemberName(cgTypeId, idxE)
+        %assign eDTypeId = LibCGTypeMemberCGTypeIdx(cgTypeId, idxE)
+        %assign eOffset = %<GetOutputCurrentDimensions(eDTypeId, dst+"."+eName, outIdx, eOffset)>
+      %endforeach
+    %else
+      %if LibCGTypeIsMatrix(cgTypeId)
+        %% Current size is stored in an array
+        %assign eWidth = LibCGTypeWidth(cgTypeId)
+        %assign dataType = CGType[LibCGTypeBaseIndex(cgTypeId)].Name
+        %foreach dimIdx = eWidth
+          %<dst>[%<dimIdx>] = ...
+            (%<dataType>)ssGetCurrentOutputPortDimensions(S, %<outIdx>, %<eOffset>);
+          %assign eOffset = eOffset + 1
+        %endforeach
+      %else
+        %% Current size is a scalar of built-in type
+        %assign dataType = CGType[cgTypeId].Name
+        %<dst> = ...
+          (%<dataType>)ssGetCurrentOutputPortDimensions(S, %<outIdx>, %<eOffset>);
+        %assign eOffset = eOffset + 1
+      %endif
+    %endif
+  %endwith
+  
+  %return %<eOffset>
+%endfunction
+
+%% Function CommonDeclarationAndInitCanIOVarDims ==========================================
+%% Abstract:
+%%   Declare the local arrays for run-time dimension information of vardims input
+%%   and output. Initialize the local arrays for vardims input(s). 
+%%   Note: Because the data type for run-time dimension in the generated code is 
+%%   int32 and it is int in Simulink, we cannot use pointer to point to the vardims
+%%   buffer in Simulink. This is different from how we handle canonical IO.
+%%
+%function CommonDeclarationAndInitCanIOVarDims(checkAccess, tid, isPeriodicRateGrouping)
+
+  %assign ioVarDimsDeclBuffer = ""
+  %assign ioVarDimsInitBuffer = ""
+  
+  %assign inportVarDimsNamePrefix = "InVarDims_"
+  %assign outportVarDimsNamePrefix = "OutVarDims_"
+  %assign hasVarDimsIO = TLC_FALSE
+  
+  %openfile ioVarDimsDeclBuffer
+  %foreach argIdx=NumCanonicalInputArgDefs
+    %assign ci = CanonicalInputArgDef[argIdx]
+    %if SLibGetCanIOIsVarDims(ci)
+      %assign cdIdx    = SLibGetCanDimSizeDWIdxForArg(ci)
+      %assign canDWork = CanonicalDWorkArgDef[cdIdx]
+      %if !checkAccess || FcnArgNeeded(canDWork, tid, isPeriodicRateGrouping)
+        %assign inputPortInfo = ci.SignalSrc
+        %assign u_str_idx     = IDNUM(inputPortInfo[0])
+        %assign u_idx         = u_str_idx[1]
+        %assign dwIdx         = canDWork.FirstSignalSrc
+        %assign dwRec         = DWorks.DWork[dwIdx]
+        %assign dataType      = SLibGetRecordDataTypeName(dwRec, "")
+        %assign dwWidth       = SLibDWorkWidth(dwRec)
+        %if dwWidth == 1
+          %<dataType> %<inportVarDimsNamePrefix>%<argIdx>;
+        %else
+          %<dataType> %<inportVarDimsNamePrefix>%<argIdx>[%<dwWidth>];
+        %endif
+      %endif
+      %assign hasVarDimsIO = TLC_TRUE
+    %endif
+  %endforeach
+  
+  %%
+  %% The var-dims array should also be initialized because the reusable
+  %% function does not always update the output var-dims at each call
+  %foreach argIdx=NumCanonicalOutputArgDefs
+    %assign co = CanonicalOutputArgDef[argIdx]
+    %if SLibGetCanIOIsVarDims(co)
+      %assign cdwIdx   = SLibGetCanDimSizeDWIdxForArg(co)
+      %assign canDWork = CanonicalDWorkArgDef[cdwIdx]
+      %if !checkAccess || FcnArgNeeded(canDWork, tid, isPeriodicRateGrouping)
+        %assign idx      = co.RootOutputIdx
+        %assign dwIdx    = canDWork.FirstSignalSrc
+        %assign dwRec    = DWorks.DWork[dwIdx]
+        %assign dataType = SLibGetRecordDataTypeName(dwRec, "")
+        %assign dwWidth  = SLibDWorkWidth(dwRec)
+        %if dwWidth == 1
+          %<dataType> %<outportVarDimsNamePrefix>%<argIdx>;
+        %else
+          %<dataType> %<outportVarDimsNamePrefix>%<argIdx>[%<dwWidth>];
+        %endif
+      %endif
+      %assign hasVarDimsIO = TLC_TRUE
+    %endif
+  %endforeach
+  
+  %%
+  %if hasVarDimsIO
+    %openfile ioVarDimsInitBuffer
+    %assign hasConstOutput = MdlRefHasConstantOutput()
+    %assign asyncTID = LibAsynchronousTriggeredTID(tid)
+    %if hasConstOutput && ...
+      ((NumCanonicalInputArgDefs > 0) || (NumCanonicalOutputArgDefs > 0)) && ...
+      (::BlockFcn == "Output" || ::BlockFcn == "OutputUpdate") && ...
+      !asyncTID
+      %% g738207: When executing modelref S-function's Const Output function,
+      %% the current port dimensions (vardims) need not be accessed since
+      %% vardims signals can never run at constant rate and do not need to
+      %% be run during Const Output. tid is passed in as empty when invoked
+      %% during construction of mdlOutputs.
+      
+      if (%<::CompiledModel.GlobalScope.tTID> != CONSTANT_TID) {
+      %endif
+      %foreach argIdx=NumCanonicalInputArgDefs
+        %assign ci = CanonicalInputArgDef[argIdx]
+        %if SLibGetCanIOIsVarDims(ci)
+          %assign cdwIdx   = SLibGetCanDimSizeDWIdxForArg(ci)
+          %assign canDWork = CanonicalDWorkArgDef[cdwIdx]
+          %if !checkAccess || FcnArgNeeded(canDWork, tid, isPeriodicRateGrouping)
+            %assign inputPortInfo = ci.SignalSrc
+            %assign u_str_idx     = IDNUM(inputPortInfo[0])
+            %assign u_idx         = u_str_idx[1]
+            %assign dwIdx         = canDWork.FirstSignalSrc
+            %assign dwRec         = DWorks.DWork[dwIdx]
+            %assign dataType      = SLibGetRecordDataTypeName(dwRec, "")
+            %assign dwWidth  = SLibDWorkWidth(dwRec)
+            /* Get current dimensions of input port %<u_idx> */
+            %assign sizeDWName = "%<inportVarDimsNamePrefix>%<argIdx>"
+            %assign eOffset = %<GetInputCurrentDimensions(DWorks.DWork[dwIdx].CGTypeIdx, sizeDWName, u_idx, 0)>
+          %endif
+        %endif
+      %endforeach
+      %foreach argIdx=NumCanonicalOutputArgDefs
+        %assign co = CanonicalOutputArgDef[argIdx]
+        %if SLibGetCanIOIsVarDims(co)
+          %assign cdwIdx   = SLibGetCanDimSizeDWIdxForArg(co)
+          %assign canDWork = CanonicalDWorkArgDef[cdwIdx]
+          %if !checkAccess || FcnArgNeeded(canDWork, tid, isPeriodicRateGrouping)
+            %assign idx      = co.RootOutputIdx
+            %assign dwIdx    = canDWork.FirstSignalSrc
+            %assign dwRec    = DWorks.DWork[dwIdx]
+            %assign dataType = SLibGetRecordDataTypeName(dwRec, "")
+            %assign dwWidth  = SLibDWorkWidth(dwRec)
+            /* Get current dimensions of output port %<idx> */
+            %assign sizeDWName = "%<outportVarDimsNamePrefix>%<argIdx>"
+            %assign eOffset = %<GetOutputCurrentDimensions(DWorks.DWork[dwIdx].CGTypeIdx, sizeDWName, idx, 0)>
+          %endif
+        %endif
+      %endforeach
+      %if hasConstOutput && ...
+        ((NumCanonicalInputArgDefs > 0) || (NumCanonicalOutputArgDefs > 0)) && ...
+        (::BlockFcn == "Output" || ::BlockFcn == "OutputUpdate") && ...
+        !asyncTID
+        %% end if(tid != CONSTANT_TID)
+      }
+    %endif
+    %closefile ioVarDimsInitBuffer
+  %endif
+  %closefile  ioVarDimsDeclBuffer
+  
+  %return ["%<ioVarDimsDeclBuffer>", "%<ioVarDimsInitBuffer>"]
+  
+%endfunction %% end CommonDeclarationAndInitCanIOVarDims
+
+
+%% Function GetBlockInputCanDimSizeDWInterface ================================
+%% Abstract:
+%%   Get the canonical dimsize dwork information for each input
+%%   for the block interface
+%%
+%function GetBlockInputCanDimSizeDWInterface(sysIdx, sysFcn, tid)
+  %assign  inDWStr = ""
+  
+  %assign thisSystem = System[sysIdx]
+  %assign currentTID     = tid
+  %assign isPeriodicRateGrouping = SLibSystemFcnPeriodicRateGrouping(thisSystem, sysFcn)
+  
+  %assign  comma = ""
+  %assign  inCounter = 0
+  %assign  numInputs = ExternalInputs.NumExternalInputs
+  
+  %foreach argIdx = NumCanonicalInputArgDefs
+    %assign idx = SLibGetModelRefRootInputIdx(sysIdx, argIdx)
+    
+    %% fill 0 for unused inputs
+    %assign numZeroToAdd = idx - inCounter
+    %if  numZeroToAdd > 0
+      %assign inDWStr = AppendZeroToString(inDWStr, comma, numZeroToAdd)
+      %assign comma   = ", "
+    %endif
+    %assign inCounter = idx
+    
+    %if SLibGetCanIOIsVarDims(CanonicalInputArgDef[argIdx]) && ...
+      FcnArgNeeded(CanonicalDWorkArgDef[SLibGetCanDimSizeDWIdxForArg(CanonicalInputArgDef[argIdx])], ...
+      currentTID,isPeriodicRateGrouping)
+      %assign inDWStr = "%<inDWStr>%<comma>1"
+    %else
+      %assign inDWStr = "%<inDWStr>%<comma>0"
+    %endif
+    
+    %assign comma = ", "
+    %assign inCounter = inCounter + 1
+  %endforeach
+  
+  %assign numZeroToAdd = numInputs - inCounter
+  %if  numZeroToAdd > 0
+    %assign inDWStr = AppendZeroToString(inDWStr, comma, numZeroToAdd)
+    %assign comma   = ", "
+  %endif
+  %assign inCounter = numInputs
+  
+  %return "%<inDWStr>"
+  
+%endfunction %% end GetBlockInputCanDimSizeDWInterface
+
+
+%% Function GetBlockOutputCanDimSizeDWInterface ================================
+%% Abstract:
+%%   Get the canonical dimsize dwork information for each output 
+%%   for the block interface
+%%
+%function GetBlockOutputCanDimSizeDWInterface(sysIdx, sysFcn, tid)
+  %assign  outDWStr = ""
+  
+  %assign thisSystem = System[sysIdx]
+  %assign currentTID     = tid
+  %assign isPeriodicRateGrouping = SLibSystemFcnPeriodicRateGrouping(thisSystem, sysFcn)
+  
+  %assign comma  = ""
+  %assign outCounter = 0
+  %assign  numOutputs = ExternalOutputs.NumExternalOutputs
+  
+  %foreach argIdx = NumCanonicalOutputArgDefs
+    %assign idx = SLibGetModelRefRootOutputIdx(sysIdx, argIdx)
+    
+    %% fill 0 for unused outputs
+    %assign numZeroToAdd = idx - outCounter
+    %if  numZeroToAdd > 0
+      %assign outDWStr = AppendZeroToString(outDWStr, comma, numZeroToAdd)
+      %assign comma    = ", "
+    %endif
+    %assign outCounter = idx
+    
+    %if SLibGetCanIOIsVarDims(CanonicalOutputArgDef[argIdx]) && ...
+      FcnArgNeeded(CanonicalDWorkArgDef[SLibGetCanDimSizeDWIdxForArg(CanonicalOutputArgDef[argIdx])], ...
+      currentTID,isPeriodicRateGrouping)
+      %assign outDWStr = "%<outDWStr>%<comma>1"
+    %else
+      %assign outDWStr = "%<outDWStr>%<comma>0"
+    %endif
+    
+    %assign comma = ", "
+    %assign outCounter = outCounter + 1
+  %endforeach
+  
+  %assign numZeroToAdd = numOutputs - outCounter
+  %if  numZeroToAdd > 0
+    %assign outDWStr = AppendZeroToString(outDWStr, comma, numZeroToAdd)
+    %assign comma    = ", "
+  %endif
+  %assign outCounter = numOutputs
+
+  %return "%<outDWStr>"
+  
+%endfunction %% end GetBlockOutputCanDimSizeDWInterface
+
+
+%% Function AppendModelReferenceRegFcnInputCanDimSizeDWArgs =====================
+%% Abstract:
+%%   Add canonical dimsize dwork for canonical input to the argument list.
+%%   This is called by SLibModelReferenceRegFcnArgs
+%%
+%function AppendModelReferenceRegFcnInputCanDimSizeDWArgs(idx, currentTID, ...
+  isPeriodicRateGrouping, recArgs)
+  %if SLibGetCanIOIsVarDims(CanonicalInputArgDef[idx])
+    %assign ci = CanonicalInputArgDef[idx]
+    %assign cdwIdx   = SLibGetCanDimSizeDWIdxForArg(ci)
+    %assign canDWork = CanonicalDWorkArgDef[cdwIdx]
+    %if FcnArgNeeded(canDWork, currentTID, isPeriodicRateGrouping)
+      %assign dwIdx    = canDWork.FirstSignalSrc %% global idx
+      %assign dwRec    = ::CompiledModel.DWorks.DWork[dwIdx]
+      %assign dwWidth  = SLibDWorkWidth(dwRec)
+      %assign identi   = LibGetRecordIdentifier(canDWork)
+      %assign dataType = SLibGetRecordDataTypeName(dwRec, "")
+      %if dwWidth > 1
+        %assign argDef   = "const " + dataType + " " + identi + "[%<dwWidth>]"
+      %else
+        %assign argDef   = "const " + dataType + " *" + identi
+      %endif
+      %assign recArgs  = recArgs  +  argDef
+    %endif
+  %endif
+  
+  %return recArgs
+%endfunction %% end AppendModelReferenceRegFcnInputCanDimSizeDWArgs
+
+
+%% Function AppendModelReferenceRegFcnOutputCanDimSizeDWArgs ====================
+%% Abstract:
+%%   Add canonical dimsize dwork for canonical output to the argument list.
+%%   This is called by SLibModelReferenceRegFcnArgs
+%%
+%function AppendModelReferenceRegFcnOutputCanDimSizeDWArgs(idx, currentTID, ...
+  isPeriodicRateGrouping, recArgs)
+  %if SLibGetCanIOIsVarDims(CanonicalOutputArgDef[idx])
+    %assign co = CanonicalOutputArgDef[idx]
+    %assign cdwIdx   = SLibGetCanDimSizeDWIdxForArg(co)
+    %assign canDWork = CanonicalDWorkArgDef[cdwIdx]
+    %if FcnArgNeeded(canDWork, currentTID, isPeriodicRateGrouping)
+      %assign dwIdx    = canDWork.FirstSignalSrc %% global idx
+      %assign dwRec    = ::CompiledModel.DWorks.DWork[dwIdx]
+      %assign dwWidth  = SLibDWorkWidth(dwRec)
+      %assign identi   = LibGetRecordIdentifier(canDWork)
+      %assign dataType = SLibGetRecordDataTypeName(dwRec, "")
+      %if dwWidth > 1
+        %assign argDef   = dataType + " " + identi + "[%<dwWidth>]"
+      %else
+        %assign argDef   = dataType + " *" + identi
+      %endif
+    %endif
+  %endif
+  
+  %return recArgs
+%endfunction %% end AppendModelReferenceRegFcnOutputCanDimSizeDWArgs
+
+%function SLibGetDimsFromIF(block, portIdx, kind) void
+  %return SLibInvokeTLCInterface(block, kind, portIdx, 0, TLC_FALSE, ...
+    "", "", 0, "")
+%endfunction
+
+%% Function: SLibGetInputCanDimSizeDWForFunctionStr ============================
+%% Abstract:
+%%   Add canonical dimsize dwork for canonical input to the argument list.
+%%   This is called by GetFunctionStr
+%%
+%function SLibGetInputCanDimSizeDWForFunctionStr(block, portIdx, fcnInfo, ...
+  sysFcnName) void
+  %assign arg = []  
+  %assign canInDWorkInfo = fcnInfo.InDimSizeDW
+  %if canInDWorkInfo[portIdx] > 0
+    %<SLibGetDimsFromIF(block, portIdx, "InputDims")>
+    %assign baseSystemIdx = GetBaseSystemIdx()
+    %assign baseSystem = ::CompiledModel.System[baseSystemIdx]
+    %assign dataPort = block.DataInputPort[portIdx]
+    %assert SLibGetArgIsVarDims(dataPort)
+    %if SLibGetArgUseCanDimSizeDW(dataPort)
+      %assign ownerSysIdx = block.BlockIdx[1]
+      %assign currentTID = ::CompiledModel.System[ownerSysIdx].CurrentTID
+      %assign cdwIdx = SLibGetCanDimSizeDWIdxForArg(dataPort)
+      %if sysFcnName == "RegistrationFcn"
+        %if ISFIELD(baseSystem.Interface,"CanonicalDWorkArgDef")
+          %assign canDWork = baseSystem.Interface.CanonicalDWorkArgDef[cdwIdx]
+          %assign arg = "%<LibGetRecordIdentifier(canDWork)>"
+          %<SLibAccessArgHelper(canDWork, "", currentTID)>
+        %else
+          %assign cdwIdx = dataPort.DimSizeDWorkMR
+          %assign cross = baseSystem.CrossNoArgFcnBound
+          %assign arg = ...
+            "%<SLibGetDimSizeDWorkFullPathForFcnArg(cdwIdx, baseSystemIdx, cross)>"
+          %<SLibAccessArgHelper(baseSystem.Interface.DWorkArgDef,"","")>
+        %endif
+      %else
+        %assign hstructSysIdx = ...
+          ::CompiledModel.System[BlockIdx[1]].HStructDeclSystemIdx
+        %assign interface = ::CompiledModel.System[hstructSysIdx].Interface
+        %assign canDWork  = interface.CanonicalDWorkArgDef[cdwIdx]
+        %if System[BlockIdx[1]].CrossNoArgFcnBound
+          %assign arg = "%<canDWork.GlobalIdentifier>"
+          %<SLibAccessArgHelper(canDWork, "Global", currentTID)>
+        %else
+          %assign arg = "%<LibGetRecordIdentifier(canDWork)>"
+        %endif
+        %<SLibAccessArgHelper(canDWork, "", currentTID)>
+      %endif
+    %else
+      %assert SLibGetArgUseSharedDimSizeDW(dataPort)
+      %assign blkSysIdx = ::CompiledModel.System[BlockIdx[1]].SystemIdx
+      %assign dwIdx = dataPort.DimSizeDWork
+      %assign cross = ::CompiledModel.System[blkSysIdx].CrossNoArgFcnBound
+      %assign arg   = ...
+        "%<SLibGetDimSizeDWorkFullPathForFcnArg(dwIdx, blkSysIdx, cross)>"
+      %if sysFcnName == "RegistrationFcn"
+        %<SLibAccessArgHelper(baseSystem.Interface.DWorkArgDef,"","")>
+      %else
+        %assign hstructSysIdx = ...
+          ::CompiledModel.System[BlockIdx[1]].HStructDeclSystemIdx
+        %assign hstructSys = ::CompiledModel.System[hstructSysIdx]
+        %assign dwArgDef = hstructSys.Interface.DWorkArgDef
+        %<SLibAccessArgHelper(dwArgDef, "", hstructSys.CurrentTID)>
+      %endif
+    %endif
+  %endif
+  %return arg
+%endfunction %% end AppendInputCanDimSizeDWForFunctionStr
+
+
+%% Function SLibGetOutputCanDimSizeDWForFunctionStr ============================
+%% Abstract:
+%%   Add canonical dimsize dwork for canonical output to the argument list.
+%%   This is called by GetFunctionStr
+%%
+%function SLibGetOutputCanDimSizeDWForFunctionStr(block, portIdx, fcnInfo, ...
+  sysFcnName) void
+  %assign arg = []
+  %assign canOutDWorkInfo = fcnInfo.OutDimSizeDW
+  %if canOutDWorkInfo[portIdx] > 0
+    %<SLibGetDimsFromIF(block, portIdx, "OutputDims")>
+    %assign baseSystemIdx = GetBaseSystemIdx()
+    %assign baseSystem = ::CompiledModel.System[baseSystemIdx]
+    %assign dataPort = block.DataOutputPort[portIdx]
+    %if SLibGetArgUseCanDimSizeDW(dataPort)
+      %assign cdwIdx = SLibGetCanDimSizeDWIdxForArg(dataPort)
+      %if sysFcnName == "RegistrationFcn"
+        %assign canDWork = baseSystem.Interface.CanonicalDWorkArgDef[cdwIdx]
+      %else
+        %assign blkSysIdx = System[BlockIdx[1]].HStructDeclSystemIdx
+        %assign interface = System[blkSysIdx].Interface
+        %assign canDWork  = interface.CanonicalDWorkArgDef[cdwIdx]
+      %endif
+      %assign currentTID = ::CompiledModel.System[BlockIdx[1]].CurrentTID 
+      %if System[BlockIdx[1]].CrossNoArgFcnBound
+        %assign arg = "%<canDWork.GlobalIdentifier>"
+        %<SLibAccessArgHelper(canDWork, "Global", currentTID)>
+      %else
+        %assign arg = "%<LibGetRecordIdentifier(canDWork)>"
+      %endif
+      %<SLibAccessArgHelper(canDWork,"",currentTID)>
+    %elseif SLibGetArgUseSharedDimSizeDW(dataPort)
+      %assign blkSysIdx = ::CompiledModel.System[BlockIdx[1]].SystemIdx
+      %assign cross = ::CompiledModel.System[blkSysIdx].CrossNoArgFcnBound
+      %assign dwIdx = dataPort.DimSizeDWork
+      %assign arg = ...
+        "%<SLibGetDimSizeDWorkFullPathForFcnArg(dwIdx, blkSysIdx, cross)>"
+      %if sysFcnName == "RegistrationFcn"
+        %assign dworkArgDef = baseSystem.Interface.DWorkArgDef
+        %<SLibAccessArgHelper(dworkArgDef, "", currentTID)>
+      %endif
+    %endif
+  %endif
+  %return arg
+%endfunction %% end SLibGetOutputCanDimSizeDWForFunctionStr
+
+
+%% Function: SetOutputCurrentDimensions ========================================
+%% Abstract:
+%%   Dump the code to set the current output dimensions. The function recursively
+%%   calls itself for bus signal with vardims element(s) whose current size is
+%%   stored in a STRUCT
+%%
+%function SetOutputCurrentDimensions(cgTypeId, src, outIdx, startOffset) Output
+  %assign eOffset = startOffset
+  %with CGTypes
+    %if LibCGTypeIsStruct(cgTypeId)
+      %% Current size is stored in a struct
+      %foreach idxE = LibCGTypeNumMembers(cgTypeId)
+        %assign eName = LibCGTypeMemberName(cgTypeId, idxE)
+        %assign eDTypeId = LibCGTypeMemberCGTypeIdx(cgTypeId, idxE)
+        %assign eOffset = %<SetOutputCurrentDimensions(eDTypeId, src+"."+eName, outIdx, eOffset)>
+      %endforeach
+    %else
+      %if LibCGTypeIsMatrix(cgTypeId)
+        %% Current size is stored in an array
+        %assign eWidth = LibCGTypeWidth(cgTypeId)
+        %foreach dimIdx = eWidth
+          ssSetCurrentOutputPortDimensions(S, %<outIdx>, %<eOffset>, (int)%<src>[%<dimIdx>]);
+          %assign eOffset = eOffset + 1
+        %endforeach
+      %else
+        %% Current size is a scalar of built-in type
+        ssSetCurrentOutputPortDimensions(S, %<outIdx>, %<eOffset>, (int)%<src>);
+        %assign eOffset = eOffset + 1
+      %endif
+    %endif
+  %endwith
+  
+  %return %<eOffset>
+%endfunction
+
+%% Function: SLibGenOutportCurrentDimsWrites ===========================================
+%% Abstract:
+%%   Generates the output port current dimension write code.
+%%
+%function SLibGenOutportCurrentDimsWrites(sysFcn, cTID, isRG) Output
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %with System[baseSysIdx]
+    %with Interface
+      %foreach argIdx = NumCanonicalOutputArgDefs
+        %% If the canonical output is vardims and the vardims local array
+        %% is passed to the model reference reusable function, set the
+        %% current output dimension based on the values in the vardims 
+        %% local array
+        %if SLibGetCanIOIsVarDims(CanonicalOutputArgDef[argIdx])
+          %assign idx     = CanonicalOutputArgDef[argIdx].RootOutputIdx
+          %assign cdwIdx  = SLibGetCanDimSizeDWIdxForArg(CanonicalOutputArgDef[argIdx])
+          %if SysFcnArgNeeded(sysFcn, CanonicalDWorkArgDef[cdwIdx], cTID, isRG)
+            %assign dwIdx   = CanonicalDWorkArgDef[cdwIdx].FirstSignalSrc
+            %assign dwRec   = DWorks.DWork[dwIdx]
+            %assign dwWidth = SLibDWorkWidth(dwRec)
+            /* Set current dimensions for output port %<idx> */
+            %assign sizeDWName = "OutVarDims_%<argIdx>"
+            %assign eOffset = %<SetOutputCurrentDimensions(DWorks.DWork[dwIdx].CGTypeIdx, sizeDWName, idx, 0)>
+          %endif
+        %endif
+      %endforeach %% NumCanonicalOutputArgDefs
+    %endwith
+  %endwith
+%endfunction %% SLibGenOutportCurrentDimsWrites
+
+
+%endif %% _MODELREFVARDIMSUTIL_
+%% [EOF] modelrefvardimsutil.tlc

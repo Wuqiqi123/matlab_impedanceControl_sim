@@ -1,0 +1,21 @@
+%% 
+%%  
+%% 
+%%
+%% Copyright 1994-2002 The MathWorks, Inc.
+%%
+%% Abstract: Void target file
+
+%implements * "C"
+
+%% Function: BlockTypeSetup ===================================================
+%% Abstract:
+%%      Abort code generation if virtual block is encountered
+%%
+%function BlockTypeSetup(block, system) void
+  %%START_ASSERT
+  %<LibBlockReportError(block, "Block type is virtual.")>
+  %%END_ASSERT
+%endfunction
+
+%% [EOF] virtual.tlc

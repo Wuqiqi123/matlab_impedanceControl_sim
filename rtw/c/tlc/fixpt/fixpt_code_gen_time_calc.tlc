@@ -1,0 +1,861 @@
+%% This file contains utility tlc functions for doing calculations
+%% during the code generation process.  The resulting value
+%% may appear in the generated code but the calculations
+%% leading to that value do NOT appear in the generated code.
+%%
+%% Copyright 1994-2012 The MathWorks, Inc.
+%%
+
+
+%% Function: FixPt_Dbl2StoredInt ==========================================
+%%
+%% Abstract:
+%%      Conver a double value to its stored integer value for a given fixed
+%%      point type.
+%%
+%function FixPt_Dbl2StoredInt(inValue,outDT) void
+    %%
+    %assign isFloat = FixPt_DataTypeIsFloat(outDT)
+    %%
+    %% give special treatment to the common and easy case
+    %%
+    %if ISEQUAL(inValue,0.0) && ISEQUAL(outDT.Bias,0.0)
+        %%
+        %if isFloat
+            %assign storedInteger = 0.0        
+        %elseif outDT.IsSigned
+            %assign storedInteger = CAST("Number", 0 )
+        %else
+            %assign storedInteger = CAST("Unsigned", 0 )
+        %endif
+    %else 
+        %%
+        %% cast variables to Real for comparison
+        %%   this should avoid current problems associated with
+        %%   comparing values of different types.
+        %%
+        %assign rinValue      = CAST("Real",inValue)
+        %%
+        %assign fExp   = outDT.FixedExp
+        %assign rBits  = outDT.RequiredBits
+        %assign fSlope = CAST("Real",outDT.FracSlope)
+        %assign bias   = CAST("Real",outDT.Bias)
+        %assign isSign = outDT.IsSigned
+        %%
+        %assign dtPrecision = FixPt_Pow2(fExp)
+        %assign dtPrecision = dtPrecision*fSlope
+        %%
+        %% Using slope and bias, change u from "Real World" scale
+        %% to "storage integer" scale, but do this as floating point
+        %%
+        %assign uScaled = ( rinValue - bias ) / dtPrecision
+        %%
+        %% handles floating point types
+        %%
+        %if isFloat
+            %%
+            %assign storedInteger = uScaled
+            %%
+        %else
+            %%
+            %% give special treatment to the case when the stored integer value
+            %% should be zero.
+            %%
+            %if ( -0.5 <= uScaled ) && ( uScaled < 0.5 )
+                %%
+                %if isSign
+                    %%
+                    %assign storedInteger = CAST( "Number", 0 )
+                %else
+                    %assign storedInteger = CAST( "Unsigned", 0 )
+                %endif
+            %%
+            %% handle common header code for case of saturation
+            %%
+            %else
+              %%
+              %% calc max and min real world values
+              %%
+              %if ( !FixPt_IsInputLessThanMaxRealWorldValue(rinValue, outDT) )
+                  %%
+                  %% Get output max in terms of stored integer
+                  %%
+                  %if rBits <= 32
+                      %%
+                      %if isSign
+                          %%
+                          %assign outMaxStoreInt = FixPt_Pow2(rBits-1)-1.0
+                          %%
+                          %assign storedInteger = CAST( "Number", outMaxStoreInt )
+                      %else
+                          %%
+                          %assign outMaxStoreInt = FixPt_Pow2(rBits  )-1.0
+                          %%
+                          %assign storedInteger = CAST( "Unsigned", outMaxStoreInt )
+                      %endif
+                  %else
+		      %%START_ASSERT
+		      %%The following code needs a different compiler to be reached
+                      %assign outMaxStoreInt = FixPt_GetMaxStr(outDT)
+                      %%
+                      %assign storedInteger = outMaxStoreInt
+		      %%END_ASSERT
+                  %endif
+                  %%
+              %elseif ( !FixPt_IsInputLargerThanMinRealWorldValue(rinValue, outDT) )
+                  %%
+                  %% Get output min in terms of stored integer
+                  %%
+                  %if isSign
+                      %if rBits <= 32
+                          %assign outMinStoreInt = -1.0*FixPt_Pow2(rBits-1)
+                          %%
+                          %assign storedInteger = CAST( "Number", outMinStoreInt )
+                      %%START_ASSERT
+			%else
+                          %assign outMinStoreInt = FixPt_GetMinStr(outDT)
+                          %%
+                          %assign storedInteger = outMinStoreInt
+                      %endif
+		      %%END_ASSERT
+                  %else
+                      %assign storedInteger = CAST("Unsigned", 0 )
+                  %endif
+                  %%
+              %else
+                  %%
+                  %% round scaled value
+                  %%
+                  %if isSign
+                      %if uScaled >= 0.0
+                          %assign storedInteger = CAST("Number", uScaled + 0.5 )
+                      %else
+                          %assign storedInteger = CAST("Number", uScaled - 0.5 )
+                          %%
+                          %if ISEQUAL( 0.5, uScaled - CAST("Real",storedInteger) )
+                            %% exact mid point should round up
+                            %assign storedInteger = storedInteger + 1
+                          %endif
+                      %endif
+                  %else
+                      %if uScaled >= 0.0
+                          %assign storedInteger = CAST("Unsigned", uScaled + 0.5 )
+                      %%START_ASSERT
+		      %else
+                          %assign storedInteger = CAST("Unsigned", uScaled - 0.5 )
+                          %%
+                          %if ISEQUAL( 0.5, uScaled - CAST("Real",storedInteger) )
+                            %% exact mid point should round up
+                            %assign storedInteger = storedInteger + 1
+                          %endif
+                      %endif
+		      %%END_ASSERT
+                  %endif
+                  %%
+                  %% error out if cast has overflowed
+                  %%
+                  %assign realStoredInteger = CAST("Real",storedInteger)
+                  %%
+                  %if ( (realStoredInteger+1.0) < uScaled ) || ...
+                      ( (realStoredInteger-1.0) > uScaled )
+                      %%START_ASSERT
+                      %openfile errTxt
+          
+                        Simulink Coder Fatal: Overflow occured in TLC calculation
+                        of fixed point quantity.  The number of bits required for this
+                        calculation is more than can be handled by TLC.  Reducing the
+                        number of bits used for the blocks output and/or parameters
+                        may work around this problem.
+          
+                        Block: %<MaskBlockName>
+          
+                      %closefile errTxt
+                      %<LibReportFatalError(errTxt)>
+                      %%END_ASSERT
+                  %endif
+                  %%
+              %endif
+            %endif
+        %endif
+    %endif
+    %%
+    %return storedInteger
+    %%
+%endfunction  %% FixPt_Dbl2StoredInt
+
+
+%% Function: SetMSNBitsStr ==========================================
+%%
+%% Abstract:
+%%    Get string that represents
+%%    an integer with the number of bits given by totalBits
+%%    and of these bits the most significant numSet bits are 1
+%%    and all remaining bits are 0
+%%    Please note this is a plain old integer, ie nominal scaling
+%%
+%function SetMSNBitsStr(numSet,totalBits,isSigned) void
+    %%
+    %% handle incorrect numSet
+    %%
+    %if numSet < 0
+        %%
+        %%START_ASSERT
+        %exit Simulink Coder Fatal Error: SetMSNBitsStr: numSet MUST BE NON-NEGATIVE
+        %%END_ASSERT
+        %%
+    %elseif numSet > totalBits
+        %%
+        %%START_ASSERT
+        %exit Simulink Coder Fatal Error: SetMSNBitsStr: numSet must be less or equal to totalBits
+        %%END_ASSERT
+        %%
+    %%
+    %% handle incorrect totalBits
+    %%
+    %elseif (totalBits % 4) != 0
+        %%
+        %%START_ASSERT
+        %exit Simulink Coder Fatal Error: SetMSNBitsStr: totalBits MUST BE MULTIPLE OF 4
+        %%END_ASSERT
+        %%
+    %elseif totalBits > LargestIntegerNumBits
+        %%
+        %if IntegerSizes.LongLongMode == 0
+            %%START_ASSERT
+            %exit Simulink Coder Fatal Error: SetMSNBitsStr: totalBits MUST FIT IN A LONG
+            %%END_ASSERT
+        %else
+            %%START_ASSERT
+            %exit Simulink Coder Fatal Error: SetMSNBitsStr: totalBits MUST FIT IN A LONG LONG
+            %%END_ASSERT
+        %endif
+        %%
+    %else
+        %%
+        %% Define string that represents the constant
+        %%
+        %assign bitMask = ")"
+        %%
+        %% Distinguish a LONG/LONG LONG mask
+        %%
+        %if (totalBits > IntegerSizes.IntNumBits && totalBits <= IntegerSizes.LongNumBits)
+            %assign bitMask = "L"+ bitMask
+        %elseif (totalBits > IntegerSizes.LongNumBits && IntegerSizes.LongLongMode == 1)
+            %assign bitMask = "LL"+ bitMask
+        %endif
+        %%
+        %% Distinguish a UNSIGNED mask
+        %%
+        %if !isSigned
+            %assign bitMask = "U"+ bitMask
+        %endif
+        %%
+        %% added each hex character
+        %%
+        %foreach i = (totalBits/4)
+            %%
+            %assign j = totalBits - numSet - ( i * 4 )
+            %%
+            %if ( j >= 4 )
+                %assign bitMask = "0"+ bitMask
+            %elseif ( j == 3 )
+                %assign bitMask = "8"+ bitMask
+            %elseif ( j == 2 )
+                %assign bitMask = "C"+ bitMask
+            %elseif ( j == 1 )
+                %assign bitMask = "E"+ bitMask
+            %else
+                %assign bitMask = "F"+ bitMask
+            %endif
+        %endforeach
+        %%
+        %assign bitMask = "(0x"+ bitMask
+    %endif
+    %%
+    %return bitMask
+    %%
+%endfunction  %% SetMSNBitsStr
+
+
+
+%% Function: SetLSNBitsStr ==========================================
+%%
+%% Abstract:
+%%    Get string that represents
+%%    an integer with the number of bits given by totalBits
+%%    and of these bits the least significant numSet bits are 1
+%%    and all remaining bits are 0
+%%    Please note this is a plain old integer, ie nominal scaling
+%%
+%function SetLSNBitsStr(numSet,totalBits,isSigned) void
+    %%
+    %% handle incorrect numSet
+    %%
+    %if numSet < 0
+        %%
+        %%START_ASSERT
+        %exit Simulink Coder Fatal Error: SetLSNBitsStr: numSet MUST BE NON-NEGATIVE
+        %%END_ASSERT
+        %%
+    %elseif numSet > totalBits
+        %%
+        %%START_ASSERT
+        %exit Simulink Coder Fatal Error: SetLSNBitsStr: numSet must be less or equal to totalBits
+        %%END_ASSERT
+        %%
+    %%
+    %% handle incorrect totalBits
+    %%
+    %elseif (totalBits % 4) != 0
+        %%
+        %%START_ASSERT
+        %exit Simulink Coder Fatal Error: SetLSNBitsStr: totalBits MUST BE MULTIPLE OF 4
+        %%END_ASSERT
+        %%
+    %elseif totalBits > LargestIntegerNumBits
+        %%
+        %if IntegerSizes.LongLongMode == 0
+            %%START_ASSERT
+            %exit Simulink Coder Fatal Error: SetLSNBitsStr: totalBits MUST FIT IN A LONG
+            %%END_ASSERT
+        %else
+            %%START_ASSERT
+            %exit Simulink Coder Fatal Error: SetLSNBitsStr: totalBits MUST FIT IN A LONG LONG
+            %%END_ASSERT
+        %endif
+        %%
+    %else
+        %%
+        %% Define string that represents the constant
+        %%
+        %assign bitMask = ")"
+        %%
+        %% Distinguish a LONG/LONG LONG mask
+        %%
+        %if (totalBits > IntegerSizes.IntNumBits && totalBits <= IntegerSizes.LongNumBits)
+            %assign bitMask = "L"+ bitMask
+        %elseif (totalBits > IntegerSizes.LongNumBits && IntegerSizes.LongLongMode == 1)
+            %assign bitMask = "LL"+ bitMask
+        %endif
+        %%
+        %% Distinguish a UNSIGNED mask
+        %%
+        %if !isSigned
+            %assign bitMask = "U"+ bitMask
+        %endif
+        %%
+        %% added each hex character
+        %%
+        %foreach i = (totalBits/4)
+            %%
+            %assign j = numSet - ( i * 4 )
+            %%
+            %if ( j >= 4 )
+                %assign bitMask = "F"+ bitMask
+            %elseif ( j == 3 )
+                %assign bitMask = "7"+ bitMask
+            %elseif ( j == 2 )
+                %assign bitMask = "3"+ bitMask
+            %elseif ( j == 1 )
+                %assign bitMask = "1"+ bitMask
+            %else
+                %assign bitMask = "0"+ bitMask
+            %endif
+        %endforeach
+        %%
+        %assign bitMask = "(0x"+ bitMask
+    %endif
+    %%
+    %return bitMask
+    %%
+%endfunction  %% SetLSNBitsStr
+
+
+
+%% Function: PowerOfTwoStr ==========================================
+%%
+%% Abstract:
+%%    Get string that represents a power of 2
+%%    using an integer or if necessary a long in the requested signed
+%%    or unsigned format.
+%%    Please note this is a plain old integer, ie nominal scaling
+%%
+%function PowerOfTwoStr(ipow,isSigned) void
+    %%
+    %% handle incorrect ipow
+    %%
+    %if ipow < 0
+        %%
+        %%START_ASSERT
+        %exit Simulink Coder Fatal Error: PowerOfTwoStr: ipow MUST BE NON-NEGATIVE
+        %%END_ASSERT
+        %%
+    %elseif ipow >= ( IntegerSizes.LongNumBits - isSigned )
+        %%
+        %%START_ASSERT
+        %exit Simulink Coder Fatal Error: PowerOfTwoStr: ipow must fit in a long
+        %%END_ASSERT
+        %%
+    %%
+    %% handle power that can be represented in
+    %% an unsigned integer or unsigned long
+    %%
+    %else
+        %%
+        %% Define string that represents the constant
+        %%
+        %assign bitMask = ")"
+        %%
+        %% init algorithm for integers
+        %%
+        %if ipow < ( IntegerSizes.IntNumBits - isSigned )
+            %%
+            %% specify number of hex digits that are needed
+            %%
+            %assign iHi = (IntegerSizes.IntNumBits/4)
+        %%
+        %% init algorithm for longs
+        %%
+        %elseif (ipow > ( IntegerSizes.IntNumBits - isSigned ) && ...
+                ipow < ( IntegerSizes.LongNumBits - isSigned ) && ...
+                IntegerSizes.LongLongMode == 0)    
+            %%
+            %% Distinguish a LONG mask
+            %%
+            %assign bitMask = "L"+ bitMask
+            %%
+            %% specify number of hex digits that are needed
+            %%
+            %assign iHi = (IntegerSizes.LongNumBits/4)
+        %%
+        %% init algorithm for long long
+        %%
+        %else    
+            %%
+            %% Distinguish a LONG LONG mask
+            %%
+            %assign bitMask = "LL"+ bitMask
+            %%
+            %% specify number of hex digits that are needed
+            %%
+            %assign iHi = (IntegerSizes.LongLongNumBits/4)
+        %endif
+        %%
+        %% Distinguish a UNSIGNED mask
+        %%
+        %if !isSigned
+            %assign bitMask = "U"+ bitMask
+        %endif
+        %%
+        %% start common algorithm
+        %%
+        %foreach i = iHi
+            %%
+            %assign j = ipow - ( i * 4 )
+            %%
+            %if ( j == 0 )
+                %assign bitMask = "1"+ bitMask
+            %elseif ( j == 1 )
+                %assign bitMask = "2"+ bitMask
+            %elseif ( j == 2 )
+                %assign bitMask = "4"+ bitMask
+            %elseif ( j == 3 )
+                %assign bitMask = "8"+ bitMask
+            %else
+                %assign bitMask = "0"+ bitMask
+            %endif
+        %endforeach
+        %%
+        %assign bitMask = "(0x"+ bitMask
+    %endif
+    %%
+    %return bitMask
+    %%
+%endfunction  %% PowerOfTwoStr
+
+
+
+%% Function: FixPt_GetMaxStr ============================================
+%%
+%% Abstract:
+%%   Returns the maximum value of a fixed-point number.  For example
+%%
+%%   Signed | Number of bits | Return value
+%%   -------+----------------+-------------
+%%     1    |       8        | 0x7F
+%%     1    |       16       | 0x7FFF
+%%     0    |       32       | 0xFFFFFFFF
+%%
+%% Synopsis:
+%%   FixPt_GetMaxStr(info)
+%%   info = fixed-point record
+
+%function FixPt_GetNBitsMaxStr(requiredBits,actualBits,isSigned,containerTypeIdx) void
+  %%
+  %if requiredBits == 8 || requiredBits == 16 || requiredBits == 32
+    %assign baseDT = FixPt_GetDataTypeFromIndex(containerTypeIdx)
+    %%
+    %if ISFIELD(baseDT, "TypeMaxId")
+      %%
+      %assign bitMask = baseDT.TypeMaxId
+      %%
+    %else
+      %%START_ASSERT
+      %exit Simulink Coder Fatal Error: FixPt_GetMaxStr: TypeMaxId is not a field of base data type structure.
+      %%END_ASSERT
+    %endif
+  %elseif requiredBits < 32
+    %%
+    %if isSigned 
+      %assign storedIntMax = CAST("Number",  FixPt_Pow2(requiredBits-1)-1.0)
+    %else
+      %assign storedIntMax = CAST("Unsigned",FixPt_Pow2(requiredBits  )-1.0)
+    %endif
+    %%
+    %assign bitMask = "(%<storedIntMax>)"
+  %else
+    %%
+    %% the number of bits to set depends on
+    %%   whether or not the number is signed
+    %%   on the number of bits of padding when emulating a data type
+    %%
+    %assign numSet       = requiredBits - isSigned
+    %%
+    %assign bitMask = SetLSNBitsStr(numSet,actualBits,isSigned)
+    %%
+    %if actualBits > IntegerSizes.IntNumBits && actualBits <= IntegerSizes.LongNumBits
+      %%
+      %if isSigned
+        %assign cast_label = FixPt_long_label
+      %else
+        %assign cast_label = FixPt_ulong_label
+      %endif
+    %elseif actualBits > IntegerSizes.LongNumBits && IntegerSizes.LongLongMode == 1
+      %%
+      %if isSigned
+        %assign cast_label = FixPt_long_long_label
+      %else
+        %assign cast_label = FixPt_ulong_long_label
+      %endif
+    %else
+      %%
+      %if isSigned
+        %assign cast_label = FixPt_int_label
+      %else
+        %assign cast_label = FixPt_uint_label
+      %endif
+    %endif
+    %%
+    %assign bitMask = "((%<cast_label>)"+ bitMask + ")"
+    %%
+  %endif
+  %%
+  %return bitMask
+  %%
+%endfunction 
+
+%function FixPt_GetMaxStr(curDT) void
+    %%
+    %% get integer minimums and maximums
+    %%
+    %if FixPt_DataTypeIsDouble(curDT)
+        %%
+        %<FixPt_IncludeFloatDotH(0)>\
+        %assign bitMask = "DBL_MAX"
+        %%
+    %elseif FixPt_DataTypeIsSingle(curDT)
+        %%
+        %<FixPt_IncludeFloatDotH(0)>\
+        %assign bitMask = "FLT_MAX"
+        %%
+    %else
+        %%
+        %assign containerTypeId = SLibGetRecordContainerCGTypeIdx(curDT)
+        %assign  bitMask = FixPt_GetNBitsMaxStr(curDT.RequiredBits,curDT.ActualBits,curDT.IsSigned,containerTypeId)
+        %%
+    %endif
+    %%
+    %return bitMask
+    %%
+%endfunction %% FixPt_GetMaxStr
+
+
+%% Function: FixPt_GetMinStr ============================================
+%%
+%% Abstract:
+%%   Returns the minimum value of a fixed-point number.  For example
+%%
+%%   Signed | Number of bits | Return value
+%%   -------+----------------+-------------
+%%     1    |       8        | 0x80
+%%     1    |       16       | 0x8000
+%%     0    |       32       | 0x00000000
+%%
+%% Synopsis:
+%%   FixPt_GetMinStr(info)
+%%   info = fixed-point record
+
+%function FixPt_GetNBitsMinStr(requiredBits,actualBits,isSigned,containerTypeIdx) void
+  %%
+  %if requiredBits == 8 || requiredBits == 16 || requiredBits == 32
+    %%
+    %assign baseDT = FixPt_GetDataTypeFromIndex(containerTypeIdx)
+    %%
+    %if ISFIELD(baseDT, "TypeMinId")
+      %%
+      %assign bitMask = baseDT.TypeMinId
+      %%
+    %else
+      %%START_ASSERT
+      %exit Simulink Coder Fatal Error: FixPt_GetNBitsMinStr: TypeMinId is not a field of base data type structure.
+      %%END_ASSERT
+    %endif
+  %else
+    %%
+    %if isSigned 
+      %%
+      %if requiredBits < 32
+        %%
+        %if requiredBits == IntegerSizes.LongNumBits
+          %%
+          %assign storedIntMin = CAST("Number", (-1.0*FixPt_Pow2(requiredBits-1))+1.0 )
+          %%
+          %assign bitMask = "((%<storedIntMin>)-1)"
+          %%
+        %else
+          %%
+          %assign storedIntMin = CAST("Number", (-1.0*FixPt_Pow2(requiredBits-1)) )
+          %%
+          %assign bitMask = "(%<storedIntMin>)"
+          %%
+        %endif
+      %else        
+        %%
+        %% the number of bits to set depends on
+        %%   whether or not the number is signed
+        %%   on the number of bits of padding when emulating a data type
+        %%
+        %if isSigned
+          %assign numSet = 1 + actualBits - requiredBits
+        %else
+          %assign numSet = 0
+        %endif
+        %%
+        %assign maskIsSigned = 0
+        %%
+        %assign bitMask = SetMSNBitsStr(numSet,actualBits,maskIsSigned)
+        %%
+        %if actualBits > IntegerSizes.IntNumBits && actualBits <= IntegerSizes.LongNumBits
+          %%
+          %if isSigned
+            %assign cast_label = FixPt_long_label
+          %else
+            %assign cast_label = FixPt_ulong_label
+          %endif
+        %elseif actualBits > IntegerSizes.LongNumBits && IntegerSizes.LongLongMode == 1
+          %%
+          %if isSigned
+            %assign cast_label = FixPt_long_long_label
+          %else
+            %assign cast_label = FixPt_ulong_long_label
+          %endif
+        %else
+          %%
+          %if isSigned
+            %assign cast_label = FixPt_int_label
+          %else
+            %assign cast_label = FixPt_uint_label
+          %endif
+        %endif
+        %%
+        %assign bitMask = "((%<cast_label>)"+ bitMask + ")"
+        %%
+      %endif
+    %else
+      %assign bitMask = "(0)"
+    %endif
+  %endif
+  %%
+  %return bitMask
+  %%
+%endfunction
+
+
+%function FixPt_GetMinStr(curDT) void
+    %%
+    %% get integer minimums and maximums
+    %%
+    %if FixPt_DataTypeIsDouble(curDT)
+        %%
+        %<FixPt_IncludeFloatDotH(0)>\
+        %assign bitMask = "(-(DBL_MAX))"
+        %%
+    %elseif FixPt_DataTypeIsSingle(curDT)
+        %%
+        %<FixPt_IncludeFloatDotH(0)>\
+        %assign bitMask = "(-(FLT_MAX))"
+        %%
+    %else
+        %%
+        %assign containerTypeId = SLibGetRecordContainerCGTypeIdx(curDT)
+        %assign bitMask = FixPt_GetNBitsMinStr(curDT.RequiredBits,curDT.ActualBits,curDT.IsSigned,containerTypeId)
+        %%
+    %endif
+    %%
+    %return bitMask
+    %%
+%endfunction %% FixPt_GetMinStr
+
+
+%%
+%% TLC does not have a power operator, but Fixpt needs to compute
+%% lots of powers of two.  To make things fast in the most common situations
+%% a partial lookup table approach will be used.
+%%
+%assign pow2Table = [ ...
+                 1.0 , ...
+                 2.0 , ...
+                 4.0 , ...
+                 8.0 , ...
+                16.0 , ...
+                32.0 , ...
+                64.0 , ...
+               128.0 , ...
+               256.0 , ...
+               512.0 , ...
+              1024.0 , ...
+              2048.0 , ...
+              4096.0 , ...
+              8192.0 , ...
+             16384.0 , ...
+             32768.0 , ...
+             65536.0 , ...
+            131072.0 , ...
+            262144.0 , ...
+            524288.0 , ...
+           1048576.0 , ...
+           2097152.0 , ...
+           4194304.0 , ...
+           8388608.0 , ...
+          16777216.0 , ...
+          33554432.0 , ...
+          67108864.0 , ...
+         134217728.0 , ...
+         268435456.0 , ...
+         536870912.0 , ...
+        1073741824.0 , ...
+        2147483648.0 , ...
+        4294967296.0 ...
+    ]
+
+
+%% Function: FixPt_Pow2 ==========================================
+%%
+%% Abstract:  Returns an integer power of two
+%%    The input should have a positive or negative integer value.
+%%    The returned value is a Real
+%%
+%function FixPt_Pow2(num) void
+    %%
+    %% only process inputs of TYPE Number
+    %%
+    %assign numCast = CAST("Number",num)
+    %%
+    %if numCast != num
+        %%START_ASSERT
+        %exit FixPt_Pow2 was called using a non integer value
+        %%END_ASSERT
+    %endif
+    %%
+    %if 0 <= numCast && numCast <= 32
+        %%
+        %% use lookup table to get quick answer
+        %%
+        %assign retVal = pow2Table[numCast]
+        %%
+    %elseif -32 <= numCast && numCast < 0
+        %%
+        %% use lookup table to get quick answer
+        %%
+        %assign retVal = 1.0 / pow2Table[-numCast]
+        %%
+    %else
+        %% 
+        %% use Matlab to get unusually large or small value
+        %%
+        %assign retVal = "(2^(%<numCast>))"
+        %assign retVal = FEVAL("eval", retVal)
+        %assign retVal = CAST( "Real", retVal)        
+    %endif    
+    %%
+    %return retVal
+    %%
+%endfunction  %% FixPt_Pow2
+
+%% Function: FixPt_IsInputLessThanMaxRealWorldValuet ==============================================
+%% Abstract:
+%%    This function determines whether the input value (in double) is less
+%% than the maximum value in the outDT
+
+%function FixPt_IsInputLessThanMaxRealWorldValue(dblValue, outDT) void
+  %%
+  %assign totalBits  =  CAST("Real",outDT.RequiredBits)
+  %assign isSigned = CAST("Real",outDT.IsSigned)
+  %assign exp   = CAST("Real",outDT.FixedExp)
+  %assign slope = CAST("Real",outDT.FracSlope)
+  %assign bias   = CAST("Real",outDT.Bias)
+  %%
+  %assign flag = FEVAL("fixptCompMinMaxValue", dblValue, totalBits, isSigned, exp, slope, bias)
+  %%
+  %if flag != 1.0
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %%FixPt_IsInputLessThanMaxRealWorldValue  
+
+%% Function: FixPt_IsInputLessThanMaxRealWorldValuet ==============================================
+%% Abstract:
+%%    This function determines whether the input value (in double) is less
+%% than the maximum value in the outDT
+
+%function FixPt_IsInputLargerThanMinRealWorldValue(dblValue, outDT) void
+  %%
+  %assign totalBits  =  CAST("Real",outDT.RequiredBits)
+  %assign isSigned = CAST("Real",outDT.IsSigned)
+  %assign exp   = CAST("Real",outDT.FixedExp)
+  %assign slope = CAST("Real",outDT.FracSlope)
+  %assign bias   = CAST("Real",outDT.Bias)
+  %%
+  %assign flag = FEVAL("fixptCompMinMaxValue", dblValue, totalBits, isSigned, exp, slope, bias)
+  %%
+  %if flag != -1.0
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %%FixPt_IsInputLargerThanMinRealWorldValue  
+
+
+
+%% Function: FixPt_IncludeFloatDotH ==========================================
+%% Abstract:
+%%   Cause float.h to be included if needed
+%%
+%function FixPt_IncludeFloatDotH(junk) void
+  %%
+  %if ::CompiledModel.IncludeFloatDotH == 0
+    %%
+    %openfile  localBuffer
+#ifndef DBL_MAX
+#include <float.h>
+#endif
+    %closefile localBuffer
+    %%
+    %<LibCacheIncludes(localBuffer)>\
+    %%
+    %assign ::CompiledModel.IncludeFloatDotH = 1
+    %<LibAddtoSharedUtilsIncludes("<float.h>")>    
+  %endif
+%endfunction  %% FixPt_IncludeFloatDotH
+

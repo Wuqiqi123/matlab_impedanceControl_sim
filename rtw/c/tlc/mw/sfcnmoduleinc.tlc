@@ -1,0 +1,54 @@
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   This file generates the <model>_sf.c "include" file for the generated S-function
+%%   target
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+
+%if EXISTS("_SFCNMODULEINC_") == 0
+%assign _SFCNMODULEINC_ = 1
+
+%assign buildDir = FEVAL("rtwprivate", "rtwattic", "getBuildDir")
+%assign filesep = FEVAL("filesep")
+%assign buildDirRoot = FEVAL("Simulink.fileGenControl", "get", "CodeGenFolder")
+
+%openfile ModelIncDotC = "%<buildDirRoot>%<filesep>%<Name>.%<LangFileExt>"
+/*
+ * Generated S-function Target for model %<LibGetModelName()>. 
+ * This source file provides access to the generated S-function target
+ * for other models.
+ *
+ * Created: %<TLC_TIME>
+ */
+
+#include "%<Name>.h"
+%<FEVAL("rtwsfcn_modules","%<buildDir>", Name)>
+
+%closefile ModelIncDotC
+
+%openfile ModelIncDotH = "%<buildDirRoot>%<filesep>%<Name>.h"
+/*
+* Generated S-function Target for model %<LibGetModelName()>. 
+* This file provides access to the generated S-function target
+* export file for other models.
+*
+* Created: %<TLC_TIME>
+*/
+
+#ifndef RTWSFCN_%<Name>_H
+#define RTWSFCN_%<Name>_H
+
+#include "%<LibGetModelName()>_sfcn_rtw%<filesep>%<Name>.h"
+%assign mdlPrivHdrFileName = SLibGetFileNameForCode("mdl_priv_hdr")
+%if !WHITE_SPACE(mdlPrivHdrFileName)
+  #include "%<LibGetModelName()>_sfcn_rtw%<filesep>%<mdlPrivHdrFileName>.h"
+%endif 
+
+#endif
+%closefile ModelIncDotH
+%endif %% _SFCNBODYINC_
+

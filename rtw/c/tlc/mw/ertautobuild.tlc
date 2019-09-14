@@ -1,0 +1,141 @@
+%% ==============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   This system file creates rtmodel.h for Embedded-C code format.
+%%   The additional header file is include by rt_main.c as part of the
+%%   automated build procedure.
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%% 
+%selectfile NULL_FILE
+
+%if EXISTS("_ERTAUTOBUILD_") == 0
+%assign _ERTAUTOBUILD_ = 1
+
+%realformat "CONCISE"
+
+%openfile tmpBuf
+/*
+ * rtmodel.h
+ *
+ * Code generation for Simulink model "%<Name>".
+ *
+ * Simulink Coder version                : %<Version>
+ %if GenerateFullHeader
+  * %<CorCPPForBuildLogsandComments()> source code generated on : %<TLC_TIME>
+  %endif
+ *
+ * Note that the generated code is not dependent on this header file.
+ * The file is used in cojuction with the automatic build procedure.
+ * It is included by the sample main executable harness 
+ * MATLAB/rtw/c/src/common/rt_main.c.
+ *
+ */
+%closefile tmpBuf
+%<SLibCacheCodeToFile("autobuild_ban", tmpBuf)>
+
+%openfile tmpBuf
+#include "%<Name>.h"
+
+%if ( SLibFcnProtoCtrlActive() || ...
+      (SLibRTWCPPClassActive() && ::CompiledModel.RTWFcnCPPClass.Object.Class=="ModelCPPArgsClass") )
+  #define MODEL_STEP_FCN_CONTROL_USED  1
+%endif
+
+%if MultiInstanceERTCode && !::GRTInterface
+  %if SLibIsERTTarget()
+    %if ::CompiledModel.RootIOFormat == "Individual arguments" 
+      %assign rootLevelIO = 0
+    %elseif ::CompiledModel.RootIOFormat == "Structure reference"
+      %assign rootLevelIO = 1
+    %else
+      %% ::CompiledModel.RootIOFormat == "Part of model data structure"
+      %assign rootLevelIO = 2
+    %endif
+  %else
+    %assign rootLevelIO = 2
+  %endif
+  /*
+   * ROOT_IO_FORMAT: 0 (Individual arguments)
+   * ROOT_IO_FORMAT: 1 (Structure reference)
+   * ROOT_IO_FORMAT: 2 (Part of model data structure)
+   */
+  # define ROOT_IO_FORMAT %<rootLevelIO>
+%endif
+
+%assign macroComment = "/* Macros generated for backwards compatibility  */"
+%assign macroCommentGenerated = TLC_FALSE
+%if SuppressErrorStatus
+  %assign macros = ""
+  
+  %assign macName = "rtmGetErrorStatus"
+  %assign macros  = macros + "#ifndef %<macName>\n"
+  %assign macros  = macros + "# define %<macName>(rtm) "
+  %assign macros  = macros + "((void*) 0)\n"
+  %assign macros  = macros + "#endif\n\n"
+  
+  %assign macName = "rtmSetErrorStatus"
+  %assign macros  = macros + "#ifndef %<macName>\n"
+  %assign macros  = macros + "# define %<macName>(rtm, val) "
+  %assign macros  = macros + "((void) 0)\n"
+  %assign macros  = macros + "#endif\n\n"
+  
+  %if !macroCommentGenerated
+    %<macroComment>
+    %assign macroCommentGenerated = TLC_TRUE
+  %endif  
+  %<macros>  
+  
+%endif
+
+%if !RTMMdlStopReqIsReqFcn()
+  %assign macros = ""
+  
+  %assign macName = "rtmGetStopRequested"
+  %assign macros  = macros + "#ifndef %<macName>\n"
+  %assign macros  = macros + "# define %<macName>(rtm) "
+  %assign macros  = macros + "((void*) 0)\n"
+  %assign macros  = macros + "#endif\n\n"
+  
+  %if !macroCommentGenerated
+    %<macroComment>
+    %assign macroCommentGenerated = TLC_TRUE
+  %endif  
+  %<macros>
+  
+%endif
+
+%assign paramValuesCode = SLibDefineParameterInitialValues(TLC_TRUE)
+%if !ISEMPTY(paramValuesCode)  
+  #if 0
+  /* Example parameter data definition with initial values */
+  %<paramValuesCode>
+  #endif
+%endif
+
+%closefile tmpBuf
+%<SLibCacheCodeToFile("autobuild_incl", tmpBuf)>
+
+%assign rootSystem = System[NumSystems-1]
+%if SLibNeedWrapperStepFcn()==2
+  %openfile tmpBuf
+  /*
+   *  rtmodel.%<::LangFileExt>:
+   *
+   %<SLibCommonHeaderInfo()>\
+   */
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("rtmodel_src_ban", tmpBuf)>
+  
+  %openfile tmpBuf
+  #include "rtmodel.h"
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("rtmodel_src_incl", tmpBuf)>
+%endif
+
+%endif %% _ERTAUTOBUILD_
+
+%% [EOF] ertautobuild.tlc

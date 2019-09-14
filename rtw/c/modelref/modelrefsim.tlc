@@ -1,0 +1,51 @@
+%% 
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%% Abstract: Embedded real-time system target file.
+%%
+%selectfile NULL_FILE
+
+%assign CodeFormat = "Embedded-C"
+
+%assign TargetType = "NRT"
+%assign Language   = "C"
+%assign AutoBuildProcedure = 0
+%assign tMdlRefSfcnS = "_mdlRefSfcnS"
+%assign tMdlRefSfcnSType = "SimStruct *"
+%assign SimstructBasedTarget = TLC_TRUE
+%assign MaxStackVariableSize = 4096
+
+%assign RTWCAPIStates  = 1
+
+%include "codegenentry.tlc"
+
+%% The contents between 'BEGIN_RTW_OPTIONS' and 'END_RTW_OPTIONS' in this file
+%% are used to maintain backward compatibility to R13 and preR13 custom target 
+%% file only.  If you want to use this file as a template to develop your
+%% own system target file, you need to remove the 'CONFIGSET_TARGET_COMPONENT'
+%% section at the end of this file.
+%%
+/%
+  BEGIN_RTW_OPTIONS
+
+  %----------------------------------------%
+  % Configure code generation settings %
+  %----------------------------------------%
+  
+  rtwgensettings.BuildDirSuffix = '';
+
+  END_RTW_OPTIONS 
+ %/
+%% The content between 'BEGIN_CONFIGSET_TARGET_COMPONENT' and 
+%% 'END_CONFIGSET_TARGET_COMPONENT' is for the MathWorks internal use
+%% only.  You must remove this section if you intend to use this file
+%% as a template for your own system target development.
+%%
+/%
+  BEGIN_CONFIGSET_TARGET_COMPONENT
+ 
+  targetComponentClass = 'Simulink.ERTTargetCC';
+  
+  END_CONFIGSET_TARGET_COMPONENT
+ %/

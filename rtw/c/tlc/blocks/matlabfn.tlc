@@ -1,0 +1,48 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%%
+%% Abstract: MATLABFcn block target file. This is comprised of an exit
+%%           directive stating that this block isn't support for code
+%%           generation other than for Accelerator mode.
+
+%implements MATLABFcn "C"
+
+%% Function: BlockTypeSetup ===================================================
+%% Abstract:
+%%      Abort code generation if virtual block is encountered
+%%
+%function BlockTypeSetup(block, system) void
+  %%START_ASSERT
+  %if !Accelerator && !(ISFIELD(system,"NoCode") && system.NoCode == "yes")
+    %assign errTxt = "Not yet supported by Simulink Coder"
+    %<LibBlockReportError(block, errTxt)>
+  %endif
+  %%END_ASSERT
+%endfunction
+
+
+%% Function: BlockInstanceSetup ==============================================
+%% Abstract:
+%%   Set expression folding compliance
+%%
+%function BlockInstanceSetup(block, system) void
+  %<LibBlockSetIsExpressionCompliant(block)>
+%endfunction
+
+
+%% Function: Outputs ===========================================================
+%% Abstract:
+%%      Call into Simulink to run block for Accelerator
+%%
+%function Outputs(block, system) Output
+  %if Accelerator
+      /* Call into Simulink to run the Matlab Fcn block. */
+      %<SLibCallBlockInSimulink(system, block, "SS_CALL_MDL_OUTPUTS")>
+      
+  %endif
+%endfunction
+
+%% [EOF] matlabfn.tlc

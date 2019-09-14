@@ -1,0 +1,2090 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Copyright 1994-2012 The MathWorks, Inc.
+%%
+%% Disclaimer
+%% ==========
+%%
+%% The functionality provided in this TLC module is currently under
+%% development.
+%% 
+%%
+%% Abstract
+%% ========
+%%
+%% Code generation can generate functions for relevant systems in a Simulink model. Example
+%% systems are
+%%   o Root Model
+%%   o Non-Inlined subsystem
+%%   o Exported Function
+%%
+%% The goal of this specification is to  provide a mapping of system's 
+%% graphical input/output to its corresponding identifier in the generated 
+%% C-code. The spec will also provide the identifier characterstics - e.g. 
+%% Data Type, Dimensions.
+%%
+%% The idea is to create a TLC record which contains information about all
+%% the systems in the model and the associated input/output of each system.
+%%
+%% SystemGraphicalMap Record
+%% =========================
+%%
+%% SystemGraphicalMap is a collection of all non-inlined systems in a model 
+%% (non-inlined system == has a unique function). For each non-inlined system,
+%% the map provides information about inputs, outputs, external data stores 
+%% and discrete states in the system.
+%% 
+%% To generate the SystemGraphicalMap, model's block diagram parameter 
+%% "GenerateTestInterfaces" should be set to 'on'.  
+%%
+%% set_param(modelName, 'GenerateTestInterfaces', 'on')
+%%
+%% Note: The map is available only for ERT and ERT-derived targets
+%%
+%% A system can generate multiple functions depending on its constituent 
+%% blocks/child-systems and model's Configuration Parameter settings.
+%% A non-inlined subsystem can generate
+%%    - Output function(s)
+%%    - Update function(s) (if blocks need update and "CombineOutputUpdateFcns"
+%%                          is set to off)
+%%    - Initialize function
+%%    - Disable/Enable functions (if blocks need reset or child system
+%%                                have disable and enable functions)
+%%
+%% The root model will generate
+%%    - Step function (if CombineOutputUpdateFcns is set to on)
+%%    - Output and update functions (if CombineOutputUpdateFcns is set to off)
+%%    - Initialize function
+%%    - Terminate function
+%% 
+%% In the above functions, some or all of the system's graphical inputs/outputs
+%% may be accessed. The SystemGraphicalMap does not map each system function 
+%% separately. It maps the graphical inputs/outputs to the corresponding 
+%% identifiers (address) in the generated code.
+%%
+%% Example - Non-Inlined Subsystem generating a non-reusable function
+%% ------------------------------------------------------------------
+%% SystemGraphicalMap for a model which has one non-inlined subsystem. The 
+%% subsystem (SS1) has one input port and one output port. 
+%%
+%% SystemGraphicalMap {        
+%%   NumSubsystemInterfaces 1   
+%%   SubsystemInterface {                          
+%%     InterfaceType        "Subsystem"                
+%%     BlockPath            <Root>/SS1    # Mangled Path to the subsystem.
+%%     Name                  SS1          # Name of the subsystem.     
+%%     HeaderFile           "SS1.h"       # Subsystem function has extern
+%%                                        # declartion in this header file.
+%%     NumInports           1
+%%     Inport{                                      
+%%       Name               "rt_In1"        # Name of the port, rt_ is 
+%%                                          # prefixed to maintain uniqueness.
+%%       BlockPath          <Root>/SS1/In1                  
+%%       DataType           "real_T" 
+%%       Dimensions         [1, 1]
+%%       FunctionInputIdx   [0]             # Index into the FunctionInput 
+%%                           |              # corresponding to this inport.
+%%                           |              # If inport, contains multiple 
+%%  -------------------------               # signals (e.g. MUX signal), then
+%%  |                                       # inport has multiple function 
+%%  |                                       # inputs.
+%%  |    IsBus              TLC_FALSE       # Is inport a non-virtual Bus? 
+%%  |    IsStruct           TLC_FALSE       # Does inport have multiple signal?
+%%  |                                       # If so, create a virtual typedef
+%%  |    VirtualTypeDef     ""                      
+%%  |    TID                0               # internal field
+%%  |  }
+%%  |  NumFunctionInputs    1
+%%  |->FunctionInput {                        
+%%        Access            "Global"        # non-reusable system, inputs are
+%%                                          # accessed as global.
+%%        FunctionArgIdx    -1              # Default -1, not an argument to
+%%                                          # subsystem function.
+%%        SLName            "rt_In1"        # Inport name driving this input
+%%        Address           "&model_B.sig1" # Address of the input in the 
+%%                                          # generated code.
+%%        DataType          "real_T"                       
+%%        Dimensions        [1, 1]               
+%%        DataIsStruct      TLC_FALSE                     
+%%        DataIsBus         TLC_FALSE                        
+%%        TID               0               # internal field     
+%%     }
+%%     NumOutports          1                        
+%%     Outport{                                      
+%%       Name               "rt_Out1"       # Name of the port, rt_ is 
+%%                                          # prefixed to maintain uniqueness.
+%%       BlockPath          <Root>/SS1/Out1                  
+%%       DataType           "real_T" 
+%%       Dimensions         [1, 1]
+%%       FunctionOutputIdx  [0]             # Index into the FunctionOutput 
+%%                           |              # corresponding to this outport.
+%%                           |              # If outport, contains multiple 
+%%  -------------------------               # signals (e.g. MUX signal), then
+%% |                                        # outport has multiple function 
+%% |                                        # outputs
+%% |     IsStruct           TLC_FALSE       # Does outport have multiple sig?
+%% |                                        # If so, create a virtual typedef
+%% |     VirtualTypeDef     ""                      
+%% |     TID                0               # internal field
+%% |   }
+%% |   NumFunctionOutputs      1
+%%  -->FunctionOutput {                        
+%%        Access            "Global"        # non-reusable system, outputs are
+%%                                          # accessed as global.
+%%        FunctionArgIdx    -1              # Default -1, not an argument to
+%%                                          # subsystem function.
+%%        SLName            "rt_Out1"       # Outport name driving this output
+%%        Address           "&model_B.sig2" # Address of the output in the 
+%%                                          # generated code.
+%%        DataType          "real_T"                       
+%%        Dimensions        [1, 1]               
+%%        DataIsStruct      TLC_FALSE                     
+%%        DataIsBus         TLC_FALSE                        
+%%        TID               0               # internal field     
+%%     }
+%%     NumControlPorts      0                        
+%%     NumDataStores        0                        
+%%     SystemIdx               0            # internal field      
+%%     CallSiteIdx             0            # internal field
+%%  }
+%%
+%if EXISTS("_ERT_SYSGRAPHMAP_LIB_") == 0
+%assign _ERT_SYSGRAPHMAP_LIB_ = 1
+
+
+%% Function: SLibGetNumSubsystemInterfaces ===================================
+%% Abstract:
+%%   Returns a NUMBER corresponding to number of non-inlined atomic subsystems 
+%%   mapped in SystemGraphicalMap record.
+%%
+%function SLibGetNumSubsystemInterfaces() void
+  %if ISFIELD(::CompiledModel,"SystemGraphicalMap")
+    %assign sysGrMap = ::CompiledModel.SystemGraphicalMap
+    %assign numSys   = sysGrMap.NumSubsystemInterfaces
+    %return numSys
+  %else
+    %assign errTxt = "SystemGraphicalMap does not exist"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetSubsystemInterface =======================================
+%% Abstract:
+%%   Returns a RECORD corresponding to SubsystemInterface record mapped in 
+%%   SystemGraphicalMap. subsysIdx is the index of the SubsystemInterface 
+%%   record in the map. 
+%%
+%function SLibGetSubsystemInterface(subsysIdx) void
+  %if ISFIELD(::CompiledModel,"SystemGraphicalMap")
+    %assign sysGrMap = ::CompiledModel.SystemGraphicalMap
+    %assign numSys      = sysGrMap.NumSubsystemInterfaces
+    %if subsysIdx < numSys
+      %return sysGrMap.SubsystemInterface[subsysIdx]
+    %else
+      %assign errTxt = "Specified subsystem index is out of range"
+      %<LibReportFatalError(errTxt)>
+    %endif
+  %else
+    %assign errTxt = "SystemGraphicalMap does not exist"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetNumExportedFunctions =====================================
+%% Abstract:
+%%   Returns a NUMBER corresponding to number of exported functions mapped in 
+%%   SystemGraphicalMap record.
+%%
+%function SLibGetNumExportedFunctions() void
+  %if ISFIELD(::CompiledModel,"SystemGraphicalMap")
+    %assign sysGrMap = ::CompiledModel.SystemGraphicalMap
+    %assign numSys      = sysGrMap.NumExportedFunctions
+    %return numSys
+  %else
+    %assign errTxt = "Subsystem Graphical Interface does not exist"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetExportedFunction =========================================
+%% Abstract:
+%%   Returns a RECORD corresponding to ExportedFunction record mapped in 
+%%   SystemGraphicalMap. fcnIdx is the index of the ExportedFucntion 
+%%   record in the map. 
+%%
+%function SLibGetExportedFunction(fcnIdx) void
+  %if ISFIELD(::CompiledModel,"SystemGraphicalMap")
+    %assign sysGrMap = ::CompiledModel.SystemGraphicalMap
+    %assign numFcns      = sysGrMap.NumExportedFunctions
+    %if fcnIdx < numFcns
+      %return sysGrMap.ExportedFunction[fcnIdx]
+    %else
+      %assign errTxt = "Specified Function Index is out of range"
+      %<LibReportFatalError(errTxt)>
+    %endif
+  %else
+    %assign errTxt = "SystemGraphicalMap does not exist"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetRootInterface ============================================
+%% Abstract:
+%%   Returns a RECORD corresponding to RootModelInterface record mapped in 
+%%   SystemGraphicalMap. If exists, there should be only one such record in
+%%   the map.
+%%
+%function SLibGetRootInterface() void
+  %if ISFIELD(::CompiledModel,"SystemGraphicalMap")
+    %assign sysGrMap = ::CompiledModel.SystemGraphicalMap
+    %if ISFIELD(sysGrMap, "RootModelInterface")
+      %return sysGrMap.RootModelInterface
+    %else
+      %assign errTxt = "Root Model's graphical interface is not mapped."
+      %<LibReportFatalError(errTxt)>
+    %endif
+  %else
+    %assign errTxt = "SystemGraphicalMap does not exist"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetNumInports ============================================
+%% Abstract:
+%%   Returns a NUMBER corresponding to number of graphical inports in the
+%%   mapped system. "system" can be either a SubsystemInterface record or a
+%%   RootModelInterface record. 
+%%
+%function SLibGetNumInports(system) void
+  %if ISFIELD(system, "NumInports")
+    %return system.NumInports
+  %else
+    %assign errTxt = ...
+      "Specified system does not have graphical inports mapped."
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetInport =================================================
+%% Abstract:
+%%   Returns a Inport record corresponding to a graphical inport in the
+%%   mapped system. "system" can be either a SubsystemInterface record or a
+%%   RootModelInterface record. "inportIdx" is the index of the inport in
+%%   the system
+%%
+%function SLibGetInport(system, inportIdx) void
+  %if ISFIELD(system, "NumInports") && (inportIdx < system.NumInports)
+    %return system.Inport[inportIdx]
+  %else
+    %assign errTxt = ...
+      "Specified system inport is not mapped or is out of range"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetNumFunctionInputsInInport ================================
+%% Abstract:
+%%   Returns the number of function inputs in a graphical inport. A function
+%%   input is the identifier corresponding to the signal coming out of the
+%%   inport. Normally, a graphical inport has one function input. However, if 
+%%   the graphical inport emits a virtual signal e.g. Mux signal, then the 
+%%   inport may contain more than one function input. A virtual signal is a 
+%%   collection of unique signals.
+%%   "inport" is a Inport record in either a SubsystemInterface record or a
+%%   RootModelInterface record.
+%%
+%function SLibGetNumFunctionInputsInInport(inport) void
+  %if ISFIELD(inport, "FunctionInputIdx")
+    %return SIZE(inport.FunctionInputIdx)[1]
+  %else
+    %assign errTxt = ...
+      "Specified inport's function inputs are not mapped"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetFunctionInputOfInport ====================================
+%% Abstract:
+%%   Returns the FunctionInput Record corresponding to a function input in a
+%%   graphical inport. A function input is the identifier corresponding to the 
+%%   signal coming out of the inport. The FunctionInput Record contains the
+%%   characterstics (Data Type, Dimensisons) of the identifier along with 
+%%   its name and address. 
+%%   Normally, a graphical inport has one function input. However, if 
+%%   the graphical inport emits a virtual signal e.g. Mux signal, then the 
+%%   inport may contain more than one function input. A virtual signal is a 
+%%   collection of unique signals.
+%%   "system" is either a SubsystemInterface or a RootModelInterface record.
+%%   "inport" is a Inport record in the system
+%%   "functionInIdx" is the index of the function Input
+%%
+%function SLibGetFunctionInputOfInport(system, inport, functionInIdx) void
+  %if ISFIELD(inport, "FunctionInputIdx") && ...
+    (functionInIdx <  SLibGetNumFunctionInputsInInport(inport) )
+    %return system.FunctionInput[inport.FunctionInputIdx[functionInIdx]]
+  %else
+    %assign errTxt = ...
+      "Specified inport is not mapped in SystemGraphicalMap record"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetNumDataStores ============================================
+%% Abstract:
+%%   Returns a NUMBER corresponding to number of Data Stores in the mapped
+%%   system. "system" can be either a SubsystemInterface record or a
+%%   RootModelInterface record. 
+%%
+%function SLibGetNumDataStores(system) void
+  %if ISFIELD(system, "NumDataStores")
+    %return system.NumDataStores
+  %else
+    %assign errTxt = ...
+      "Specified system does not have DataStores mapped."
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetDataStore =================================================
+%% Abstract:
+%%   Returns a DataStore record corresponding to a Data Store in the mapped
+%%   system. "system" can be either a SubsystemInterface record or a
+%%   RootModelInterface record. "dsIdx" is the index of the DataStore in
+%%   the system
+%%
+%function SLibGetDataStore(system, dsIdx) void
+  %if ISFIELD(system, "NumDataStores") && (dsIdx < system.NumDataStores)
+    %return system.DataStore[dsIdx]
+  %else
+    %assign errTxt = ...
+      "Specified system is not mapped in SystemGraphicalMap record"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetNumDiscStates ============================================
+%% Abstract:
+%%   Returns a NUMBER corresponding to number of Discrete states in the mapped
+%%   system. "system" can be either a SubsystemInterface record or a
+%%   RootModelInterface record. 
+%%
+%function SLibGetNumDiscStates(system) void
+  %if ISFIELD(system, "NumDiscStates")
+    %return system.NumDiscStates
+  %else
+    %assign errTxt = ...
+      "Specified system does not have DiscStates mapped."
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetDiscState =================================================
+%% Abstract:
+%%   Returns a DiscState record corresponding to a Discrete State in the mapped
+%%   system. "system" can be either a SubsystemInterface record or a
+%%   RootModelInterface record. "dsIdx" is the index of the DiscState in
+%%   the system
+%%
+%function SLibGetDiscState(system, dsIdx) void
+  %if ISFIELD(system, "NumDiscStates") && (dsIdx < system.NumDiscStates)
+    %return system.DiscState[dsIdx]
+  %else
+    %assign errTxt = ...
+      "Specified system is not mapped in SystemGraphicalMap record"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetNumOutports ============================================
+%% Abstract:
+%%   Returns a NUMBER corresponding to number of graphical outports in the
+%%   mapped system. "system" can be either a SubsystemInterface record or a
+%%   RootModelInterface record. 
+%%
+%function SLibGetNumOutports(system) void
+  %if ISFIELD(system, "NumOutports")
+    %return system.NumOutports
+  %else
+    %assign errTxt = ...
+      "Specified system does not have its graphical outports mapped"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetOutport =================================================
+%% Abstract:
+%%   Returns a Outport record corresponding to a graphical outport in the
+%%   mapped system. "system" can be either a SubsystemInterface record or a
+%%   RootModelInterface record. "outportIdx" is the index of the outport in
+%%   the system
+%%
+%function SLibGetOutport(system, outportIdx) void
+  %if ISFIELD(system, "NumOutports") && (outportIdx < system.NumOutports)
+    %return system.Outport[outportIdx]
+  %else
+    %assign errTxt = ...
+      "Specified system is not mapped in SystemGraphicalMap record"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetNumFunctionOutputsInOutport ===============================
+%% Abstract:
+%%   Returns the number of function outputs in a graphical outport. A function
+%%   output is the identifier corresponding to the signal coming into the
+%%   outport. Normally, a graphical outport has one function output. However, 
+%%   if a virtual signal e.g. Mux signal comes into a outport, then the 
+%%   outport may contain more than one function output. A virtual signal is a 
+%%   collection of unique signals.
+%%
+%%   "outport" is a Outport record in either a SubsystemInterface record or a
+%%   RootModelInterface record.
+%%
+%function SLibGetNumFunctionOutputsInOutport(outport) void
+  %if ISFIELD(outport, "FunctionOutputIdx")
+    %return SIZE(outport.FunctionOutputIdx)[1]
+  %else
+    %assign errTxt = ...
+      "Specified outport is not mapped in SystemGraphicalMap record"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetFunctionOutputOfOutport ===================================
+%% Abstract:
+%%   Returns the FunctionOutput Record corresponding to a function output of a
+%%   graphical outport. A function output is the identifier corresponding to 
+%%   the signal coming into the outport. The FunctionOutput Record contains the
+%%   characterstics (Data Type, Dimensisons) of the identifier along with 
+%%   its name and address. 
+%%   Normally, a graphical outport has one function output. However, 
+%%   if a virtual signal e.g. Mux signal comes into a outport, then the 
+%%   outport may contain more than one function output. A virtual signal is a 
+%%   collection of unique signals.
+%%
+%%   "system" is either a SubsystemInterface or a RootModelInterface record.
+%%   "outport" is a Outport record in the system
+%%   "functionOutIdx" is the index of the function output
+%%
+%function SLibGetFunctionOutputOfOutport(system, outport, functionOutIdx) void
+  %if ISFIELD(outport, "FunctionOutputIdx") && ...
+    (functionOutIdx < SLibGetNumFunctionOutputsInOutport(outport))
+    %return system.FunctionOutput[outport.FunctionOutputIdx[functionOutIdx]]
+  %else
+    %assign errTxt = ...
+      "Specified outport is not mapped in SystemGraphicalMap record"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: SLibGetFunctionIODimensions ======================================
+%% Abstract:
+%%   Returns a Vector corresponding to Dimensions of a function input or output
+%%   identifier. 
+%%
+%%   Identifier Type       Return Value
+%%   ---------------       ------------
+%%   Scalar                [1, 1]
+%%   Vector (Mx1)          [M, 1]
+%%   Vector (1xN)          [1, N]
+%%   Matrix (MxN)          [M, N]
+%%   N-D    (MxNxPx...)    [M, N, P, ...] %% Simulink does not support n-D sig
+%%
+%%   "functionIO" can be either a FunctionInput or FunctionOutput or a
+%%   DataStore record. 
+%%
+%function SLibGetFunctionIODimensions(functionIO) void
+  %if ISFIELD(functionIO, "Dimensions")
+    %return functionIO.Dimensions
+  %endif
+%endfunction
+
+%% Function: SLibGetFunctionIOWidth ==========================================
+%% Abstract:
+%%   Returns a Number corresponding to width of a function input or output
+%%   identifier. 
+%%
+%%   Identifier Type       Return Value
+%%   ---------------       ------------
+%%   Scalar                1
+%%   Vector (Mx1)          M
+%%   Vector (1xN)          N
+%%   Matrix (MxN)          M x N
+%%   N-D    (MxNxPx...)    M x N x P x ... %% Simulink does not support n-D sig
+%%
+%%   "functionIO" can be either a FunctionInput or FunctionOutput or a
+%%   DataStore record. 
+%%
+%function SLibGetFunctionIOWidth(functionIO) void
+  %assign width   = 1
+  %assign dims    = SLibGetFunctionIODimensions(functionIO)
+  %assign numDims = SIZE(dims)[1]
+  %assign width   = dims[numDims-1]
+  %foreach dimIdx = numDims-1
+    %assign width = width*dims[dimIdx]
+  %endforeach
+  %return width
+%endfunction
+
+%% (LOCAL HELPER FUNCTIONS) %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% No dependence should be placed on the following functions
+%%
+%% Function: SLibCreateSystemGraphicalMap ===================================
+%% Abstract:
+%%   Creates SystemGraphicalMap record. The SystemGraphicalMap provides a 
+%%   mapping of the above system's graphical input/output to its corresponding 
+%%   identifier in the generated C-code.
+%%
+%function SLibCreateSystemGraphicalMap(mode) void
+  
+  %if ISFIELD(::CompiledModel,"SystemGraphicalMap")
+    %% API already mapped
+    %return ""
+  %endif
+   
+  %assert (!IsModelReferenceTarget()) 
+  
+  %% Create default map
+  %addtorecord ::CompiledModel  \
+  SystemGraphicalMap {        \
+    NumSubsystemInterfaces 0  \
+    NumExportedFunctions   0  \
+  }
+  %assign sysGrMap = ::CompiledModel.SystemGraphicalMap
+  
+  %% Construct the map by looping through BlockHierarchyMap
+  %with ::CompiledModel.BlockHierarchyMap
+    %foreach subsysIdx = NumSubsystems
+      %with Subsystem[subsysIdx]
+        %% For GenCustomStepWrapper, subsystem records, are not necessary.
+        %if mode == "all"
+         %foreach subsysBlkIdx = NumSubsystemBlocks
+          %assign blk         = Block[SubsystemBlocks[subsysBlkIdx]]
+          %assign systemRec   = FcnGetSubsysSystemRecord(blk)
+          %if !ISEMPTY(systemRec) && !ISFIELD(systemRec,"RTWSystemCodeOptIntf") && ...
+              !ISFIELD(systemRec, "RTWSystemWithReturnValue")
+            %% If it is a valid non-inlined subsystem, map the subsystem 
+            %% interface. Refer to FcnGetSubsysSystemRecord()
+            %assign isFcnCall    = (systemRec.Type == "function-call")
+            
+            %if isFcnCall && ISFIELD(systemRec, "Exported") && ...
+              (systemRec.Exported == "yes")
+              %% Subsystem is a exported function. Add a ExportedFunction
+              %% record to the SystemGraphicalMap
+              %assert (ExportFunctionsMode != 0)
+              %assign expFcn    = FcnAddExpFcnToInterface(sysGrMap, systemRec)
+              %assign expSystem = System[expFcn.SystemIdx]
+              
+              %% Add inputs to exported function interface
+              %if ISFIELD(expSystem, "ExternalInputs")
+                %assign numInputs = SIZE(expSystem.ExternalInputs,1)
+                %foreach inIdx = numInputs
+                  %assign extInIdx = expSystem.ExternalInputs[inIdx]
+                  %<FcnAddInputToExportFunction(extInIdx, expFcn)>
+                %endforeach
+              %endif
+              
+              %% Add outputs to exported function interface
+              %if ISFIELD(expSystem, "ExternalOutputs")
+                %assign numOutputs = SIZE(expSystem.ExternalOutputs,1)
+                %foreach outIdx = numOutputs
+                  %assign extOutIdx = expSystem.ExternalOutputs[outIdx]
+                  %<FcnAddOutputToExportFunction(extOutIdx, expFcn)>
+                %endforeach
+              %endif
+              
+            %else
+              %% Subsystem is a non-inlined atomic subsystem. Add a 
+              %% SubsystemInterface record to SystemGraphicalMap
+              %assign ssInterface = ...
+                FcnAddSubsysToInterface(sysGrMap, systemRec, blk)
+              
+              %% Add inputs to SubsystemInterface record
+              %foreach inIdx = blk.NumDataInputPorts
+                %assign inputPort = blk.DataInputPort[inIdx]
+                %<FcnAddInportToInterface(ssInterface, inputPort)>
+              %endforeach
+              
+              %% Add inputs to SubsystemInterface record
+              %foreach oIdx = blk.NumDataOutputPorts
+                %assign outputPort = blk.DataOutputPort[oIdx]
+                %<FcnAddOutportToInterface(ssInterface, outputPort)>
+              %endforeach
+              
+              %% Add Data Stores to SubsystemInterface record
+              %<FcnAddDataStoresToSSInterface(ssInterface, systemRec)>
+              
+              %% Add Discrete States to SubsystemInterface record
+              %assign childSystem = Subsystem[ChildSubsystems[subsysBlkIdx]]
+              %<FcnAddDiscStatesToSSInterface(ssInterface, childSystem)>
+              
+            %endif  %% ExportFunctionsMode
+          %endif %% !isEmptySystemRec
+        %endforeach %% subsysBlkIdx = NumSubsystemBlocks
+       %endif %% mode == "all"
+       
+        %if Subsystem[subsysIdx].Type == "root"
+          %% Susbsytem is a root model. Add RootModelInterface to 
+          %% SystemGraphicalMap record
+          %assign rootSystem   = System[NumSystems-1]
+          %assign rootInterface= FcnAddRootToInterface(sysGrMap, rootSystem)
+          
+          %% Add inputs to RootModelInterface record
+          %foreach inIdx = NumInportBlocks
+            %assign inportBlk = Block[InportBlocks[inIdx]]
+            %assert (inportBlk.NumDataOutputPorts == 1)
+            %assign inport    = inportBlk.DataOutputPort[0]
+            %if ISEMPTY(inport.SLName)
+              %assign inport.SLName = inportBlk.SLName
+            %endif
+            %<FcnAddInportToInterface(rootInterface, inport)>
+          %endforeach
+          
+          %% Add outputs to RootModelInterface record
+          %foreach outIdx = NumOutportBlocks
+            %assign outportBlk = Block[OutportBlocks[outIdx]]
+            %assign outport    = outportBlk.DataInputPort[0]
+            %if ISEMPTY(outport.SLName)
+              %assign outport.SLName = outportBlk.SLName
+            %endif
+            %<FcnAddOutportToInterface(rootInterface, outport)>
+          %endforeach
+          
+          %% Add Data Stores to RootModelInterface record
+          %foreach dsIdx = NumDataStoreBlocks
+            %assign dsBlk = Block[DataStoreBlocks[dsIdx]]
+            %<FcnAddDataStoresToRootInterface(rootInterface, dsBlk)>
+          %endforeach
+          
+          %% Add Discrete States to RootModeInterface record
+          %<FcnAddDiscStatesToSSInterface(rootInterface, Subsystem[subsysIdx])>
+        
+        %endif %% Subsystem[subsysIdx].Type == "root"
+      %endwith
+    %endforeach %% subsysIdx = NumSubsystems
+  %endwith
+%endfunction
+
+%% Function: FcnGetSubsysSystemRecord ========================================
+%% Abstract:
+%%   If the Subsystem is non-inlined, return the System record
+%%   The following subsystems are not considered in this version
+%%       - Conditional subsystems - trigger and enable
+%%       - Action subsystems (FOR, WHILE, IF, SWITCH)
+%%       - Multi-Rate subsystems
+%% 
+%function FcnGetSubsysSystemRecord(grBlock) void
+  
+  %if (grBlock.NumDataInputPorts == 0) && ...
+    (grBlock.NumDataOutputPorts == 0)  && ...
+    (grBlock.NumControlInputPorts == 0) && ...
+    (grBlock.NumDataStores == 0)
+    
+    %% Empty subsystem or it does not have a graphical interface
+    %return []
+  %endif
+    
+  %if SLibSystemBlockExist(grBlock) || (grBlock.Virtual == 0)
+    %assign blockIndex = SLibGetSystemBlockIdx(grBlock)
+    %with ::CompiledModel
+      %assign system = System[blockIndex[0]]
+      %assign  block = system.Block[blockIndex[2]]
+      %assert (block.Type == "SubSystem")
+      %assign subsystem        = System[block.CallSiteInfo.SystemIdx]
+      %assign isSingleRate     = LibIsSingleRateSystem(subsystem)
+      %assign isAtomic         = (subsystem.Type == "atomic")
+      %assign isFcnCall        = (subsystem.Type == "function-call")
+      %assign isSupported      = (isAtomic || isFcnCall)
+      %assign isInlined        = LibSystemIsInlined(subsystem)
+      %if isSupported && !isInlined && isSingleRate
+        %assign isOutputFcnEmpty = LibSystemFcnIsEmpty(subsystem,"Output")
+        %assign needsCPI = LibSystemFcnNeedsCPI(subsystem, "OutputUpdate")
+        %if !isOutputFcnEmpty && !needsCPI
+          %return subsystem
+        %endif
+      %endif
+    %endwith
+  %endif
+  %return []
+%endfunction
+
+%% Function: FcnGetCallSiteIdx =============================================
+%% Abstract:
+%%   Returns the CallSiteIdx of a Subsystem block in its parent system.
+%%   grBlock is the subsystem Block record in the BlockHierarchyMap.
+%%
+%function FcnGetCallSiteIdx(grBlock) void
+  %if ISFIELD(grBlock, "_callsiteidx")
+    %return grBlock._callsiteidx
+  %else  
+    %assign errTxt = "CallSite Idx not available for graphical block"
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnGetSubsystemBlockPath(grBlock) void
+  %return grBlock.Name
+%endfunction
+
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddSubsysToInterface(sysGrMap, systemRec, blk) void
+  %assert (!LibSystemIsInlined(systemRec))
+  %assign csIdx       = FcnGetCallSiteIdx(blk) %% Get Call-site Idx
+  %assign instIdx     = blk._blkref[1]
+  %assign blkPath     = FcnGetSubsystemBlockPath(blk) %% Get BlockPath
+  %assign numSubsys   = sysGrMap.NumSubsystemInterfaces
+  %assign hdrFile     = "%<systemRec.SystemHeaderFileName>.h"
+  %if LibSystemIsReusedFcn(systemRec)
+    %assign subsysName  = LibGetRecordIdentifier(systemRec) + "_%<csIdx+1>"
+  %else
+    %assign subsysName  = LibGetRecordIdentifier(systemRec)
+  %endif
+  %addtorecord sysGrMap                       \
+  SubsystemInterface {                           \
+     InterfaceType      "Subsystem"              \   
+     BlockPath          blkPath                  \
+     Name               subsysName               \
+     SystemIdx          systemRec.SystemIdx      \
+     CallSiteIdx        csIdx                    \
+     HeaderFile         hdrFile                  \
+     NumInports         0                        \
+     NumOutports        0                        \
+     NumControlPorts    0                        \
+     NumDataStores      0                        \
+     NumFunctionInputs  0                        \
+     NumFunctionOutputs 0                        \
+     NumDiscStates  0                        \
+  }
+  %assign sysGrMap.NumSubsystemInterfaces = numSubsys + 1
+  
+  %return sysGrMap.SubsystemInterface[numSubsys]
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddExpFcnToInterface(sysGrMap, systemRec) void
+  %assert (!LibSystemIsInlined(systemRec))
+  %assign numExpFcns   = sysGrMap.NumExportedFunctions
+  %assign hdrFile     = "%<systemRec.SystemHeaderFileName>.h"   
+  %addtorecord sysGrMap                       \
+  ExportedFunction {                             \
+     InterfaceType      "ExportedFunction"       \   
+     Name               LibGetRecordIdentifier(systemRec) \
+     SystemIdx          systemRec.SystemIdx      \
+     HeaderFile         hdrFile                  \
+     NumDataStores      0                        \
+     NumFunctionInputs  0                        \
+     NumFunctionOutputs 0                        \    
+  }
+  %assign sysGrMap.NumExportedFunctions = numExpFcns + 1
+  
+  %return sysGrMap.ExportedFunction[numExpFcns]
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddRootToInterface(sysGrMap, rootSystem) void
+  %assert (rootSystem.RTWSystemCode > 0)
+  %assign hdrFile     = "%<rootSystem.SystemHeaderFileName>.h"
+  %addtorecord sysGrMap                             \
+  RootModelInterface {                           \
+     InterfaceType      "RootModel"              \   
+     ModelName          ::CompiledModel.Name       \
+     BlockPath          "<Root>"                 \
+     SystemIdx          rootSystem.SystemIdx     \
+     HeaderFile         hdrFile                  \
+     NumInports         0                        \
+     NumOutports        0                        \
+     NumDataStores      0                        \
+     NumDiscStates      0                        \
+     NumControlPorts    0                        \
+     NumFunctionInputs  0                        \
+     NumFunctionOutputs 0                        \    
+  }
+  %return sysGrMap.RootModelInterface
+%endfunction
+
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddInportToInterface(interface, inputPort) void
+  
+  %if (inputPort.NumRegions > 0) && ...
+    (IDNUM(inputPort.Region[0]._Source[0])[0] == "F")
+    %% Function-call signal feeding an inport. This is not a graphical input
+    %return
+  %endif
+  
+  %assign slName = "rt_" + STRING(inputPort.SLName)
+  %assign slName = FcnConvertNameToIdentifier(slName)
+  %if (TYPE(slName) == "Number")
+    %% FcnConvertNameToIdentifier failed because of special characters (e.g. ')
+    %% Use default name e.g rt_In2 for input port# 2 (1-based indexing)
+    %assign portNum = interface.NumInports + 1
+    %assign slName = "rt_" + "In" + STRING(portNum)
+  %endif
+  
+  %assign blkPath  = "'%<interface.BlockPath>/%<inputPort.SLName>'"
+  
+  %% Add a Inport record in the interface
+  %addtorecord interface                       \
+  Inport{                                      \
+    Name               slName                  \
+    BlockPath          blkPath                 \
+    DataType           "real_T"                \
+    IsStruct           TLC_FALSE               \
+    IsBus              TLC_FALSE               \
+    Dimensions         [1, 1]                  \
+    FunctionInputIdx   []                      \
+    VirtualTypeDef     ""                      \
+    TID                0                       \
+  }
+  %assign inport = interface.Inport[interface.NumInports]
+    
+  %% If NumRegions > 1, the port is virtual, need to create virtual typedef
+  %assign typeDefCode  = ""
+  %assign needsTypedef = TLC_FALSE 
+  %if (inputPort.NumRegions > 1)
+    %assign needsTypedef = TLC_TRUE
+  %endif
+  
+  %% does system generate reusable code
+  %assign isRoot  = (interface.InterfaceType == "RootModel") ? 1 : 0
+  %if isRoot
+    %assign isReusable = ConfigSet.MultiInstanceERTCode
+  %else
+    %assign isReusable = LibSystemIsReusedFcn(System[interface.SystemIdx])
+  %endif
+  
+  %% Loop through regions to map functional inputs
+  %foreach regIdx = inputPort.NumRegions
+    %assign region  = inputPort.Region[regIdx]
+    %assign offset  = region.Offset
+    %assign sigRec  = FcnGetSigRecFromRegion(region)
+    
+    %if ISEMPTY(sigRec)
+      %% Ground block signals or fcn-calls
+      %% assign a TID of 0
+      %assign sigTID = 0
+    %elseif !ISFIELD(sigRec, "TID")
+      %% Continuous states
+      %% assign a TID of 0
+      %assign sigTID = 0
+    %else
+      %%assign sigTID     = sigRec.TID
+      %if TYPE(sigRec.TID) == "Identifier"
+        %if sigRec.TID == "constant"
+          %% Constant expr or invariant signals assign a TID of 0        
+          %assign sigTID = 0
+        %elseif sigRec.TID == "trigger"
+          %% signal inside a conditional subsystem - For e.g fcn call
+          %% Get TID of the subsystem
+          %assign sysRecord = System[interface.SystemIdx]
+          %assign sigTID    = LibGetSubsystemTID(sysRecord, TLC_TRUE)
+        %endif
+      %elseif TYPE(sigRec.TID) == "Vector"
+        %assign sigTID = sigRec.TID[0]
+      %else
+        %assign sigTID = sigRec.TID
+      %endif
+      %assign inport.TID = sigTID
+    %endif
+    %assign dataAttrib = FcnGetDataAttribFromRecord(sigRec, isReusable)
+    %assign dataAttrib = FcnUpdateDataAttribBasedOnBusSelElIdx(region, dataAttrib)
+    
+    %if !ISEMPTY(dataAttrib)  %% Region corresponds to global data
+      %if LibIsStructDataType(dataAttrib.DataTypeIdx)
+        %assign regIsBus = TLC_TRUE
+      %else
+        %assign regIsBus = TLC_FALSE
+      %endif
+      
+      %% Check if data is complex
+      %if dataAttrib.IsComplex
+        %assign regDType = ...
+          LibGetDataTypeComplexNameFromId(dataAttrib.DataTypeIdx)
+        %assign regIsStruct = TLC_TRUE
+      %else
+        %assign regDType    = LibGetDataTypeNameFromId(dataAttrib.DataTypeIdx)
+        %assign regIsStruct = TLC_FALSE
+      %endif
+      
+      %% Region width
+      %assign regWidth   = SLibGetFunctionIOWidth(region)
+
+      %assign directAccess = dataAttrib.Symbol
+
+      %% Offset base address if necessary
+      %if offset > 0
+        %% Example situation
+        %% -----------------
+        %% typedef {
+        %%    creal_T Sig1[3]; 
+        %%    real_T  Sig2[3]
+        %% } BlockIO;
+        %%
+        %% BlockIO rtB;
+        %%
+        %% Accessing the address of 3rd element of Sig1
+        %% addr = &(( (creal_T *) (&rtB.Sig1[0].re))[2])
+        %%
+        %% Accessing the address of 3rd element of Sig2
+        %% addr = &((&rtB.Sig1[0])[2])
+        %%
+        %assign castPrefix = dataAttrib.IsComplex ? "(%<regDType> *)" : ""
+        %assign addr = "&((%<castPrefix>%<dataAttrib.BaseAddress>)[%<offset>])"
+      %else
+        %assign addr = dataAttrib.BaseAddress
+      %endif  %% endif offset > 0
+      
+      %% If typedef required, add region to typedef
+      %if needsTypedef
+        %assign optArray    = (regWidth > 1) ? "[%<regWidth>]" : ""
+        %assign ptr         = ""
+        %assign memName     = "Element%<regIdx>" 
+        %assign memberDecl  = "%<regDType> %<memName>%<optArray>;" + "\n"
+        %assign typeDefCode = typeDefCode + memberDecl
+        %assign member      = ".%<memName>" %% Structure Member access
+        %assign inport.IsStruct = TLC_TRUE
+      %else 
+        %% Input port contains of only one region: graphical input equivalent
+        %% to functional input
+        %assign member = ""
+        %assign ptr = ""
+        %assign inport.DataType   = regDType
+        %assign inport.Dimensions = region.Dimensions
+        %assign inport.IsStruct   = regIsStruct
+        %assign inport.IsBus      = regIsBus
+      %endif
+      
+      %assign argIdx = region.FunctionArgumentIdx
+      
+      %if !isRoot && LibSystemIsReusedFcn(System[interface.SystemIdx]) && (argIdx == -1)
+        %% For reusable subsystems, the input is always a CanonicalInput. If
+        %% the input arg is not presented, then it has not been properly 
+        %% represented in BHM (e.g. DeMux). Presently, skip these subsystems.
+        %continue
+      %endif
+      
+      %if dataAttrib.Access == "Unconnected"
+        %% This is an unconnected signal. Skip adding this as a function input
+        %continue
+      %endif
+      
+      %% Add Function Input corresponding to the region
+      %addtorecord interface                           \
+      FunctionInput {                                  \
+           Access         dataAttrib.Access               \
+           SLName         "%<ptr>%<inport.Name>%<member>" \
+           Address        addr                            \  
+           DataType       regDType                        \
+           DataIsStruct   regIsStruct                     \
+           DataIsBus      regIsBus                        \
+           Dimensions     region.Dimensions               \
+           FunctionArgIdx argIdx                          \
+           TID            sigTID                          \
+           Symbol         directAccess                    \
+      }
+      
+      %assign numIn = interface.NumFunctionInputs
+      
+      %if offset > 0
+         %addtorecord interface.FunctionInput[numIn] Offset offset
+      %endif
+      
+      %% Update FunctionInputIdx of the Input Port
+      %assign inport.FunctionInputIdx = inport.FunctionInputIdx + numIn
+      
+      
+      %% If FunctionInput is an argument (argIdx >= 0), create/add
+      %% to a hash table of function input args 
+      %if (argIdx >= 0)
+        %if !ISFIELD(interface, "FunctionInputHash")
+          %addtorecord interface FunctionInputHash \
+          {FuncIn%<argIdx> interface.FunctionInput[numIn]}
+        %else
+          %if !ISFIELD(interface.FunctionInputHash, "FuncIn%<argIdx>")
+            %addtorecord interface.FunctionInputHash \
+            FuncIn%<argIdx> interface.FunctionInput[numIn]
+          %endif
+        %endif
+      %endif %% argIdx > 0
+      
+      %% Add Value field if necessary
+      %if ISFIELD(dataAttrib, "Value")
+        %addtorecord interface.FunctionInput[numIn] \
+        Value dataAttrib.Value
+      %endif
+      
+      %% Update number of Function Inputs in Interface
+      %assign interface.NumFunctionInputs = numIn + 1 
+    
+    %endif   %% !ISEMPTY(dataAttrib)
+  %endforeach %% %foreach NumRegions
+  
+  %% Create a structure for virtual input ports
+  %if needsTypedef
+    %assign inDataType = "%<interface.Name>_In%<interface.NumInports>Type"
+    %openfile typedef
+    typedef struct {
+      %<typeDefCode>
+    } %<inDataType>; /* Inport: %<inport.BlockPath> */
+    
+    %closefile typedef
+    %assign inport.VirtualTypeDef = typedef
+    %assign inport.DataType       = inDataType
+    %assign inport.Dimensions     = [1, 1]
+  %endif
+  
+  %% update number of inports in the interface
+  %assign interface.NumInports = interface.NumInports + 1
+%endfunction
+
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddOutportToInterface(interface, outputPort) void
+  
+  %if (outputPort.NumRegions > 0) && ...
+    (IDNUM(outputPort.Region[0]._Source[0])[0] == "F")
+    %% Function-call signal feeding an inport
+    %return
+  %endif
+  
+  %assign slName = "rt_" + STRING(outputPort.SLName)
+  %assign slName = FcnConvertNameToIdentifier(slName)
+  %if (TYPE(slName) == "Number") 
+    %% FcnConvertNameToIdentifier failed because of special characters (e.g. ')
+    %% Use default name e.g. rt_Out2 for output port# 2 (1-based indexing)
+    %assign portNum = interface.NumOutports + 1
+    %assign slName = "rt_" + "Out" + STRING(portNum)
+  %endif
+  
+  %assign blkPath  = "'%<interface.BlockPath>/%<outputPort.SLName>'"
+  
+  %% Add Outport record to interface
+  %addtorecord interface                        \
+  Outport {                                     \
+    Name               slName                   \
+    BlockPath          blkPath                  \
+    DataType           "real_T"                 \
+    IsStruct           TLC_FALSE                \
+    IsBus              TLC_FALSE                \
+    Dimensions         [1, 1]                   \
+    VirtualTypeDef     ""                       \
+    FunctionOutputIdx  []                       \
+    TID                0                        \
+  }
+  %assign output = interface.Outport[interface.NumOutports]
+  
+  %assign MoreThanOneRegions = TLC_FALSE 
+  %if (outputPort.NumRegions > 1)
+    %assign MoreThanOneRegions = TLC_TRUE
+    %% Calculate the total width of the array for MoreThanOneRegions' case
+    %assign elementsWidthSoFar = 0 
+  %endif
+  
+  %% If NumRegions > 1, and the interface record type
+  %% is Subsystem, then may need
+  %% to create virtual typedef
+  %assign typeDefCode  = ""
+  %assign needsTypedef = TLC_FALSE 
+  %if MoreThanOneRegions
+      %if interface.InterfaceType == "Subsystem"
+          %assign needsTypedef = TLC_TRUE
+      %endif
+  %endif
+
+  %assign preRegDataType=""
+  
+  %% Loop through regions to map functional outputs
+  %foreach regIdx = outputPort.NumRegions
+    %assign region = outputPort.Region[regIdx]
+    %assign offset = region.Offset
+    %assign sigRec = FcnGetSigRecFromRegion(region)
+    %assign isRoot = (interface.InterfaceType == "RootModel") ? 1 : 0
+    %if isRoot
+      %assign isReusable = ConfigSet.MultiInstanceERTCode
+    %else
+      %assign isReusable = LibSystemIsReusedFcn(System[interface.SystemIdx])
+    %endif
+    %if isRoot
+      %assign dataAttrib = FcnGetDataAttribOfRootOutput(...
+        sigRec, isReusable, interface.NumOutports, regIdx)
+    %elseif !isReusable && (outputPort.Connected == 0) && !ISEMPTY(sigRec)
+      %% Unconnected outport
+      %assign access      = "ConstInlined"
+      %assign addr        = ""
+      %% Unconnected outport's source is not a ground/FcnCall signal
+      %assign dataTypeIdx = LibGetRecordDataTypeId(sigRec)
+      %assign dimensions  = [%<LibGetRecordWidth(sigRec)>]
+      %assign isComplex   = LibGetRecordIsComplex(sigRec)
+      %if ISFIELD(sigRec, "InitialValue") && !ISEMPTY(sigRec.InitialValue)
+        %assign value = sigRec.InitialValue
+      %else
+        %assign value = []
+      %endif
+      %createrecord dataAttrib {         \
+        Access      access               \
+        BaseAddress addr                 \
+        DataTypeIdx dataTypeIdx          \
+        IsComplex   isComplex            \
+        Dimensions  dimensions           \
+        Value       value                \
+      }
+    %else
+      %assign dataAttrib = FcnGetDataAttribFromRecord(sigRec, isReusable)
+      %assign dataAttrib = FcnUpdateDataAttribBasedOnBusSelElIdx(region, dataAttrib)
+    %endif
+    %if ISEMPTY(sigRec)
+      %assign sigTID = 0
+    %elseif !ISFIELD(sigRec, "TID")
+      %% Continuous states
+      %% assign a TID of 0
+      %assign sigTID = 0
+    %else
+      %if TYPE(sigRec.TID) == "Identifier"
+        %if sigRec.TID == "constant"
+          %% Constant expr or invariant signals assign a TID of 0        
+          %assign sigTID = 0
+        %elseif sigRec.TID == "trigger"
+          %% signal inside a conditional subsystem - For e.g fcn call
+          %% Get TID of the subsystem
+          %assign sysRecIdx = SLibGetSystemAndCallSideIndex(sigRec)[0]
+          %assign sigTID    = LibGetSubsystemTID(System[sysRecIdx], TLC_TRUE)
+        %endif
+      %elseif TYPE(sigRec.TID) == "Vector"
+        %assign sigTID = sigRec.TID[0]
+      %else
+        %assign sigTID = sigRec.TID
+      %endif
+      %assign output.TID = sigTID
+    %endif
+    
+    %if !ISEMPTY(dataAttrib)
+      %if dataAttrib.IsComplex
+        %assign regDType = ...
+          LibGetDataTypeComplexNameFromId(dataAttrib.DataTypeIdx)
+        %assign regIsStruct = TLC_TRUE
+      %else
+        %assign regDType    = LibGetDataTypeNameFromId(dataAttrib.DataTypeIdx)
+        %assign regIsStruct = TLC_FALSE
+      %endif
+      
+      %assign isBus = LibDataTypeIsBus(dataAttrib.DataTypeIdx)
+      %assign output.IsBus = isBus
+      
+      %assign regWidth    = SLibGetFunctionIOWidth(region)
+
+      %if ISFIELD(dataAttrib, "Symbol")
+        %assign directAccess = dataAttrib.Symbol
+      %else
+        %assign directAccess = ""
+      %endif
+
+      %%When outport signal is got from FcnGetDataAttribOfRootOutput, then
+      %%even for scalar signals, we also need to use [] access operator,
+      %%e.g., Symbol[0]
+ 
+      %% Offset base address if necessary
+      %if !(isRoot && !ISEMPTY(sigRec) && sigRec.MemoryMapIdx[2] == -1) ...
+        && offset > 0 
+        %% Example situation
+        %% -----------------
+        %% typedef {
+        %%    creal_T Sig1[3]; 
+        %%    real_T  Sig2[3]
+        %% } BlockIO;
+        %%
+        %% BlockIO rtB;
+        %%
+        %% Accessing the address of 3rd element of Sig1
+        %% addr = &(( (creal_T *) (&rtB.Sig1[0].re))[2])
+        %%
+        %% Accessing the address of 3rd element of Sig2
+        %% addr = &((&rtB.Sig1[0])[2])
+        %%
+        %assign castPrefix = dataAttrib.IsComplex ? "(%<regDType> *)" : ""
+        %assign addr = "&((%<castPrefix>%<dataAttrib.BaseAddress>)[%<offset>])"
+
+        %assign realOffset = offset
+        %if ISFIELD(dataAttrib, "Offset")
+            %assign realOffset = offset + dataAttrib.Offset
+        %endif
+      %else
+        %assign addr = dataAttrib.BaseAddress
+        
+        %assign realOffset = ""
+         
+        %if ISFIELD(dataAttrib, "Offset")
+              %assign realOffset = dataAttrib.Offset
+        %elseif ISFIELD(dataAttrib, "NeedsIndex") && dataAttrib.NeedsIndex == 1
+          %% Data source is a non-scalar; will have offset even if 0
+          %assign realOffset = 0
+        %endif %%ISFIELD(dataAttrib, "NeedsIndex") && dataAttrib.NeedsIndex == 1        
+      %endif  %% endif offset > 0
+      
+         
+      %if needsTypedef
+        %assign optArray    = (regWidth > 1) ? "[%<regWidth>]" : ""
+        %assign ptr         = (dataAttrib.Access == "ConstInlined") ?  "" : "&"
+        %assign memName     = "Element%<regIdx>" 
+        %assign memberDecl  = "%<regDType> %<memName>%<optArray>;" + "\n"
+        %assign typeDefCode = typeDefCode + memberDecl
+        %assign member      = "->%<memName>" %% Structure Member access
+        %assign output.IsStruct = TLC_TRUE
+        %assign elementOffset = ""
+      %elseif MoreThanOneRegions
+        %% Will reach this case if MoreThanOneRegions is true and root-model, 
+        %% in this case, array is used instead of structure typedef
+        %% elementOffset is used to indicate for each region, what the starting position
+        %% is in the array; elementsWidthSoFar is to adds up all region dimensions so that
+        %% we know how big the array needs to be.
+        %assign ptr         = (dataAttrib.Access == "ConstInlined") ?  "" : "&"
+        %assign output.IsStruct = TLC_FALSE
+        %if !(ISEMPTY(preRegDataType) || (preRegDataType == regDType))
+           %<LibReportFatalError("Root outport regions have mixed data types.")>
+        %endif
+        %assign output.DataType   = regDType
+        %assign preRegDataType = regDType 
+        %assign elementOffset = elementsWidthSoFar
+        %assign elementsWidthSoFar = elementsWidthSoFar + regWidth
+        %assign member = "[%<elementOffset>]"
+      %else 
+        %assign ptr = ((dataAttrib.Access == "ConstInlined") && ...
+          (regWidth == 1)) ?  "*" : ""
+        %assign output.DataType   = regDType
+        %assign output.Dimensions = region.Dimensions
+        %assign output.IsStruct   = regIsStruct
+        %assign elementOffset = ""
+        %assign member = ""
+      %endif
+      
+      %if dataAttrib.Access == "Unconnected" && ...
+          !System[interface.SystemIdx].AllOutputsCanonical
+        %% This is an unconnected signal. Skip adding this as a function output
+        %continue
+      %endif
+      
+      %if region.FunctionArgumentIdx > -1
+        %assign argIdx = region.FunctionArgumentIdx
+        %assign dataAttrib.Access = "OutputArgument"
+        %assign canOut = System[interface.SystemIdx].Interface.CanonicalOutputArgDef[argIdx]
+        %assign xWidth  = LibCGTypeWidth(canOut.CGTypeIdx)
+        %if (xWidth > SLibGetFunctionIOWidth(region))
+          %assign regDims = [%<xWidth>, 1]
+        %else
+          %assign regDims = region.Dimensions
+        %endif
+      %else
+        %assign regDims = region.Dimensions
+        %assign argIdx = -1
+      %endif
+      
+      %addtorecord interface                             \
+          FunctionOutput {                               \
+          SLName         "%<ptr>%<output.Name>%<member>" \
+          Access         dataAttrib.Access               \
+          Address        addr                            \  
+          DataType       regDType                        \
+          Dimensions     regDims                         \
+          ElementOffset  elementOffset                   \
+          DataIsStruct   regIsStruct                     \
+          FunctionArgIdx argIdx                          \
+          TID            sigTID                          \
+          Symbol         directAccess                    \
+       }
+
+      %assign numOut = interface.NumFunctionOutputs
+      %assign output.FunctionOutputIdx = output.FunctionOutputIdx + numOut
+        
+      %if !ISEMPTY(realOffset)
+        %addtorecord interface.FunctionOutput[numOut] Offset realOffset
+      %endif
+              
+      
+      %% If FunctionOutput is a Canonical argument (argIdx >= 0), create/add
+      %% to a hash table of function output args 
+      %if (argIdx >= 0)
+        %if !ISFIELD(interface, "FunctionOutputHash")
+          %addtorecord interface FunctionOutputHash \
+          {FuncOut%<argIdx> interface.FunctionOutput[numOut]}
+        %else
+          %if !ISFIELD(interface.FunctionOutputHash, "FuncOut%<argIdx>")
+            %addtorecord interface.FunctionOutputHash \
+            FuncOut%<argIdx> interface.FunctionOutput[numOut]
+          %endif
+        %endif
+      %endif %% argIdx > 0
+      
+      %% Add Value field if necessary
+      %if ISFIELD(dataAttrib, "Value")
+        %addtorecord interface.FunctionOutput[numOut] \
+        Value dataAttrib.Value
+      %endif
+      
+      %assign interface.NumFunctionOutputs = numOut + 1
+    %endif
+  %endforeach
+  
+  %if (interface.InterfaceType == "RootModel")
+    %assign intName = interface.ModelName
+  %else
+    %assign intName  = interface.Name
+  %endif
+  %if needsTypedef
+    %assign outDataType = "%<intName>_Out%<interface.NumOutports>Type"
+    %openfile typedef
+    typedef struct {
+      %<typeDefCode>
+    } %<outDataType>;  /* Outport: %<output.BlockPath> */
+    
+    %closefile typedef
+    %assign output.VirtualTypeDef = typedef
+    %assign output.DataType       = outDataType
+    %assign output.Dimensions     = [1, 1]
+  %elseif MoreThanOneRegions
+    %%%% Determine the size of the array if more than one regions and root-model
+    %assign output.Dimensions[0] = elementsWidthSoFar
+  %endif
+  %assign interface.NumOutports = interface.NumOutports + 1
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddDataStoresToSSInterface(ssInterface, systemRec) void
+  %if LibSystemIsReusedFcn(systemRec) || (systemRec.StandaloneSubsystem == 1)
+    %% Reusable subsystem or a standalone function subsystem
+    %foreach dsIdx = systemRec.Interface.NumCanonicalDWorkArgDefs
+      %assign canDW    = systemRec.Interface.CanonicalDWorkArgDef[dsIdx]
+      %assign dWRec    = DWorks.DWork[canDW.FirstSignalSrc]
+      %assign dWAttrib = ...
+        FcnGetDataAttribFromRecord(dWRec, LibSystemIsReusedFcn(systemRec))
+      %if !ISEMPTY(dWAttrib)
+        %if dWAttrib.IsComplex
+          %assign regDType= LibGetDataTypeComplexNameFromId(dWAttrib.DataTypeIdx)
+          %assign regIsStruct = TLC_TRUE
+        %else
+          %assign regDType    = LibGetDataTypeNameFromId(dWAttrib.DataTypeIdx)
+          %assign regIsStruct = TLC_FALSE
+        %endif
+        %assign blkPath = "%<SLibGrBlockCommentName(dWRec.GrSrc)>"
+        %addtorecord ssInterface                   \
+        DataStore {                                \
+          Name         "rt_ds_%<LibGetRecordIdentifier(dWRec)>" \
+          Access       dWAttrib.Access             \
+          Address      dWAttrib.BaseAddress        \
+          BlockPath    blkPath                     \
+          DataType     regDType                    \
+          DataIsStruct regIsStruct                 \
+          Dimensions   dWAttrib.Dimensions         \
+          TID          dWRec.TID                   \
+        }   
+        %assign ssInterface.NumDataStores = ssInterface.NumDataStores + 1
+      %endif
+    %endforeach
+  %elseif LibSystemIsNonReusedFcn(systemRec)
+    %% Function subsystem but not standalone
+    %assign sysIdx  = systemRec.CallSites[0][2]
+    %assign blkIdx  = systemRec.CallSites[0][3]
+    %assign ssBlock = System[sysIdx].Block[blkIdx]
+    %%
+    %foreach dsIdx = ssBlock.CallSiteInfo.NumCanonicalDWorkArgs
+      %assign canDW = ssBlock.CallSiteInfo.CanonicalDWorkArg[dsIdx]
+      %createrecord portObj { SignalSrc [-1] SignalOffset [-1] Width 1 }
+      %assign idNum  = IDNUM(canDW.SignalSrc)
+      %if idNum[0] == "dp" %% uses relative idx
+        %assert (System[sysIdx].Type != "Root")
+        %assign callInterface = System[sysIdx].Interface
+        %assign callerDWork   = callInterface.CanonicalDWorkArgDef[idNum[1]]
+        %assign dWRec         = DWorks.DWork[callerDWork.FirstSignalSrc]
+      %elseif (idNum[0] == "D" || idNum[0] == "d")
+        %assign portObj.SignalSrc = [%<canDW.SignalSrc>]
+        %assign dWRec = SLibGetSourceRecord(portObj, 0)
+      %else
+        %<LibReportFatalError("Invalid DWork record")>
+      %endif
+      %assign dWAttrib = FcnGetDataAttribFromRecord(dWRec, TLC_FALSE)
+      %if !ISEMPTY(dWAttrib)
+        %if dWAttrib.IsComplex
+          %assign regDType= LibGetDataTypeComplexNameFromId(dWAttrib.DataTypeIdx)
+          %assign regIsStruct = TLC_TRUE
+        %else
+          %assign regDType    = LibGetDataTypeNameFromId(dWAttrib.DataTypeIdx)
+          %assign regIsStruct = TLC_FALSE
+        %endif
+        %assign blkPath = "%<SLibGrBlockCommentName(dWRec.GrSrc)>"
+        %addtorecord ssInterface                   \
+        DataStore {                                \
+          Name         "rt_ds_%<LibGetRecordIdentifier(dWRec)>" \
+          Access       dWAttrib.Access             \
+          Address      dWAttrib.BaseAddress        \
+          BlockPath    blkPath                     \
+          DataType     regDType                    \
+          DataIsStruct regIsStruct                 \
+          Dimensions   dWAttrib.Dimensions         \
+          TID          dWRec.TID                   \
+        }   
+        %assign ssInterface.NumDataStores = ssInterface.NumDataStores + 1
+      %endif
+    %endforeach
+  %endif
+%endfunction
+
+%% Function 
+%% Abstract:
+%%
+%function FcnAddDiscStatesToSSInterface(ssInterface, chSystem) void
+  %with chSystem
+    %foreach blkIdx = NumBlocks
+      %with Block[blkIdx]
+        %if Type == "ModelReference"
+          %% Skip Model Reference Blocks
+          %assert NumDiscStates == 0
+          %continue
+        %endif
+        %if Block[blkIdx].Virtual != 0
+          %% Skip Virtual Blocks
+          %continue
+        %endif
+        %foreach dStateIdx = NumDiscStates
+          %assign dWorkIdx = DiscState[dStateIdx]._idx
+          %if dWorkIdx < 0 
+            %% post compile virtual blocks
+            %continue
+          %endif
+          %assert (dWorkIdx < ::CompiledModel.DWorks.NumDWorks)
+          %assign dWork      = ::CompiledModel.DWorks.DWork[dWorkIdx]
+          %assign dWAttrib = FcnGetDataAttribFromRecord(dWork, TLC_FALSE)
+          %if !ISEMPTY(dWAttrib)
+            %if dWAttrib.IsComplex
+              %assign regDType     =  ...
+                LibGetDataTypeComplexNameFromId(dWAttrib.DataTypeIdx)
+              %assign regIsComplex = TLC_TRUE
+            %else
+              %assign regDType     = ...
+                LibGetDataTypeNameFromId(dWAttrib.DataTypeIdx)
+              %assign regIsComplex = TLC_FALSE
+            %endif
+            %assign blkPath = "%<SLibGrBlockCommentName(dWork.GrSrc)>"
+            %addtorecord ssInterface                    \
+            DiscState {                                 \
+              Name          "rt_dw_%<LibGetRecordIdentifier(dWork)>" \
+              Access        dWAttrib.Access             \
+              Address       dWAttrib.BaseAddress        \
+              BlockPath     blkPath                     \
+              DataType      regDType                    \
+              DataIsComplex regIsComplex                \
+              Dimensions    dWAttrib.Dimensions         \
+              TID           dWork.TID                   \
+            }   
+            %assign ssInterface.NumDiscStates = ssInterface.NumDiscStates + 1
+          %endif
+        %endforeach %% dStateIdx = NumDiscStates
+      %endwith %% Block[blkIdx]
+    %endforeach %% blkIdx = NumBlocks
+  %endwith %% chSystem
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddDataStoresToRootInterface(rootInterface, dsBlk) void
+  %assign dsStore = dsBlk.DataStore
+  %assign mmi     = DWorks.DWork[dsStore._idx].MemoryMapIdx
+  %assign data    = SLibGetGlobalMemoryDataRecord(mmi)
+  %if !ISEMPTY(data)
+    %if (mmi[0] != -1) && (mmi[1] != -1)
+      %with ::CompiledModel.GlobalMemoryMap
+      %assign dataTypeIdx = StructuredData[mmi[0]].Section[mmi[1]].DataTypeIdx
+      %assign isComplex   = StructuredData[mmi[0]].Section[mmi[1]].IsComplex
+      %endwith
+    %else
+      %assign dataTypeIdx = data.DataTypeIdx
+      %assign isComplex   = data.IsComplex
+      %if (mmi[0] == -1) && (data.Class == "other")
+        %% Bit-field or Macro
+        %return []
+      %endif
+    %endif
+    %if isComplex
+      %assign dType    = LibGetDataTypeComplexNameFromId(dataTypeIdx)
+      %assign isStruct = TLC_TRUE
+    %else
+      %assign dType    = LibGetDataTypeNameFromId(dataTypeIdx)
+      %assign isStruct = TLC_FALSE
+    %endif
+    %if ISFIELD(data, "NumRows")
+        %assign dimensions = [%<data.NumRows>, %<data.NumCols>]  
+      %elseif data.NumDimensions > -1
+        %assign dimensions = data.Dimensions
+      %else
+        %assign dimensions = -1
+      %endif
+    %if MultiInstanceERTCode
+      %% Reusable Model - Data passed as argument to function
+      %assign access = "Argument"
+    %else
+      %% Non-reusable subsystem - I/O is declared Global and accessed directly
+      %assign access = "Global"
+    %endif
+    %assign blkPath = "%<SLibGrBlockCommentName(DWorks.DWork[dsStore._idx].GrSrc)>"
+    %addtorecord rootInterface                         \
+    DataStore {                                        \
+      Name         "rt_ds_%<dsStore.MemoryName>"       \
+      Access       access                              \
+      BlockPath    blkPath                             \
+      DataType     dType                               \
+      Dimensions   dimensions                          \
+      DataIsStruct isStruct                            \
+      Address      data.BaseAddr                       \
+      TID          DWorks.DWork[dsStore._idx].TID      \
+    }   
+    %assign rootInterface.NumDataStores = rootInterface.NumDataStores + 1
+  %endif        
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnGetSigRecFromRegion(region)
+  %createrecord portObj { SignalSrc [-1] SignalOffset [-1] Width 1 }
+  %assign portObj.SignalSrc    = region._Source
+  %assign offset               = region.Offset
+  %assign portObj.SignalOffset = offset
+  %assign sigRec               = SLibGetSourceRecord(portObj, 0)
+  %return sigRec
+%endfunction
+
+%% Function:
+%% Abstract:
+%%    When BusSelElIdx is involved, update dataAttrib to reflect 
+%%    bus element's attributes instead
+%function FcnUpdateDataAttribBasedOnBusSelElIdx(region, dataAttrib)
+  %if ISFIELD(region, "BusSelElCGTypeId") && ...
+    (!ISEQUAL(region.BusSelElCGTypeId, -1))
+    %createrecord portObj { SignalSrc [-1] SignalOffset [-1] BusSelElIdx [""] BusSelElCGTypeId [-1] Width 1 }
+    %assign portObj.SignalSrc    = region._Source
+    %assign portObj.SignalOffset = region.Offset
+    %assign portObj.BusSelElIdx  = region.BusSelElIdx
+    %assign portObj.BusSelElCGTypeId = region.BusSelElCGTypeId
+    %assign rec = SLibGetSourceRecordAndMapInfo(portObj, 0, TLC_FALSE, TLC_FALSE)
+    
+    %createrecord tmpRec {CGTypeIdx rec.busSelElCGTypeId}
+    %assign dataAttrib.DataTypeIdx = LibGetRecordDataTypeId(tmpRec)
+    %assign dataAttrib.Dimensions  = [%<LibGetRecordWidth(tmpRec)>]
+    %assign dataAttrib.IsComplex   = LibGetRecordIsComplex(tmpRec)
+  %endif
+  %return dataAttrib
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnGetDataAttribFromRecord(sigRec, isReusable) void
+  
+  %% Default Return is Empty
+  %assign retArg = []
+    
+  %% 
+  %if !ISEMPTY(sigRec) %% Not a grounded or function call
+    %if isReusable 
+      %% Reusable subsystem - Data passed as argument to function
+      %assign access = "Argument"
+      %if (sigRec.RecordType == "DWork") && (sigRec.StorageClass != "Auto")
+        %% Non-Auto Storage class DWorks are passed as globals
+        %assign access = "Global"
+      %endif
+    %else
+      %% Non-reusable subsystem - I/O is declared Global and accessed directly
+      %if ((sigRec.RecordType == "BlockOutput") && ...
+        (sigRec.Invariant == "yes"))
+        %assign access = "ConstGlobal"
+      %else
+        %assign access = "Global"
+      %endif
+    %endif
+    
+    %% Direct access symbol
+    %% Currently only good for top model/non-reusable ERT code
+    %assign idName = ""
+    
+    %%Sometime, even for a scalar signal, it needs array access operator []
+    %%e.g., G351282
+    %%Currently only good for top model/non-reusable ERT code
+    %assign needsIndex = 0
+    
+    %%
+    %assign memoryMapIdx = sigRec.MemoryMapIdx
+    %if memoryMapIdx[2] == -1
+      %% The signal memory may not have been mapped as global because
+      %%    - The I/O is local within the parent of a reusable subsystem
+      %%    - The I/O is not used within the subsystem 
+      %if (sigRec.RecordType == "BlockOutput") && ...
+        (TYPE(sigRec.SigConnected) == "Identifier") && (sigRec.SigConnected == "none")
+        %% The I/O is not used within the subsystem, not a Function in/out
+        %assign access      = "Unconnected"
+        %assign addr        = ""
+        %assign dataTypeIdx = LibGetRecordDataTypeId(sigRec)
+        %assign dimensions  = [%<LibGetRecordWidth(sigRec)>]
+        %assign isComplex   = LibGetRecordIsComplex(sigRec)
+      %elseif !isReusable 
+        %if ((sigRec.RecordType == "BlockOutput") && ...
+          ((sigRec.ConstExpr) || (sigRec.Invariant == "yes")))
+          %if InlineParameters == 1
+            %% Constant signal feeding an outport or inport - Value is inlined
+            %assign access      = "ConstInlined"
+            %assign addr        = ""
+            %assign dataTypeIdx = LibGetRecordDataTypeId(sigRec)
+            %assign dimensions  = [%<LibGetRecordWidth(sigRec)>]
+            %assign isComplex   = LibGetRecordIsComplex(sigRec)
+          %else
+            %% Constant signal feeding an outport or inport - Value is declared
+            %% as global - rtP structure 
+            %assign access      = "Global"
+            %assign sigSrc      = sigRec.SigSrc
+            %assign srcBlock    = System[sigSrc[0]].Block[sigSrc[2]]
+            %with srcBlock
+              %assign addr = LibBlockOutputSignalAddr(sigSrc[3], "", "", 0)
+            %endwith
+            %assign dataTypeIdx = LibGetRecordDataTypeId(sigRec)
+            %assign dimensions  = [%<LibGetRecordWidth(sigRec)>]
+            %assign isComplex   = LibGetRecordIsComplex(sigRec)
+          %endif
+        %elseif ( (sigRec.RecordType == "BlockOutput") && ...
+          ISEQUAL(sigRec.DrivesRootOutport, "yes") )
+          %assign oPortIdx = -1
+          %assign regIdx   = -1
+          %with ::CompiledModel.BlockHierarchyMap.Subsystem[0]
+            %foreach oIdx = SIZE(OutportBlocks,1)
+              %foreach rIdx = Block[OutportBlocks[oIdx]].DataInputPort.NumRegions
+                %assign oReg = Block[OutportBlocks[oIdx]].DataInputPort.Region[rIdx]
+                %if ISEQUAL(oReg._Source[0], sigRec.LogicalSrc)
+                  %assign oPortIdx = oIdx
+                  %assign regIdx   = rIdx
+                  %break
+                %endif
+              %endforeach
+            %endforeach
+          %endwith
+          %if (oPortIdx != -1)
+            %return FcnGetDataAttribOfRootOutput(sigRec, isReusable, oPortIdx, regIdx)
+          %else
+            %<LibReportFatalError("Subsystem Interface error: subsystem outports driving root outports")>
+          %endif
+        %else
+          %% Non-reusable subsystem's I/O is declared local
+          %assign access      = "Local"
+          %assign addr        = ""
+          %assign dataTypeIdx = LibGetRecordDataTypeId(sigRec)
+          %assign dimensions  = [%<LibGetRecordWidth(sigRec)>]
+          %assign isComplex   = LibGetRecordIsComplex(sigRec)
+        %endif
+      %else
+        %% Reusable function with true locals
+        %assign access      = "Local"
+        %assign addr        = ""
+        %assign dataTypeIdx = LibGetRecordDataTypeId(sigRec)
+        %assign dimensions  = [%<LibGetRecordWidth(sigRec)>]
+        %assign isComplex   = LibGetRecordIsComplex(sigRec)
+      %endif %% !isReusable
+    
+    %else 
+      %% Global data accessed directly - use global memory map
+      %assign structIdx  = memoryMapIdx[0]
+      %assign secIdx     = memoryMapIdx[1]
+      %assign dataIdx    = memoryMapIdx[2]
+      %with ::CompiledModel.GlobalMemoryMap
+        %if secIdx == -1
+          %% Unstructured data
+          %assign data        = UnstructuredData.Data[dataIdx]
+          %assign isComplex   = data.IsComplex
+          %assign dataTypeIdx = data.DataTypeIdx
+        %elseif structIdx == -1
+          %% Custom data
+          %assign data =  CustomData[secIdx].Data[dataIdx]
+          %assign isComplex   = data.IsComplex
+          %assign dataTypeIdx = data.DataTypeIdx
+          %if data.Class == "other"
+            %% Bit-field or Macro
+            %return []
+          %endif
+        %else
+          %% Structured data
+          %assign section     = ...
+            StructuredData[structIdx].Section[secIdx]
+          %assign data        = section.Data[dataIdx]
+          %assign dataTypeIdx = section.DataTypeIdx
+          %assign isComplex   = section.IsComplex
+        %endif
+      %endwith
+      %if ISFIELD(data, "NumRows")
+        %assign dimensions = [%<data.NumRows>, %<data.NumCols>]  
+      %elseif data.NumDimensions > -1
+        %assign dimensions = data.Dimensions
+      %else
+        %assign dimensions = -1
+      %endif
+      %assign addr       = data.BaseAddr
+      
+      %% Direct access symbol
+      %% Currently only good for top model/non-reusable ERT code
+      %if ISFIELD(data, "Name")
+          %assign idName = data.Name
+      %endif %%Get the direct identifier to avoid *(&identifier)
+      
+      %%If data source is non-scalar, needsIndex = 1
+      %%G351282
+      %if ISFIELD(data,"Class")
+          %if data.Class == "vector" || data.Class == "col-mat" || ...
+              data.Class == "row-mat" || data.Class == "col-mat-nd"
+            %assign needsIndex = 1
+          %endif
+      %endif
+    %endif %% Non-Local Data
+    
+    
+    %% Create a dataAttrib record to be returned as RETURN value
+    %createrecord  dataAttrib {         \
+      Access       access               \
+      BaseAddress  addr                 \
+      DataTypeIdx  dataTypeIdx          \
+      IsComplex    isComplex            \
+      Dimensions   dimensions           \
+      Symbol       idName               \
+      NeedsIndex   needsIndex           \
+    }
+    
+    %if access == "ConstInlined"
+      %addtorecord dataAttrib Value sigRec.InitialValue
+    %endif
+    
+    %return dataAttrib
+    %%
+  %else
+    
+  %endif  %% ISEMPTY(sigRec)
+  
+  %return retArg
+%endfunction
+
+%%Return the direct symbol access and offset for
+%%block destination, to avoid code like *(&identifier)
+%%for function prototype control.
+%%Adapted from LibBlockDstSignalLocation
+%%Currently only supports the cases needed for function prototype
+%%control for root model (including Subsystem right-click build), 
+%%non-reusable step functions
+%function GetBlockDstSignalSymbolAndOffset(sigIdx) void
+
+  %% First split sigIdx into idx and reim
+  %assign tmpVect = SLibGetReimAndIdx(sigIdx)
+  %assign reim    = tmpVect[0]
+  %assign idx     = tmpVect[1]
+
+  %% If the signal is not complex then the imaginary part is ""
+  %if reim == tImagPart && !LibBlockInputSignalIsComplex(0)
+          %createrecord result {  \
+             Symbol     ""        \
+          }
+        %return result
+   %endif
+      
+   %assign inputWidth = LibBlockInputSignalWidth(0)
+   %assign sigIndexer = SLibGet1DArrayIndexer(inputWidth, "", "", idx)
+
+   %assign symbol = ""
+   %assign offset = ""
+
+   %assign outPortNum = LibBlockParamSetting("Outport", "PortNumber") - 1
+   %if !(CodeFormat == "S-Function")
+       %assign ans = "%<LibGetExternalOutputStruct()>%<YQualifier>%<Identifier>%<sigIndexer>"
+       %if !MultiInstanceERTCode
+	  %assign symbol = "%<LibGetExternalOutputStruct()>%<YQualifier>%<Identifier>"
+          %if !ISEMPTY(sigIndexer)
+            %assign offset = sigIdx
+          %endif
+          %if reim != "" && LibBlockInputSignalIsComplex(0)
+            %assign ans = ans + ".%<reim>"
+            %assign symbol = ans
+          %endif
+       %endif          
+   %endif
+
+
+   %if !ISEMPTY(offset)
+      %createrecord result {  \
+          Symbol     symbol     \
+          Offset     offset     \
+       }
+   %else
+      %createrecord result {  \
+          Symbol     symbol     \
+      }  
+   %endif
+        
+   %return result
+%endfunction %%  GetBlockDstSignalSymbolAndOffset
+
+%% Function:
+%% Abstract:
+%%
+%function FcnGetDataAttribOfRootOutput(sigRec, isReusable, ...
+  outportIdx, regionIdx) void
+  
+  %assign retVal = []
+  %if ISEMPTY(sigRec) || (sigRec.MemoryMapIdx[2] == -1)
+    %% Ground signal or fcn call signal or a Constant BlockOutput/ Expr
+    %assign grSystem = ::CompiledModel.BlockHierarchyMap.Subsystem[0]
+    %if outportIdx >= grSystem.NumOutportBlocks
+      %<LibReportFatalError("Subsystem Interface error in root outports")>
+    %endif
+    %assign grOutBlock = grSystem.Block[grSystem.OutportBlocks[outportIdx]]
+    %if SLibSystemBlockExist(grOutBlock)
+      %assign blockIndex = SLibGetSystemBlockIdx(grOutBlock)
+      %with ::CompiledModel
+        %assign system   = System[blockIndex[0]]
+        %assign outBlock = system.Block[blockIndex[2]]
+        %with outBlock
+          %assign rollRegionMtrx = LibRollRegions2StartEndMatrix(RollRegions)
+          %if regionIdx >= SIZE(rollRegionMtrx, 1)
+            %<LibReportFatalError("Subsystem Interface error in root outports")>
+          %endif
+          %assign offsetIdx     = CAST("Number", rollRegionMtrx[0][regionIdx])
+          %assign outSignalAddr = ...
+            LibBlockDstSignalLocation("outportblk", "", "", offsetIdx)
+          %assign outSignalSymAndOffset = ...
+            GetBlockDstSignalSymbolAndOffset(offsetIdx)
+          %assign dataTypeIdx   = LibBlockInputSignalDataTypeId(0)
+          %assign dimensions    = [%<LibBlockInputSignalWidth(0)>]
+          %assign isComplex     = LibBlockInputSignalIsComplex(0)
+          %assign access        = isReusable ? "Argument" : "Global"
+          
+          %createrecord dataAttrib {                           \
+             Access       access                                \
+             BaseAddress  "&(%<outSignalAddr>)"                 \
+             DataTypeIdx  dataTypeIdx                           \
+             IsComplex    isComplex                             \
+             Dimensions   dimensions                            \
+             Symbol       "%<outSignalSymAndOffset.Symbol>"     \
+          }
+
+          %if ISFIELD(outSignalSymAndOffset, "Offset")
+            %addtorecord dataAttrib Offset outSignalSymAndOffset.Offset
+          %endif %%ISFIELD(outSignalSymAndOffset, "Offset")
+          
+          %return dataAttrib
+        %endwith
+      %endwith
+    %endif
+  %else
+    %return FcnGetDataAttribFromRecord(sigRec, isReusable)
+  %endif
+  %return retVal
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddInputToExportFunction(extInIdx, expFcn) void
+  %assign extInp = ::CompiledModel.ExternalInputs.ExternalInput[extInIdx]
+  %assign slName = "rt_" + LibGetRecordIdentifier(extInp)
+
+  %assign memoryMapIdx = extInp.MemoryMapIdx
+  %if memoryMapIdx[2] == -1
+    %assign errTxt = "A exported function I/O's memory is undefined"
+    %<LibReportFatalError(errTxt)>
+  %else 
+    %% Global data accessed directly - use global memory map
+    %assign structIdx  = memoryMapIdx[0]
+    %assign secIdx     = memoryMapIdx[1]
+    %assign dataIdx    = memoryMapIdx[2]
+    %with ::CompiledModel.GlobalMemoryMap
+      %if secIdx == -1
+        %% Unstructured data
+        %assign data        = UnstructuredData.Data[dataIdx]
+        %assign isComplex   = data.IsComplex
+        %assign dataTypeIdx = data.DataTypeIdx
+      %elseif structIdx == -1
+        %% Custom data
+        %assign data =  CustomData[secIdx].Data[dataIdx]
+        %assign isComplex   = data.IsComplex
+        %assign dataTypeIdx = data.DataTypeIdx
+        %if data.Class == "other"
+          %% Bit-field or Macro
+          %return
+        %endif
+      %else
+        %% Structured data
+        %assign section     = StructuredData[structIdx].Section[secIdx]
+        %assign data        = section.Data[dataIdx]
+        %assign dataTypeIdx = section.DataTypeIdx
+        %assign isComplex   = section.IsComplex
+      %endif
+    %endwith
+    %if ISFIELD(data, "NumRows")
+      %assign dimensions = [%<data.NumRows>, %<data.NumCols>]  
+    %elseif data.NumDimensions > -1
+      %assign dimensions = data.Dimensions
+    %else
+      %assign dimensions = -1
+    %endif
+    %assign addr       = data.BaseAddr
+  %endif %% Non-Local Data
+    
+  %if isComplex
+    %assign dType = LibGetDataTypeComplexNameFromId(dataTypeIdx)
+  %else
+    %assign dType = LibGetDataTypeNameFromId(dataTypeIdx)
+  %endif
+  
+  %% Add Function Input
+  %addtorecord expFcn             \
+  FunctionInput {                 \
+    Access         "Global"       \
+    SLName         slName         \
+    Address        data.BaseAddr  \  
+    DataType       dType          \
+    DataIsStruct   isComplex      \
+    DataIsBus      data.IsStruct  \
+    Dimensions     dimensions     \
+    FunctionArgIdx -1             \
+    TID            extInp.TID     \ 
+  }
+  
+  %assign expFcn.NumFunctionInputs = expFcn.NumFunctionInputs + 1
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnAddOutputToExportFunction(extInIdx, expFcn) void
+  
+  %assign extOut = ::CompiledModel.ExternalOutputs.ExternalOutput[extInIdx]
+  %assign sysIdx       = extOut.Block[0]
+  %assign blkIdx       = extOut.Block[1]
+  %assign outportBlock = System[sysIdx].Block[blkIdx]
+  %assign tid          = outportBlock.TID
+  %assign slName       = "rt_" + LibGetRecordIdentifier(outportBlock)
+   
+  %if SLibExternalOutputIsVirtual(outportBlock)
+    %with outportBlock
+      %assign src       = LibBlockInputSignalAddr(0, "", "", 0)
+      %assign portWidth = LibBlockInputSignalWidth(0)
+      %assign dTypeId   = LibBlockInputSignalDataTypeId(0)
+      %assign dType     = LibBlockInputSignalDataTypeName(0, "")
+      %assign isStruct  = LibIsStructDataType(dTypeId)
+      %assign isComplex = LibBlockInputSignalIsComplex(0)
+    %endwith
+    %% Add Function Output
+    %addtorecord expFcn             \
+    FunctionOutput {                \
+      Access         "Global"       \
+      SLName         slName         \
+      Address        src             \  
+      DataType       dType          \
+      DataIsStruct   isComplex      \
+      DataIsBus      isStruct       \
+      Dimensions     [%<portWidth>] \
+      FunctionArgIdx -1             \
+      TID            tid            \ 
+    }
+    
+    %assign expFcn.NumFunctionOutputs = expFcn.NumFunctionOutputs + 1
+  %else
+    %% Extrnal output has a global memory
+    %assign memoryMapIdx = extOut.MemoryMapIdx
+    %if memoryMapIdx[2] == -1
+      %assign errTxt = "A exported function I/O's memory is undefined"
+      %<LibReportFatalError(errTxt)>
+    %else 
+      %% Global data accessed directly - use global memory map
+      %assign structIdx  = memoryMapIdx[0]
+      %assign secIdx     = memoryMapIdx[1]
+      %assign dataIdx    = memoryMapIdx[2]
+      %with ::CompiledModel.GlobalMemoryMap
+        %if secIdx == -1
+          %% Unstructured data
+          %assign data        = UnstructuredData.Data[dataIdx]
+          %assign isComplex   = data.IsComplex
+          %assign dataTypeIdx = data.DataTypeIdx
+        %elseif structIdx == -1
+          %% Custom data
+          %assign data =  CustomData[secIdx].Data[dataIdx]
+          %assign isComplex   = data.IsComplex
+          %assign dataTypeIdx = data.DataTypeIdx
+          %if data.Class == "other"
+            %% Bit-field or Macro
+            %return
+          %endif
+        %else
+          %% Structured data
+          %assign section     = StructuredData[structIdx].Section[secIdx]
+          %assign data        = section.Data[dataIdx]
+          %assign dataTypeIdx = section.DataTypeIdx
+          %assign isComplex   = section.IsComplex
+        %endif
+      %endwith
+      %if ISFIELD(data, "NumRows")
+        %assign dimensions = [%<data.NumRows>, %<data.NumCols>]  
+      %elseif data.NumDimensions > -1
+        %assign dimensions = data.Dimensions
+      %else
+        %assign dimensions = -1
+      %endif
+      %assign addr       = data.BaseAddr
+    %endif %% Non-Local Data
+      
+    %if isComplex
+      %assign dType = LibGetDataTypeComplexNameFromId(dataTypeIdx)
+    %else
+      %assign dType = LibGetDataTypeNameFromId(dataTypeIdx)
+    %endif
+    
+    %% Add Function Output
+    %addtorecord expFcn             \
+    FunctionOutput {                \
+      Access         "Global"       \
+      SLName         slName         \
+      Address        data.BaseAddr  \  
+      DataType       dType          \
+      DataIsStruct   isComplex      \
+      DataIsBus      data.IsStruct  \
+      Dimensions     dimensions     \
+      FunctionArgIdx -1             \
+      TID            tid            \ 
+    }
+    
+    %assign expFcn.NumFunctionOutputs = expFcn.NumFunctionOutputs + 1
+  %endif
+%endfunction
+
+%% Function:
+%% Abstract:
+%%
+%function FcnConvertNameToIdentifier(s) void
+  %assign str = "char(bitor(bitand('%<s>'>='0','%<s>'<='9')," + ...
+    "bitor(bitand('%<s>'>='a','%<s>'<='z'),bitand('%<s>'>='A'," + ...
+    "'%<s>'<='Z'))).*'%<s>' + ~bitor(bitand('%<s>'>='0','%<s>'<='9')" + ...
+    ",bitor(bitand('%<s>'>='a','%<s>'<='z'),bitand('%<s>'>='A'," + ...
+    "'%<s>'<='Z'))).*'_')"
+  %return FEVAL("eval", str)
+%endfunction
+  
+%endif  %% ("_ERT_SYSGRAPHMAP_LIB_") == 0
+
+%% [EOF] ertsystemgraphmaplib.tlc

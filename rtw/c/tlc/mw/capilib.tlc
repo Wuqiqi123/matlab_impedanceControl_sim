@@ -1,0 +1,1165 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%% 
+%%
+%% Abstract:
+%%      Library of functions for generating C API files
+%%    
+%% Copyright 1994-2018 The MathWorks, Inc.
+
+%if EXISTS("_CAPILIB_") == 0
+%assign _CAPILIB_ = 1
+
+%selectfile NULL_FILE
+
+%% reuse CodeInfo coder.types functions for RTW.DataInterface creation
+%include "codeinfolib.tlc"
+%include "ertlib.tlc" %% SLibUseBackwardCompatibleReusableInterface()
+
+%% Function: IsRootInportConditional ========================================
+%% Abstract :
+%% Checks if the root inport has a code generation variant condition expression. 
+
+%function IsRootInportConditional() void
+
+%assign isRootInpConditional = TLC_FALSE
+%%First check if any of the root inports have CGVCE set on them.
+
+%assign nInportBlks = ExternalInputs.NumExternalInputs
+%foreach idx = nInportBlks
+ %assign extInp = ExternalInputs.ExternalInput[idx]
+ %if ISFIELD(extInp, "Inactive")
+   %continue
+ %endif 
+ %if ISFIELD(extInp, "VariantCondition") && !ISEMPTY(extInp.VariantCondition)
+     %assign isRootInpConditional = TLC_TRUE
+ %endif
+%endforeach
+%return isRootInpConditional
+%endfunction %%IsRootInportConditional
+
+%% Function: IsRootOutportConditional ========================================
+%% Abstract :
+%% Checks if the root inport has a code generation variant condition expression. 
+
+%function IsRootOutportConditional() void
+
+%assign isRootOutConditional = TLC_FALSE
+%%First check if any of the root outports have CGVCE set on them.
+
+%assign nOutportBlks = ExternalOutputs.NumExternalOutputs
+%foreach idx = nOutportBlks
+ %assign extOut = ExternalOutputs.ExternalOutput[idx]
+ %if ISFIELD(extOut, "Inactive")
+   %continue
+ %endif
+ %if ISFIELD(extOut, "LocalCGVCEIdx") && (extOut.LocalCGVCEIdx != -1)
+    %assign isRootOutConditional = TLC_TRUE
+ %endif 
+%endforeach
+%return isRootOutConditional
+%endfunction %%IsRootOutportConditional
+
+%% Function: IsStateConditional ========================================
+%% Abstract :
+%% Checks if any states has a code generation variant condition expression. 
+%% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/codeGen/CAPI/tInlineVariantsWithCAPI.m -testspec:test_dwork_guard
+%% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/codeGen/CAPI/tInlineVariantsWithCAPI.m -testspec:test_dwork_vssAndIV
+%function IsStateConditional() void
+
+%assign isStateConditional = TLC_FALSE
+%%First check if any of the state have CGVCE set on them.
+
+%assign nDWorks = ::CompiledModel.DWorks.NumDWorks
+%foreach idx = nDWorks
+ %assign dWork = ::CompiledModel.DWorks.DWork[idx]
+ %if ISFIELD(dWork, "VariantCondition") && !ISEMPTY(dWork.VariantCondition)
+     %assign isStateConditional = TLC_TRUE
+     %break
+ %endif
+%endforeach
+%return isStateConditional
+%endfunction %%IsStateConditional
+
+%% Function: IsSignalConditional ========================================
+%% Abstract :
+%% Checks if any signal has a code generation variant condition expression. 
+%% Signals are of 4 types :
+%%     SignalType             |  Present in model_capi.c   | global guarding status (as on 11/11/2016)
+%%    ========================|============================|===========================================
+%% a) GlobalBlockOutputs      |    Yes                     |   Yes
+%% b) LocalBlockOutputs       |    No                      |   No (locals guarding)
+%% c) ExternalBlockOutputs    |    Yes                     |   No
+%% d) ConstBlockOutputs       |    Yes                     |   No
+
+%% Note that though the declarations of externalBlockOutputs and ConstBlockOutputs signals are unguarded today
+%% we will guard these signals in the generated model_capi.c file.
+%% Hence, we will guard all the signal types that show up in the generated model_capi.c file
+%% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/codeGen/CAPI/tInlineVariantsWithCAPI.m -testspec:test_signal_globalBO
+%% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/codeGen/CAPI/tInlineVariantsWithCAPI.m -testspec:test_signal_externalBO
+%% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/codeGen/CAPI/tInlineVariantsWithCAPI.m -testspec:test_signal_constBO
+
+%function IsSignalConditional() void
+
+%assign isSignalConditional = TLC_FALSE
+%with ::CompiledModel.BlockOutputs
+%% Check if any global block outputs have a non-empty variant condition
+%assign nGlobalBO = NumGlobalBlockOutputs
+%foreach idx = nGlobalBO
+ %assign record = GlobalBlockOutput[idx]
+ %if ISFIELD(record, "VariantCondition") && !ISEMPTY(record.VariantCondition)
+     %assign isSignalConditional = TLC_TRUE
+     %break
+ %endif
+%endforeach
+
+%if isSignalConditional
+   %return isSignalConditional
+%endif
+
+%% Check if any external block outputs have a non-empty variant condition
+%assign nExternalBO = NumExternalBlockOutputs
+%foreach idx = nExternalBO
+ %assign record = ExternalBlockOutput[idx]
+ %if ISFIELD(record, "VariantCondition") && !ISEMPTY(record.VariantCondition)
+     %assign isSignalConditional = TLC_TRUE
+     %break
+ %endif
+%endforeach
+
+%if isSignalConditional
+   %return isSignalConditional
+%endif
+
+%% Check if any const block outputs have a non-empty variant condition
+%% Note that as of today const BO have no "VariantCondition" field written out.
+%% Hence, the constBO will always be unguarded in the generated capi file.
+%assign nConstBO = NumConstBlockOutputs
+%foreach idx = nConstBO
+ %assign record = ConstBlockOutput[idx]
+ %if ISFIELD(record, "VariantCondition") && !ISEMPTY(record.VariantCondition)
+     %assign isSignalConditional = TLC_TRUE
+     %break
+ %endif
+%endforeach
+%endwith
+%return isSignalConditional
+%endfunction %%IsSignalConditional
+
+
+%% Function: FcnDynamicAPI ================================================
+%% Abstract:
+%%   Are we creating an API in the face of code variants?
+%%
+%function FcnDynamicAPI() void
+  %% Create Dynamic C APIs for the following 
+  %% a) Code variants (vss only , no inline variants)
+  %% b) Inline Variants when root io have CGVCE (gpc on) and we are generating C APIs for RootIO
+  %% We will create dynamic capis for signals/parameters/states once globals guarding is implemented 
+  %% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/codeGen/CAPI/tInlineVariantsWithCAPI.m -testspec:test_Signals_GPCoff
+  %% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/codeGen/CAPI/tInlineVariantsWithCAPI.m -testspec:test_RootIO
+  %assign codeVariantsPresent      = ::CompiledModel.HasCodeVariants && !(::CompiledModel.HasInlineVariants)
+  %assign RootIOisConditional      = IsRootInportConditional() || IsRootOutportConditional()
+  %assign capiForConditionalRootIO = RootIOisConditional && RTWCAPIRootIO && FcnCAPIRootIOSupport()
+  %assign dynaCAPIforRootIODueToIV = ::CompiledModel.HasInlineVariants && capiForConditionalRootIO
+  %assign dynaCAPIforStatesDueToIV = ::CompiledModel.HasInlineVariants && IsStateConditional() && RTWCAPIStates
+  %assign dynaCAPIforSignalsDueToIV = ::CompiledModel.HasInlineVariants && IsSignalConditional() && RTWCAPISignals
+  %return (codeVariantsPresent || dynaCAPIforRootIODueToIV || dynaCAPIforStatesDueToIV || dynaCAPIforSignalsDueToIV)
+%endfunction
+  
+%% Function: FcnCAPIRootIOSupport ================================================
+%% Abstract:
+%%  Are Root Inputs/Outputs supported in C API?
+%%
+%function FcnCAPIRootIOSupport() void
+  %if IsModelReferenceTarget()
+    %return TLC_FALSE
+  %endif
+  %if MultiInstanceERTCode && !(UsingMalloc && ...
+    ::CompiledModel.RootIOFormat == "Part of model data structure")
+    %return TLC_FALSE
+  %endif
+  %if SLibFcnProtoCtrlActive()
+    %return TLC_FALSE
+  %endif
+  %if SLibAutosarActive()
+    %return TLC_FALSE
+  %endif
+  %return TLC_TRUE
+%endfunction
+
+%% Function SLibGenDataMapInfoSubstruct =======================================
+%% Abstract:
+%%   Returns DataMapInfo substructure to be added to rtModel structure
+%%   Called in function FcnGetDTypeName.  
+%%
+%%
+%function SLibGenDataMapInfoSubstruct() void
+  %openfile tmpFcnBuf
+  
+  /*
+   * DataMapInfo: 
+   * The following substructure contains information regarding
+   * structures generated in the model's C API.                   
+   */
+   struct {
+     rtwCAPI_ModelMappingInfo mmi;
+     %% Declare memory for the logging instance info
+     %if IsModelReferenceSimTarget()
+       rtwCAPI_ModelMapLoggingInstanceInfo mmiLogInstanceInfo;
+     %endif
+     %if IsMultiInstanceERTOrModelReference()
+       %if ::CompiledModel.NumDataAddrInMap > 0
+	 void* dataAddress[%<::CompiledModel.NumDataAddrInMap>];
+	 int32_T* vardimsAddress[%<::CompiledModel.NumDataAddrInMap>];
+         RTWLoggingFcnPtr loggingPtrs[%<::CompiledModel.NumDataAddrInMap>];
+       %endif
+     %endif
+     %if ::NumModelBlocksWithCAPI > 0
+       rtwCAPI_ModelMappingInfo* childMMI[%<::NumModelBlocksWithCAPI>];
+     %endif
+     %% This is the system ran breadcrumb
+     %assign sysRanDwork = SubsystemRanBC.SysRanDWork
+     %assign nElem       = SIZE(sysRanDwork, 1)
+     %if nElem > 0 && IsModelReferenceSimTarget()
+       sysRanDType* systemRan[%<nElem>];
+       int_T        systemTid[%<nElem>];
+     %endif
+   } \
+  %closefile tmpFcnBuf
+  %return tmpFcnBuf
+%endfunction %% SLibGenDataMapInfoSubstruct
+
+%% Function: FcnGetDataOrientation ============================================
+%% Abstract:
+%%   Return orientation of data based on number of rows and columns.  Value is
+%%   rtwCAPI_SCALAR, rtwCAPI_VECTOR, rtwCAPI_MATRIX_ROW_MAJOR, 
+%%   rtwCAPI_MATRIX_COL_MAJOR or rtwCAPI_MATRIX_COL_MAJOR_ND
+%%
+%function FcnGetDataOrientation(data) void
+  %switch data.Class
+    %case "scalar"
+      %return "rtwCAPI_SCALAR"
+    %case "vector"
+      %return "rtwCAPI_VECTOR"
+    %case "col-mat"
+      %return "rtwCAPI_MATRIX_COL_MAJOR"
+    %case "row-mat"
+      %return "rtwCAPI_MATRIX_ROW_MAJOR"
+    %case "col-mat-nd"
+      %return "rtwCAPI_MATRIX_COL_MAJOR_ND"
+    %case "row-mat-nd"
+      %return "rtwCAPI_MATRIX_ROW_MAJOR_ND"
+    %default
+      %assign errTxt = "Unhandled Data Orientation: %<data.Class>. The \
+      orientation specified for \"%<data.Name>\" is not supported for \
+      generating C-API. \n\tIf \"%<data.Name>\" is a Custom Storage class \
+      object, the DataAccess method for layout of the custom class should \
+      return one of the following strings: \
+      \"scalar\" | \"vector\" | \"col-mat\" | \"row-mat\"|\"col-mat-nd\"|\"row-mat-nd\""
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction  %% FcnGetDataOrientation 
+
+%% Function FcnGetDataTypeMapIdx ==============================================
+%% Abstract:
+%%   Return the index into DataTypeMap structure. The structure fields include
+%%       o cDataName
+%%       o mwDataName
+%%       o numElements
+%%       o elemMapIndex
+%%       o slDataId
+%%       o dataSize
+%%       o isComplex
+%%   Use Hash table approach to check if the data type is already mapped 
+%%   in InstMap (im). 
+%%   If it is mapped ->return the value associated with the data in the table. 
+%%   If it is not mapped -> add data to DataTypeMap, add a new entry into 
+%%   the hash table (im.DTypeKeys) and return the new value.
+%%
+%function FcnGetDataTypeMapIdx(dataTypeIdx, isComplex, isPointer, im) void
+  %assign keyIdx =  dataTypeIdx
+  
+  %% Get base type of filtered alias type
+  %if LibIsAliasDataType(dataTypeIdx)
+    %assign keyIdx = SLibGetBaseDataTypeIdForFilteredType(dataTypeIdx)
+  %endif
+  
+  %if (DataTypes.DataType[%<keyIdx>].IsFixedPoint == 1)
+    %% For Fixed Point data types, look for the storage data type
+    %% For e.g: A sfix_16 data type will be stored as a int16.
+    %assign keyIdx = LibGetDataTypeStorageIdFromId(keyIdx)
+  %endif
+  
+  %% Define Key 
+  %assign dTypeKey = "DType%<keyIdx>C%<isComplex>P%<isPointer>"
+  %% Check if Key Exists
+  %if ISFIELD(im.DTypeKeys,dTypeKey)
+    %assign dTypeMapIdx     = GETFIELD(im.DTypeKeys,dTypeKey)
+  %else
+    %assign isStruct        = LibIsStructDataType(keyIdx)
+    %assign isString        = LibIsStringDataType(keyIdx)
+    %if isComplex || isStruct
+      %assign cDataName     = "struct"
+    %elseif isString
+      %assign cDataName     = "char"
+    %else
+      %assign cDataName     = SLibGetANSICDataTypeFromId(keyIdx)
+    %endif
+    %if isComplex  
+      %assign mwDataName    = LibGetDataTypeComplexNameFromId(keyIdx)
+      %assign mwDataType    = mwDataName
+    %else
+      %assign mwDataName    = LibGetDataTypeNameFromId(keyIdx)
+      %assign mwDataType    = mwDataName
+    %endif
+    %assign numElem         = LibDataTypeNumElements(keyIdx)
+    %assign elemIdx         = FcnGetElementMapIdx(keyIdx, im)
+    %if isStruct
+      %assign slDataId      = "SS_STRUCT"
+    %elseif LibIsEnumDataType(keyIdx)
+      %assign slDataId      = "SS_ENUM_TYPE"
+    %elseif isString
+      %% Use UINT8 before we introduce SS_CHAR or SS_STRING
+      %% TODO: Update this after string type is added to simstruc.h
+      %assign slDataId      = "SS_UINT8"
+    %else
+      %assign slDataId      = LibGetDataTypeEnumFromId(keyIdx)
+      %if slDataId == ""
+	      %assign slDataId    = "SS_STRUCT"
+      %endif
+    %endif
+    %assign dataSize      = "sizeof(%<mwDataType>)"
+    %assign im.DataTypeMap  = im.DataTypeMap + ...
+"{\"%<cDataName>\", \"%<mwDataName>\", %<numElem>, %<elemIdx>, %<dataSize>, %<slDataId>, %<isComplex>, %<isPointer> }"
+    %assign dTypeMapIdx     = im.NumDataTypes
+    %assign im.NumDataTypes = im.NumDataTypes + 1
+    %<LibAddIdentifier(im.DTypeKeys, dTypeKey, dTypeMapIdx)>
+  %endif    
+  %return dTypeMapIdx
+%endfunction   %% FcnGetDataTypeMapIdx
+
+%% Function FcnGetElementMapIdx ==============================================
+%% Abstract:
+%%   Return the index into ElementMap structure. The structure fields include
+%%       o elementName
+%%       o elementOffset
+%%       o dataTypeIndex
+%%       o dimIndex
+%%       o fxpIndex
+%%   Use Hash table approach to check if the element is already mapped 
+%%   in InstMap (im). 
+%%   If it is mapped ->return the value associated with the data in the table. 
+%%   If it is not mapped -> add element to ElementMap, add a new entry into 
+%%   the hash table (im.ElementKeys) and return the new value.
+%%
+%function FcnGetElementMapIdx(dataTypeIdx, im) void
+  %if !LibIsStructDataType(dataTypeIdx)
+    %return 0
+  %endif
+  %assign structName = LibGetDataTypeNameFromId(dataTypeIdx)
+  %assign elemKey    = "E" + structName
+  %if ISFIELD(im.ElementKeys, elemKey)
+    %assign elemIdx   = GETFIELD(im.ElementKeys, elemKey)
+  %else
+    %% Get the BusStructure record from GlobalMemoryMap
+    %assign gmmBusIdx       =  ...
+      GETFIELD(GlobalMemoryMap.NonVirtualStructures.BusStructureHash, structName)
+    %% Assert that the bus exists in GlobalMemoryMap
+    %assert (gmmBusIdx >= 0)
+    %assign gmmBusStruct    = GlobalMemoryMap.NonVirtualStructures.Bus[gmmBusIdx]
+    %assign numElem         = gmmBusStruct.NumElements
+    %assign elemMapTemp     = []
+    %foreach eIdx = numElem
+      %assign gmmBusElem    = gmmBusStruct.BusElement[eIdx]
+      %assign elemName      = gmmBusElem.Name
+      %assign addrOffset    = "rt_offsetof(%<structName>, %<elemName>)"
+      %assign elemDTypeId   = gmmBusElem.DataTypeIdx
+      %assign elemIsCplx    = gmmBusElem.IsComplex
+      %assign dTypeMapIdx   = FcnGetDataTypeMapIdx(elemDTypeId,elemIsCplx,0,im)
+      %assign dimIdx        = FcnGetDimensionMapIdx(gmmBusElem, im, "", "")
+      %if gmmBusElem.IsFixedPoint
+	%assign fxpIdx      = FcnGetFxpMapIdx(gmmBusElem, im)
+      %else
+	%assign fxpIdx      = 0
+      %endif
+      %assign elemMapTemp  = elemMapTemp + ...
+	"{\"%<elemName>\", %<addrOffset>, %<dTypeMapIdx>, %<dimIdx>, %<fxpIdx>}"
+    %endforeach
+    %foreach eIdx = numElem
+      %assign im.ElemMap   = im.ElemMap + elemMapTemp[eIdx]
+    %endforeach
+    %assign elemIdx        = im.NumElements
+    %assign im.NumElements = im.NumElements + numElem
+    %<LibAddIdentifier(im.ElementKeys, elemKey, elemIdx)>
+  %endif
+  %return elemIdx
+%endfunction
+
+%% Function FcnGetDimensionArrayIdx ===========================================
+%% Abstract:
+%%   Return the index into DimensionArray. Used in FcnGetDimensionMapIdx
+%%
+%function FcnGetDimensionArrayIdx(data,im) void
+  %assign nDims           = data.NumDimensions
+  %assign dimArrayKey     = "DA"
+  %if nDims < 3
+    %assign dimArrayKey   = dimArrayKey + "D%<data.NumRows>" + "D%<data.NumCols>"
+  %else
+    %foreach dimsIdx      = nDims
+      %assign dimArrayKey = dimArrayKey + "D%<data.Dimensions[dimsIdx]>"
+    %endforeach
+  %endif
+  %%
+  %if ISFIELD(im.DimArrayKeys, dimArrayKey)
+    %assign dimArrayIdx    = GETFIELD(im.DimArrayKeys, dimArrayKey)
+  %else
+    %assign dimArrayIdx    = im.NumDimArray
+    %if nDims < 3
+      %assign im.DimArray    = im.DimArray + data.NumRows + data.NumCols
+      %assign im.DimArrayComments = im.DimArrayComments + ...
+       "%<im.NumDimArray>" + "%<im.NumDimArray+1>"
+      %assign im.NumDimArray = im.NumDimArray + 2
+    %else
+      %foreach dimsIdx = nDims
+	%assign im.DimArray  = im.DimArray + data.Dimensions[dimsIdx]
+	%assign im.DimArrayComments = im.DimArrayComments + ...
+	"%<im.NumDimArray+dimsIdx>"
+      %endforeach
+      %assign im.NumDimArray = im.NumDimArray + nDims
+    %endif
+    %<LibAddIdentifier(im.DimArrayKeys, dimArrayKey, dimArrayIdx)>
+  %endif
+  %return dimArrayIdx
+%endfunction    %% FcnGetDimensionArrayIdx
+
+%% Function FcnGetVirtSigDimensionArrayIdx ===================================
+%% Abstract:
+%%   Return the index into DimensionArray. Used in FcnGetVirtSigDimensionMapIdx
+%%
+%function FcnGetVirtSigDimensionArrayIdx(regDims, im) void
+  %assign nDims           = SIZE(regDims,1)
+  %assign dimArrayKey     = "DA"
+  
+  %foreach dimsIdx      = nDims
+    %assign dimArrayKey = dimArrayKey + "D%<regDims[dimsIdx]>"
+  %endforeach
+  
+  %%
+  %if ISFIELD(im.DimArrayKeys, dimArrayKey)
+    %assign dimArrayIdx    = GETFIELD(im.DimArrayKeys, dimArrayKey)
+  %else
+    %assign dimArrayIdx    = im.NumDimArray
+    %foreach dIdx = nDims
+      %assign im.DimArray         = im.DimArray + regDims[dIdx]
+      %assign im.DimArrayComments = im.DimArrayComments+"%<im.NumDimArray+dIdx>"
+    %endforeach
+    %assign im.NumDimArray = im.NumDimArray + nDims
+    %<LibAddIdentifier(im.DimArrayKeys, dimArrayKey, dimArrayIdx)>
+  %endif
+  %return dimArrayIdx
+%endfunction    %% FcnGetDimensionArrayIdx
+
+%% Function FcnGetVarDimsAddrIdx ===========================================
+%% Abstract:
+%%   Return the index into VarDimsAddr. Used in FcnGetDimensionMapIdx
+%%
+%function FcnGetVarDimsAddrIdx(vardimsAddr,vardimsKey, im, ppIf, ppFi) void
+  %if ISFIELD(im.VarDimsAddrKeys, vardimsKey)
+    %assign vardimsAddrIdx         = GETFIELD(im.VarDimsAddrKeys, vardimsKey)
+  %else
+    %assign vardimsAddrIdx         = im.NumVarDimsAddr
+    %assign im.VarDimsAddrMap      = im.VarDimsAddrMap + vardimsAddr
+    %assign im.NumVarDimsAddr      = im.NumVarDimsAddr + 1
+    %if ISFIELD(im, "VarDimsAddrMapIf")
+      %assign im.VarDimsAddrMapIf    = im.VarDimsAddrMapIf + ppIf
+      %assign im.VarDimsAddrMapEndIf = im.VarDimsAddrMapEndIf + ppFi
+    %endif
+    %<LibAddIdentifier(im.VarDimsAddrKeys, vardimsKey, vardimsAddrIdx)>
+  %endif
+  %return vardimsAddrIdx
+%endfunction    %% FcnGetVarDimAddrIdx
+
+%% Function FcnGetDimensionMapIdx =============================================
+%% Abstract:
+%%   Returns index into DimensionMap structure
+%%   Use Hash table approach to check if the data dimension is already mapped 
+%%   in InstMap (im). 
+%%   If it is mapped ->return the value associated with the data in the table. 
+%%   If it is not mapped -> add element to DimensionMap, add a new entry into 
+%%   the hash table (im.DimensionKeys) and return the new value.
+
+%function FcnGetDimensionMapIdx(data, im, ppIf, ppFi) void
+  %assign orientation   = FcnGetDataOrientation(data)
+  %assign numDims       = data.NumDimensions
+  %assign dimArrayIndex = FcnGetDimensionArrayIdx(data,im)
+  %if ISFIELD(data, "IsVarDims") && data.IsVarDims
+    %assign vardimsAddrIndex = FcnGetVarDimsAddrIdx(data.VarDimsBaseAddr, data.VarDimsKey, im, ppIf, ppFi)
+  %else
+    %assign vardimsAddrIndex = FcnGetVarDimsAddrIdx(SLibGetNullDefinitionFromTfl(), "NULL", im, ppIf, ppFi)
+  %endif
+  %assign dimKey        = "DM%<orientation>%<dimArrayIndex>N%<numDims>%<vardimsAddrIndex>"
+  %%
+  %if ISFIELD(im.DimKeys,dimKey)
+    %assign dimMapIdx           = GETFIELD(im.DimKeys,dimKey)
+  %else
+    %assign dimMapIdx           = im.NumDimensionMaps
+    %assign im.NumDimensionMaps = im.NumDimensionMaps + 1
+    %assign im.DimensionMap     = im.DimensionMap + ...
+      "{%<orientation>, %<dimArrayIndex>, %<numDims>, %<vardimsAddrIndex>}"
+    %<LibAddIdentifier(im.DimKeys, dimKey, dimMapIdx)>
+    %if ISFIELD(im, "DimensionMapIf")
+      %assign im.DimensionMapIf    = im.DimensionMapIf + ppIf
+      %assign im.DimensionMapEndIf = im.DimensionMapEndIf + ppFi
+    %endif
+  %endif
+  %return dimMapIdx
+%endfunction    %% FcnGetDimensionMapIdx
+
+%% Function FcnGetVirtSigDimensionMapIdx =====================================
+%%
+%function FcnGetVirtSigDimensionMapIdx(regDims, im, ppIf, ppFi) void
+  %%%assign orientation   = FcnGetDataOrientation(data)
+  %assign numDims = SIZE(regDims,1)
+  %if numDims > 2
+    %assign orientation = "rtwCAPI_MATRIX_COL_MAJOR_ND"
+  %elseif regDims[0] > 1 && regDims[1] > 1
+    %assign orientation = "rtwCAPI_MATRIX_COL_MAJOR"
+  %elseif regDims[0] == 1 && regDims[1] == 1
+    %assign orientation = "rtwCAPI_SCALAR"
+  %else
+    %assign orientation = "rtwCAPI_VECTOR"
+  %endif
+  %assign dimArrayIndex = FcnGetVirtSigDimensionArrayIdx(regDims,im)
+  %assign vardimsAddrIndex = FcnGetVarDimsAddrIdx(SLibGetNullDefinitionFromTfl(), "NULL", im, ppIf, ppFi)
+  %assign dimKey        = "DM%<orientation>%<dimArrayIndex>N%<numDims>%<vardimsAddrIndex>"
+  %%
+  %if ISFIELD(im.DimKeys,dimKey)
+    %assign dimMapIdx            = GETFIELD(im.DimKeys,dimKey)
+  %else
+    %assign dimMapIdx            = im.NumDimensionMaps
+    %assign im.NumDimensionMaps  = im.NumDimensionMaps + 1
+    %assign im.DimensionMap      = im.DimensionMap + ...
+      "{%<orientation>, %<dimArrayIndex>, %<numDims>, %<vardimsAddrIndex>}"
+    %<LibAddIdentifier(im.DimKeys, dimKey, dimMapIdx)>
+    %assign im.DimensionMapIf    = im.DimensionMapIf + ppIf
+    %assign im.DimensionMapEndIf = im.DimensionMapEndIf + ppFi
+  %endif
+  %return dimMapIdx
+%endfunction    %% FcnGetDimensionMapIdx
+
+%% Function FcnRegionDimsEqualDataDims =====================================
+%%
+%function FcnRegionDimsEqualDataDims(regDims, data) void
+  %assign numDims = SIZE(regDims,1)
+  %if numDims != data.NumDimensions
+    %return TLC_FALSE
+  %endif
+  %if numDims > 2
+    %foreach dIdx = numDims
+      %if regDims[dIdx] != data.Dimensions[dIdx]
+        %return TLC_FALSE
+      %endif
+    %endforeach
+  %elseif regDims[0] > 1 && regDims[1] > 1
+    %return (regDims[0] == data.NumRows) ? (regDims[1]==data.NumCols) : TLC_FALSE
+  %else 
+    %return (regDims[0]*regDims[1] == data.NumRows*data.NumCols)
+  %endif
+  %return TLC_TRUE
+%endfunction    %%  FcnRegionDimsEqualDataDims
+
+%% Function FcnGetFxpMapIdx ==================================================
+%% Abstract:
+%%   Returns index into the fixPtMap array of structures
+%%   Use Hash table approach to check if the Fixed Point information is 
+%%   already mapped in InstMap (im). 
+%%   If it is mapped ->return the value associated with the data in the table. 
+%%   If it is not mapped -> add a element to FixPtMap, add a new entry into 
+%%   the hash table (im.FxpKeys) and return the new value.
+%%
+%% Note:
+%%   Only,Fixed point data with Uniform Scaling is mapped into the API
+%%   Non-Uniform scaling data is not mapped into the API.
+
+%function FcnGetFxpMapIdx(data, im) void
+
+  %assign fxpRec = data.FixedPointInfo 
+  %%
+  %if fxpRec.Scaling == "uniform"
+    
+    %% Create a Hash Key for the Fix Pt Values
+    %% Hash key is Sum of
+    %%    "U" - for uniform
+    %%    exponent - EN prepended for negative, E prepend for Positive
+    %%    FractionalSlope
+    %%    Bias
+    %%    IsSigned
+    %%    WordLength
+    %if %<fxpRec.FixedExp> < 0
+      %assign exp    = "EN%<-fxpRec.FixedExp>"
+    %else
+      %assign exp    = "E%<fxpRec.FixedExp>"
+    %endif
+    %assign biasIdx  = FcnGetStoredDoublesIdx(im, fxpRec.Bias)
+    %assign slopeIdx = FcnGetStoredDoublesIdx(im, fxpRec.FracSlope)
+    %assign fxpKey   = "U" + exp + ...
+      "S%<slopeIdx>B%<biasIdx>S%<fxpRec.IsSigned>N%<fxpRec.NumRequiredBits>"
+    
+    %% Check if the Hash key exists in FxpKeys record
+    %if ISFIELD(im.FxpKeys, fxpKey)
+      %assign fxpMapIdx      = GETFIELD(im.FxpKeys,fxpKey)
+    %else
+      %assign fxpMapIdx      = im.NumFixPoint
+      %assign im.NumFixPoint = im.NumFixPoint + 1
+      %assign slopeStr       = "(const void *) &rtcapiStoredFloats[%<slopeIdx>]"
+      %assign biasStr        = "(const void *) &rtcapiStoredFloats[%<biasIdx>]"
+      %assign im.FixPointMap = im.FixPointMap + ...
+	"{%<slopeStr>, %<biasStr>, rtwCAPI_FIX_UNIFORM_SCALING, " ...
+	"%<fxpRec.NumRequiredBits>, %<fxpRec.FixedExp>, %<fxpRec.IsSigned>}"
+      %<LibAddIdentifier(im.FxpKeys, fxpKey, fxpMapIdx)>
+    %endif
+  %else  
+    %assign fxpMapIdx = 0
+  %endif
+  %return fxpMapIdx
+%endfunction  %% FcnGetFxpMapIdx
+
+%% Function FcnGetStoredDoublesIdx ============================================
+%% Abstract
+%function FcnGetStoredDoublesIdx(im, value) void
+
+  %% Create a hash key from the value 
+  %if value == rtInf
+    %assign hashKey = "Pinf"
+  %elseif value == 0
+    %assign hashKey = "K0"
+  %elseif value < 0
+    %% Format Value as a double with %g format specifier
+    %assign cValue = SPRINTF("%g",-value)
+    %if value > -1
+      %assign hashKey = "N" + FEVAL("regexprep", cValue, "[.-]", "n")
+    %else
+      %assign hashKey = "N" + FEVAL("regexprep", cValue, "[.+]", "p")
+    %endif
+  %else
+    %assign cValue = SPRINTF("%g",value)
+     %if value < 1
+      %assign hashKey = "P" + FEVAL("regexprep", cValue, "[.-]", "n")
+    %else
+      %assign hashKey = "P" + FEVAL("regexprep", cValue, "[.+]", "p")
+    %endif
+  %endif 
+  
+  %% Check if hashKey already exists in DoubleKeys
+  %if ISFIELD(im.DoubleKeys, hashKey)
+    %% if exists, return the value associated with the key
+    %assign retValue = GETFIELD(im.DoubleKeys, hashKey)
+  %else
+    %% add the value to DoublesMap and return the appended value
+    %assign retValue      = im.NumDoubles
+    %assign im.DoublesMap = im.DoublesMap + value
+    %<LibAddIdentifier(im.DoubleKeys, hashKey, retValue)>
+    %assign im.NumDoubles = im.NumDoubles + 1
+  %endif
+  
+  %% return the index of the double number in the Doubles Array
+  %return retValue
+%endfunction
+
+%% Function FcnGetCAPIGrndAddr ===========================================
+%% Abstract
+%function FcnGetCAPIGroundAddr(im, dtIdx, isComplex, regDims) void
+  %assign nDims = SIZE(regDims,1)
+  %assign width = 1
+  %foreach dimsIdx      = nDims
+    %assign width = width*regDims[dimsIdx]
+  %endforeach
+  
+  %% Create a hash key from the value 
+  %assign hashKey = "GRND_DT%<dtIdx>_%<isComplex>_W%<width>"
+  %assign optWidth = (width > 1) ? "[%<width>]": ""
+    
+  %% Check if hashKey already exists in DoubleKeys
+  %if ISFIELD(im.GroundKeys, hashKey)
+    %% if exists, return the value associated with the key
+    %assign value = GETFIELD(im.GroundKeys, hashKey)
+  %else
+    %% add the defn to groundsMap and return the appended value
+    %assign dt    = ::CompiledModel.DataTypes.DataType[dtIdx]
+    %if isComplex
+      %assign value = "static %<dt.ComplexName> %<hashKey>%<optWidth>"
+    %else
+      %assign value = "static %<dt.Name> %<hashKey>%<optWidth>"
+    %endif
+    %assign im.GroundsMap = im.GroundsMap + value
+    %<LibAddIdentifier(im.GroundKeys, hashKey, value)>
+    %assign im.NumGrounds = im.NumGrounds + 1
+  %endif
+  
+  %% return the address
+  %assign retValue = (width > 1) ? "%<hashKey>[0]" : hashKey
+  %return "&(%<retValue>)"
+%endfunction
+
+%% FcnGetSampTimeIdx =========================================================
+%% Abstract:
+%%
+%function FcnGetSampTimeIdx(tID, isFrame, im) void
+  %% for constant, parameter and triggered signals TID < 0
+  %if tID < 0 || SLibParameterChangeEventTID(tID)
+    %if tID > 0
+      %assign tidKey = "TN%<tID>F%<isFrame>"
+    %else
+      %assign tidKey = "TN%<-tID>F%<isFrame>"
+    %endif
+    %if ISFIELD(im.STimeKeys, tidKey)
+      %assign sTimeIdx =  GETFIELD(im.STimeKeys, tidKey)
+    %else
+      %assign sTimeIdx          = im.NumSampleTimes
+      %assign im.NumSampleTimes = im.NumSampleTimes + 1
+      %assign im.SampleTimeMap  = im.SampleTimeMap + ...
+	"{%<SLibGetNullDefinitionFromTfl()>,%<SLibGetNullDefinitionFromTfl()>, %<tID>, %<isFrame>}"
+      %<LibAddIdentifier(im.STimeKeys, tidKey, sTimeIdx)>
+    %endif
+  %else
+    %assign tidKey = "T%<tID>F%<isFrame>"
+    %if ISFIELD(im.STimeKeys, tidKey)
+      %assign sTimeIdx =  GETFIELD(im.STimeKeys, tidKey)
+    %else
+      %assign sTimeIdx          = im.NumSampleTimes
+      %assign sTimeRec          = ::CompiledModel.SampleTime[tID]
+      %if sTimeRec.IsUnionTs == "no"
+        %assign im.NumSampleTimes = im.NumSampleTimes + 1
+        %% use -3.0 for init, term, and reset events' periods
+        %if SLibInitResetTermEventTID(tID)
+          %assign sPeriodIdx = FcnGetStoredDoublesIdx(im,-3.0) 
+        %else
+          %assign sPeriodIdx = FcnGetStoredDoublesIdx(im,sTimeRec.PeriodAndOffset[0])          
+        %endif
+        %assign sPeriodStr = "(const void *) &rtcapiStoredFloats[%<sPeriodIdx>]"
+        %assign sOffsetIdx = FcnGetStoredDoublesIdx(im,sTimeRec.PeriodAndOffset[1])
+        %assign sOffsetStr = "(const void *) &rtcapiStoredFloats[%<sOffsetIdx>]"
+        %assign im.SampleTimeMap  = im.SampleTimeMap + ...
+          "{%<sPeriodStr>, %<sOffsetStr>, %<sTimeRec.TID>, %<isFrame>}"
+        %<LibAddIdentifier(im.STimeKeys, tidKey, sTimeIdx)>
+      %endif
+    %endif
+  %endif
+  %return sTimeIdx
+%endfunction
+
+
+%%  =========================================================
+%% Abstract:
+%%      Walks the .rtw file and caches the bus signals and
+%% elements array in busInfo.
+%function FcnDumpBusElements(busInfo, offset, blkPath, portIdx) Output
+  %assign RealNumElements = 0 %% Some elements in the port obj may be unconnected,
+                              %% so we need to keep track of RealNumElements
+  %createrecord foo {}
+  %foreach reg = NumRegions
+    %with Region[reg]
+      %assign busIdx = 0
+      %createrecord portObj { SignalSrc [-1] SignalOffset [-1] Width 1 }
+      %if Type == "Bus"
+        %assign shdIdx = SigHierIdx
+        \
+        %if BlockHierarchyMap.NumSignalHierarchyDescriptors > 0
+          %assign busIdx = BlockHierarchyMap.SignalHierarchyDescriptor[shdIdx].HierarchyNode[0].rtwCAPIBusIdx
+          %addtorecord foo elements {type "rtwCAPI_bus" ; index busIdx}
+          %assign RealNumElements = RealNumElements + 1
+        %endif
+      %else
+        %assign shdIdx = SigHierIdx
+        %if ISFIELD(BlockHierarchyMap.SignalHierarchyDescriptor[shdIdx].HierarchyNode[0], "rtwCAPIAddrMapIdx")          
+          %assign capiIdx = BlockHierarchyMap.SignalHierarchyDescriptor[shdIdx].HierarchyNode[0].rtwCAPIAddrMapIdx
+          %addtorecord foo elements {type "rtwCAPI_signal" ; index capiIdx}
+          %assign RealNumElements = RealNumElements + 1        
+        %endif
+      %endif
+    %endwith %% Region
+    %undef portObj
+  %endforeach %% 
+  %if RealNumElements > 0
+    %assign busElement = "{\"%<SignalLabel>\", \"%<blkPath>\", %<portIdx>, %<RealNumElements>, &rtBusElements[%<offset>]},"
+    %addtorecord busInfo busElements {str busElement ; indicies %<foo>}
+    %assign nextOffset = offset + RealNumElements
+    %return nextOffset
+  %else
+    %return offset
+  %endif
+%endfunction
+
+%function FcnGetRTWTimingObject(CAPIHooks, tid) Output
+  %% Figure out the exact TID
+  %if (TYPE(tid) == "Number")
+    %if IsModelReferenceRTWTarget() && ...
+      (::CompiledModel.AllSampleTimesInherited == "yes")
+      %assign tid = "inherited"
+    %elseif FEVAL("get_param", LibGetModelName(), "SampleTimeConstraint") == "STIndependent"
+      %assign tid = "inherited"
+    %elseif ( ISEQUAL(SolverType, "FixedStep") && (FixedStepOpts.TID01EQ) && (tid == 0) )
+      %assign tid = 1
+    %else
+      %assign tid = tid
+    %endif
+  %elseif (tid == "constant")
+    %% Do nothing. Ensure that u dont have any arbitrary string
+  %elseif ISEQUAL(tid, "continuous")
+    %% Do nothing. Ensure that u dont have any arbitrary string
+  %elseif ISEQUAL(tid, "inherited")
+    %% Do nothing. Ensure that u dont have any arbitrary string
+  %elseif ISEQUAL(tid, "trigger")
+    %% Do nothing. Ensure that u dont have any arbitrary string
+  %else
+    %<LibReportFatalError("CodeInfo TID: Incorrect TID specified")>
+  %endif
+  %%
+  %assign timeObj = "time_%<tid>"
+  %%
+  %if ISFIELD(CAPIHooks.TimingInterfaceMap, timeObj)
+    %% Do nothing. This object has already been created.
+    %% Just return the name of the object
+    %%
+  %else
+    %% Create a default object. Note the default TimingMode is PERIODIC
+    %assign comment = "% Timing Information: %<timeObj>"
+    
+%<comment>
+%<timeObj> = RTW.TimingInterface;
+    %if (TYPE(tid) == "Number")
+      %% This TID should correspond to a SampleTime record
+      %%
+      %if ( (tid < 0) || (tid >= ::CompiledModel.NumSampleTimes) )
+        %% Error out if this TID is greater than NumSampleTimes
+        %<LibReportFatalError("CodeInfo TID: Incorrect TID specified")>
+      %endif
+      %% Get the appropriate SampleTime record
+      %assign sTimeRec = ::CompiledModel.SampleTime[tid]
+      %if( sTimeRec.Asynchronous == "no")
+        %% If corresponds to Synchronous task, set period and offset.
+        %% The current Simulink design assumes a Synchronous task as
+        %% always periodic.
+        %<timeObj>.SamplePeriod =  %<sTimeRec.PeriodAndOffset[0]>;
+        %<timeObj>.SampleOffset =  %<sTimeRec.PeriodAndOffset[1]>;
+        %<timeObj>.NonFcnCallPartitionName = '%<sTimeRec.NonFcnCallPartitionName>';
+      %else
+        %% Mark as asynchronous
+        %if ISFIELD(sTimeRec, "EventSourceType") && ...
+          sTimeRec.EventSourceType == "PowerUpEvent"
+          %<timeObj>.TimingMode = 'INITIALIZE'; 
+          
+        %elseif ISFIELD(sTimeRec, "EventSourceType") && ...
+          sTimeRec.EventSourceType == "ResetEvent"
+          %<timeObj>.TimingMode = 'RESET'; 
+          
+        %elseif ISFIELD(sTimeRec, "EventSourceType") && ...
+          sTimeRec.EventSourceType == "ResetWithInitEvent"
+          %<timeObj>.TimingMode = 'RESETWITHINIT'; 
+          
+        %elseif ISFIELD(sTimeRec, "EventSourceType") && ...
+          sTimeRec.EventSourceType == "PowerDownEvent"
+          %<timeObj>.TimingMode = 'TERMINATE';
+          
+         %else
+           %<timeObj>.TimingMode = 'ASYNCHRONOUS';
+           %if !ISNAN(sTimeRec.PeriodAndOffset[0])
+              %<timeObj>.SamplePeriod =  %<sTimeRec.PeriodAndOffset[0]>;
+           %endif
+           %if !ISNAN(sTimeRec.PeriodAndOffset[1])
+              %<timeObj>.SampleOffset =  %<sTimeRec.PeriodAndOffset[1]>;
+         %endif
+      %endif
+      %endif
+      %if (sTimeRec.PriorityAssigned == "yes")
+        %% If priority is assigned, set the priority
+        %<timeObj>.Priority = %<sTimeRec.Priority>;
+      %endif
+      %if (sTimeRec.ExplicitTasking == "yes")
+        %<timeObj>.TaskingMode = 'EXPLICIT_TASKING';
+      %endif
+    %elseif (tid == "constant")
+      %% This TID should correspond to a "ONESHOT"
+      %%
+      %<timeObj>.TimingMode = 'ONESHOT'; 
+    %elseif (tid == "continuous")
+      %% This TID should correspond to a "CONTINUOUS"
+      %%
+      %<timeObj>.TimingMode = 'CONTINUOUS';
+    %elseif (tid == "inherited")
+      %% This TID should correspond to a "INHERITED"
+      %%
+      %<timeObj>.TimingMode = 'INHERITED';
+    %elseif (tid == "trigger")
+      %% triggered sample times do not have a TimingInterface representation
+      %<timeObj> = RTW.TimingInterface.empty;
+    %else
+      %% Safety check. This path should never be reached.
+      %<LibReportFatalError("CodeInfo TID: Incorrect TID specified")>
+    %endif
+    %<LibAddIdentifier(CAPIHooks.TimingInterfaceMap, timeObj, tid)>
+  %endif
+  %return timeObj
+%endfunction
+
+%% Function FcnAddSignalDataInterface =======================================
+%% Abstract :
+%%   This function creates a RTW.DataInterface object for a C API signal record
+%%   and adds it the list of data interfaces.
+%%
+%%   The process of creation here means emitting out the MATLAB syntax which can 
+%%   create an object in MATLAB. `
+%%   The MATLAB syntax is
+%%       dataInterface = RTW.DataInterface(blockSID, 
+%%                                         signalName, 
+%%                                         implementation,
+%%                                         timing)
+%%
+%%       blockSID       - SID of the block feeding the signal
+%%       signalName     - Label of the signal
+%%       implementation - Code implementation - a RTW.Variable object.
+%%       timing         - A RTW.TimingInterface object, giving the sample rate
+%%                        of the signal
+%%
+%function FcnAddSignalDataInterface(CAPIHooks, blkSID, portIdx, ...
+                                    storageClass, cgTypeIdx, ...
+                                    frameData, ...
+                                    TID, isPointer, addrMapIdx, ...
+                                    dataOutputPortSignalLabel) void
+   %% Assumptions:
+   %%
+   %% 1) Block is always non-virtual and therefore never has multiple regions / need 
+   %% for ArrayExpressions.
+   %%
+   %% Limitations:
+   %%
+   %% 1) Custom storage classes are not supported and will result in an 
+   %%    empty Implementation.
+   %% 2) Triggered sample times result in an empty TimingInterface.
+   %%
+   %openfile dataInterfaceBuffer   
+   %assign CAPIHooks.Data.NumDataInterfaces = CAPIHooks.Data.NumDataInterfaces + 1
+   %assign dataInterfaceIdx = CAPIHooks.Data.NumDataInterfaces
+   %assign sigId = "Sig%<dataInterfaceIdx>"
+   %assign regObj = "RTW.DataImplementation.empty"
+   %% Skip Custom Storage Classes
+   %if (storageClass != "Custom")
+      %% create array expression for DataInterface.Implementation which will access into the 
+      %% C API address map
+      %assign addrExpr = "capi_%<sigId>AddrExpr"
+      %<addrExpr> = RTW.ArrayExpression(capi_dataAddrExpr, %<addrMapIdx>, capi_voidptr);
+      %assign regObj = addrExpr
+   %endif
+   %% create the coder.types for DataInterface.Type
+   %% default type qualifers
+   %assign sigConst  = 0
+   %assign sigVolatile = 0
+   %assign typeObj = SLibGetCoderTypeObject(cgTypeIdx, sigConst, sigVolatile)     
+   %if !ISEQUAL(frameData, "no")
+      %assign typeObj = FcnGetMatrixFrameTypeObj(typeObj)
+   %endif
+   %if isPointer
+      %% add level of indirection to the typeObj
+      %assign ptrExpr = "capi_%<sigId>Pointer"
+      %<ptrExpr> = coder.types.Pointer; 
+      %<ptrExpr>.BaseType = %<typeObj>;
+      %assign typeObj = ptrExpr
+   %endif
+   %if ( (TYPE(TID) == "Number") && ...
+      (::CompiledModel.SampleTime[TID].PeriodAndOffset[0] == 0.0) )
+      %assign timeObj = FcnGetRTWTimingObject(CAPIHooks, "continuous")
+   %else
+      %assign timeObj = FcnGetRTWTimingObject(CAPIHooks, TID)
+   %endif
+   %assign comment = "% C API Data Interface: %<dataInterfaceIdx>"
+   %assign blkSID = ::CompiledModel.Name + ":" + blkSID + "#out:" + "%<portIdx+1>"
+   %<comment>    
+   %% escape ' for MATLAB
+   %if !ISEMPTY(dataOutputPortSignalLabel)
+      %assign dataOutputPortSignalLabel = FEVAL("strrep", dataOutputPortSignalLabel, "'", "''")
+   %endif
+   dataInterface = RTW.DataInterface('%<blkSID>', '%<dataOutputPortSignalLabel>', %<regObj>, %<timeObj>);
+   %% set Type derived from CGType
+   dataInterface.Type = %<typeObj>;
+   dataInterfaces = [dataInterfaces, dataInterface];
+   %closefile dataInterfaceBuffer
+   %% extend existing definition
+   %assign CAPIHooks.Data.DataInterfaceDef = CAPIHooks.Data.DataInterfaceDef + dataInterfaceBuffer
+%endfunction
+
+%% FcnCAPIHookInit =========================================================
+%% Abstract: Initialize the C-API Hooks data structure
+%%
+%function FcnCAPIHookInit() void
+   %% default initialization
+   %%
+   %% TimingInterfaceMap stores the names of TimingInterface objects that 
+   %% have already been created to avoid duplication
+   %createrecord CAPIHooks { \
+      Enabled TLC_FALSE;     \
+      Hooks   [];            \
+      Data    [];            \
+      TimingInterfaceMap {}  \
+   }
+   %if  (SLibIsERTTarget() || ::CompiledModel.ConfigSet.SystemTargetFile=="systemverilog_dpi_grt.tlc") && !IsModelReferenceSimTarget()
+      %% add required hook implementations
+      %% include the C-API MAT-file hooks
+      %assign CAPIHooks.Hooks = ["capimathooks.tlc"]   
+   %endif   
+   %% if there are hook implementations, enable CAPIHooks
+   %if !LibIsEmpty(CAPIHooks.Hooks)
+      %% reset state of codeinfolib.tlc which is also used by CodeInfo processing
+      %<SLibResetCodeInfoLib()>
+      %assign CAPIHooks.Enabled = TLC_TRUE
+      %% initialize Data
+      %createrecord Data {                   \
+         DataInterfaceDef "dataInterfaces = [];"; \
+         NumDataInterfaces 0 \
+      }
+      %% add generic part of DataInterfaceDef that represents the 
+      %% dataAddrMap - see example below
+      %%
+      %% /* Real-time Model Data Structure */
+      %% struct mpil_signal_logging_bo_RT_MODEL {
+      %%   const char_T * volatile errorStatus;
+      %%   /*
+      %%    * DataMapInfo:
+      %%    * The following substructure contains information regarding
+      %%    * structures generated in the model's C API.
+      %%    */
+      %%   struct {
+      %%     rtwCAPI_ModelMappingInfo mmi;
+      %%   } DataMapInfo;
+      %% };            
+      %openfile dataInterfaceBuffer
+      %% void * [] type of dataAddrMap
+      capi_voidtype     = coder.types.Char; 
+      capi_voidptr      = coder.types.Pointer; 
+      capi_voidptr.BaseType = capi_voidtype;
+      capi_voidptrArray = coder.types.Matrix; 
+      capi_voidptrArray.BaseType = capi_voidptr; 
+      %% allow for (unknown) int32 dataAddrMap size
+      capi_voidptrArray.Dimensions = [%<INT32MAX>,1];
+      %% dataAddrMap element of mmi
+      capi_dataAddrElem = coder.types.AggregateElement; 
+      capi_dataAddrElem.Identifier = 'InstanceMap.dataAddrMap'; 
+      capi_dataAddrElem.Type = capi_voidptrArray;
+      %% mmi with dataAddrMap element
+      capi_mmiType = coder.types.Struct; 
+      capi_mmiType.Elements = capi_dataAddrElem;
+      capi_mmiType.Identifier = 'rtwCAPI_ModelMappingInfo';
+      capi_mmiElem = coder.types.AggregateElement; 
+      capi_mmiElem.Type = capi_mmiType; 
+      capi_mmiElem.Identifier = 'mmi';
+      %% DataMapInfo with mmi element
+      capi_dmiType = coder.types.Struct;
+      capi_dmiType.Identifier = 'DataMapInfo';
+      capi_dmiType.Elements   = capi_mmiElem;
+      capi_dmiElem = coder.types.AggregateElement;
+      capi_dmiElem.Type = capi_dmiType; 
+      capi_dmiElem.Identifier = 'DataMapInfo';
+      %% RT_MODEL with DataMapInfo element
+      capi_rtmType = coder.types.Struct;
+      capi_rtmType.Identifier = 'RT_MODEL';
+      capi_rtmType.Elements = capi_dmiElem;
+      %% Construct rtMVar
+      %% assume rtM will be defined
+      %assign ownerName = "defined"
+      %assign needRtmPtrType = TLC_FALSE
+      %if !GenerateClassInterface
+         %% determine the RTM variable name
+         %if IsModelReferenceTarget()
+            %% use RT_MODEL directly for model reference single instance
+            %if IsModelRefScalableBuild()
+               %assign rtmType = "capi_rtmType"
+               %assign rootMdlRefDWorkVar = ...
+                  ::CompiledModel.System[GetBaseSystemIdx()].Interface.tsysMdlrefDWork   
+               %assign rtMVarName = rootMdlRefDWorkVar + ".rtm"
+            %else
+            %% use pointer to RT_MODEL for model reference multi-instance
+               %assign rtmType = "capi_rtmPtrType"
+               %assign needRtmPtrType = TLC_TRUE
+               %assign rtMVarName = "RTModel_ptr"  
+            %endif      
+         %else
+            %% always use pointer to RT_MODEL 
+            %% for standalone non-reusable & reusable
+            %assign rtmType = "capi_rtmPtrType"
+            %assign needRtmPtrType = TLC_TRUE
+            %assign rtMVarName = RTMGetModelSS()   
+         %endif
+      %else 
+         %% set RTM varname as model object "getRTM" expression 
+         %if IsModelReferenceTarget()
+            %assign rtMVarName = "ModelMDLOBJ.getRTM()"
+         %else
+            %assign rtMVarName = "rtObject.getRTM()"
+         %endif
+         %assign rtmType = "capi_rtmPtrType"
+         %assign needRtmPtrType = TLC_TRUE
+      %endif
+      %if needRtmPtrType
+         capi_rtmPtrType = coder.types.Pointer;
+         capi_rtmPtrType.BaseType = capi_rtmType; 
+         capi_rtmPtrType.ReadOnly = 1;
+      %endif
+      capi_rtMVar = RTW.Variable(%<rtmType>, '%<rtMVarName>', '%<ownerName>');  
+      %% Construct intermediate expressions: rtM-> | DataMapInfo. | mmi. | InstanceMap.dataAddrMap
+      capi_dmiStructExpr = RTW.StructExpression(capi_dmiElem, capi_rtMVar);
+      capi_mmiStructExpr = RTW.StructExpression(capi_mmiElem, capi_dmiStructExpr);
+      capi_dataAddrExpr = RTW.StructExpression(capi_dataAddrElem, capi_mmiStructExpr);
+      %closefile dataInterfaceBuffer
+      %assign Data.DataInterfaceDef = Data.DataInterfaceDef + dataInterfaceBuffer
+      %assign CAPIHooks.Data = Data
+   %endif
+%return CAPIHooks
+%endfunction
+
+%% FcnCAPIHookAddSignal =========================================================
+%% Abstract: Add a signal to the C-API Hooks data structure
+%%
+%function FcnCAPIHookAddSignal(CAPIHooks,    \
+                               portIdx,      \
+                               addrMapIdx,   \
+                               isPointer,    \
+                               storageClass, \
+                               cgTypeIdx, \
+                               frameData, \
+                               TID, \
+                               blkSID, \
+                               dataOutputPortSignalLabel) void
+%if CAPIHooks.Enabled
+   %% add a RTW.DataInterface definition
+   %<FcnAddSignalDataInterface(CAPIHooks, \
+                               blkSID, \
+                               portIdx, \
+                               storageClass, \
+                               cgTypeIdx, \
+                               frameData, \
+                               TID, \
+                               isPointer, \
+                               addrMapIdx, \
+                               dataOutputPortSignalLabel)>
+%endif
+%endfunction
+
+%% FcnCAPIHookExecute =========================================================
+%% Abstract: Call each registered C-API hook function
+%%
+%function FcnCAPIHookExecute(CAPIHooks) void
+%if CAPIHooks.Enabled      
+   %foreach HookIdx = SIZE(CAPIHooks.Hooks)[1]
+      %assign CAPIHookType = "CAPIHook"
+      %assign CAPIHook = CAPIHooks.Hooks[HookIdx]
+      %generatefile "%<CAPIHookType>" "%<CAPIHook>"
+      %<GENERATE_TYPE(CAPIHooks.Data, "FcnCAPIHook", "%<CAPIHookType>")>
+   %endforeach
+%endif
+%endfunction
+
+%endif  %% EXISTS("_CAPILIB_") == 0
+
+%% EOF capilib.tlc ============================================================

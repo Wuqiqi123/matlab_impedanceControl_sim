@@ -1,0 +1,69 @@
+%% Copyright 2010-2013 The MathWorks, Inc.
+%%
+%% Abstract: Profiling instrumention for code that is not accessible and cannot
+%%           be instrumented from CGIR
+%%
+%if EXISTS("_PROF_TLC_") == 0
+%assign _PROF_TLC_ = 1
+
+
+%% Function: SLibProfilerSystemStart ============================================
+%% Abstract:
+%%    Generate code for  starting the profile operation at the beginning of the 
+%%    code segment for a System's fcn (Output/Update/OutputUpdate/Derivatives)
+%%    function
+%function SLibProfilerSystemStart(system, sectionIdx) void
+  
+  %openfile tmpBuff
+  %assign startSymbol = FEVAL("coder.internal.getExecTimeProbeSymbol", "start")
+  %<startSymbol>(%<sectionIdx>);
+  %closefile tmpBuff
+  %return tmpBuff
+  
+%endfunction
+
+%% Function: SLibProfilerSystemFinish ============================================
+%% Abstract:
+%%    Generate code for  ending the profile operation at the end of the 
+%%    code segment for a System's fcn (Output/Update/OutputUpdate/Derivatives)
+%%    function
+%function SLibProfilerSystemFinish(system, sectionIdx) void
+    
+  %openfile tmpBuff
+  %assign endSymbol = FEVAL("coder.internal.getExecTimeProbeSymbol", "end")
+  %<endSymbol>(%<sectionIdx>);
+  %closefile tmpBuff
+  %return tmpBuff
+
+%endfunction
+  
+%function SLibProfilerGetSectionIdx(fcnName) void
+
+  %assign  sectionIdx = ...
+    FEVAL("coder.internal.requestExecTimeTraceId", ...
+    LibGetModelName(), fcnName)
+  %if ISEMPTY(sectionIdx) || (sectionIdx<=0)
+    %exit Failed to get identifier for execution profiling
+  %endif
+  
+  %assign rtnVal = SPRINTF("%dU",sectionIdx)
+  %return rtnVal
+
+%endfunction
+  
+
+%% Function: SLibProfilerTypeDefs ============================================
+%% Abstract:
+%%    Generate code for typedefs of profiler objects and macro definitions 
+%%    for CPU cycle counting
+%function SLibProfilerTypeDefs() void
+
+  %assign declarationsSymbol = FEVAL("coder.internal.getExecTimeProbeSymbol", "declarations")
+  %openfile tmpBuff
+  /* %<declarationsSymbol> */
+  %closefile tmpBuff
+  %return tmpBuff
+  
+%endfunction
+
+%endif

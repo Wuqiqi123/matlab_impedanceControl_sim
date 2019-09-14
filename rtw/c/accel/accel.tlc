@@ -1,0 +1,39 @@
+%%
+%% 
+%% 
+%%
+%% Copyright 1994-2013 The MathWorks, Inc.
+%% Abstract: Accelerator system target file.
+%%
+
+%assign TargetType = "NRT"
+%assign Language   = "C"
+
+%assign Accelerator = 1
+%assign CodeFormat = "S-Function"
+
+%if FEVAL("computer") == "IBM_RS"
+  %assign PreStructTypedefPragma  = "#pragma options align=natural"
+  %assign PostStructTypedefPragma = "#pragma options align=reset"
+%endif
+
+%include "codegenentry.tlc"
+
+%% The contents between 'BEGIN_RTW_OPTIONS' and 'END_RTW_OPTIONS' are strictly
+%% written by the standard format. We need to use this cell structure to construct
+%% target structure and UI.
+%%
+/%
+  BEGIN_RTW_OPTIONS
+
+  %----------------------------------------%
+  % Configure code generation settings %
+  %----------------------------------------%
+  
+  rtwgensettings.BuildDirSuffix   = '';
+  rtwgensettings.UsingMalloc      = 'yes';
+  rtwgensettings.Version          = '1';
+  rtwgensettings.SelectCallback   = 'slConfigUISetVal(hDlg, hSrc, ''TargetHWDeviceType'', ''MATLAB Host'');slConfigUISetVal(hDlg, hSrc, ''ModelReferenceCompliant'', ''on'');slConfigUISetVal(hDlg, hSrc, ''ConcurrentExecutionCompliant'', ''on'');';
+  
+  END_RTW_OPTIONS 
+%/

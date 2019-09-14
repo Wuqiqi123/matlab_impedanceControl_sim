@@ -1,0 +1,116 @@
+%% ============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   This system file creates ext_mode_types.h file for code generation's 
+%%   RealTime and Embedded-c code formats. 
+%%    
+%%   The file contains the definition of the data types required by the
+%%   ext_mode.h External Mode Abstraction Layer introduced with XCP
+%%   communication protocol
+%%
+%% Copyright 2018 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%if EXISTS("_EXTMODETYPES_") == 0
+%assign _EXTMODETYPES_ = 1
+
+%% Function: SLibWriteExtModeTypesFile =======================================
+%% Abstract:
+%%  The output of this file provides information on the External Mode data types
+%%  that are model specific
+%%
+%%
+%function SLibWriteExtModeTypesFile() void
+
+%realformat "CONCISE"
+
+%if PurelyIntegerCode
+  %% In the current implementation XCP-based External Mode only supports Base Rate values
+  %% greater or equal than 1 us (for further details please refer to g1561360)
+
+  %assign baseRateModMicrosecond = FEVAL("mod", CompiledModel.FundamentalStepSize, 0.000001)
+  %assign EPS = FEVAL("eps", CompiledModel.FundamentalStepSize)
+
+  %% Generate an error if either the resolution or the actual FundamentalStepSize are below 1us
+  %if (baseRateModMicrosecond > EPS)
+    %<SLibReportErrorWithId("RTW:tlc:XCPFixedStepResolutionOnIntegerCode")>
+  %endif
+%endif
+
+
+%assign ExtModeTypesHeaderFileName = "ext_mode_types"
+%if RTWVerbose
+%selectfile STDOUT
+### Creating external mode types file %<ExtModeTypesHeaderFileName>.h
+%selectfile NULL_FILE
+%endif
+
+%openfile ExtModeTypesDotH = "%<ExtModeTypesHeaderFileName>.h"
+/*
+ * %<ExtModeTypesHeaderFileName>.h
+ *
+%<SLibCommonHeaderInfo()>\
+ */
+
+#ifndef EXT_MODE_TYPES_H
+#define EXT_MODE_TYPES_H
+
+#include "rtwtypes.h"
+
+
+/** External Mode Event ID */
+typedef uint16_T    extmodeEventId_T;
+
+
+/** External Mode real time, measured using the target's clock */
+typedef uint32_T    extmodeRealTime_T;
+
+
+/** External Mode simulation time */
+typedef %<FcnGetDtypeName("TIME")>   extmodeSimulationTime_T;
+
+
+/** Run the simulation forever (infinite simulation end time) */
+#define EXTMODE_SIMULATION_RUN_FOREVER  ((extmodeSimulationTime_T) -1)
+
+%assign ::Tid01Eq = ISEQUAL(CompiledModel.SolverType, "FixedStep") && ...
+		              CompiledModel.FixedStepOpts.TID01EQ
+
+%if PurelyIntegerCode
+  %assign stepSizeInMicroseconds = CAST("Number",(CompiledModel.FundamentalStepSize*1000000) + 0.5)
+  %assign clockTick_DTypeId = SampleTime[0].ClockTickDataTypeId
+  %assign dtypeName = LibGetDataTypeNameFromId(LibGetDataTypeIdAliasedThruToFromId(clockTick_DTypeId))
+
+/** External Mode MAX simulation time */
+#define MAX_extmodeSimulationTime_T    MAX_%<FcnGetDtypeName("TIME")>
+
+/** External Mode MAX base rate simulation time */
+#define EXTMODE_MAX_BASE_RATE_SIMULATION_TIME   MAX_%<dtypeName>   
+
+/** External Mode Step Size in microseconds */
+#define EXTMODE_STEP_SIZE_IN_MICROSECONDS  %<stepSizeInMicroseconds>
+
+%endif
+
+/** External Mode Base rate event id */
+#define EXTMODE_BASE_RATE_EVENT_ID  %<Tid01Eq>
+
+/** External Mode Max Event Id */
+#define  EXTMODE_MAX_EVENT_ID   0xFF
+
+#endif /* EXT_MODE_TYPES_H */
+
+
+/* [EOF] %<ExtModeTypesHeaderFileName>.h */
+%closefile ExtModeTypesDotH
+%<SLibAddGeneratedFileToList("%<ExtModeTypesHeaderFileName>.h","interface","header","")>
+%selectfile NULL_FILE
+%endfunction %% SLibWriteExtModeTypesFile
+
+%endif %% _EXTMODETYPES_
+
+%% [EOF] extmodetypes.tlc

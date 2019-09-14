@@ -1,0 +1,980 @@
+%% ============================================================================
+%% File: prm_constant.tlc
+%%
+%% Abstract:
+%%
+%%
+%%
+%%
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PRM_CONSTANT_") == 0
+  %assign _PRM_CONSTANT_ = 1
+
+  %include "prm_cacheutils.tlc"
+
+
+  %% Function: SLibCacheConstPrmBuffers ==========================================
+  %% Abstract:
+  %%   Generate the definition & instantiation buffers for constant parameters
+  %%
+  %function SLibCacheConstPrmBuffers(startIdx) void
+    %% Cache unstructured/shared constant parameters. 
+    %<SLibCacheUnstructuredConstantPrmBuffers(startIdx)>
+
+    %% Create parameter buffers
+    %<SLibCreatePrmBuffer("Const", "Typedef")>
+    %<SLibCreatePrmBuffer("Const", "Instance")>
+    %<SLibCreatePrmBuffer("Const", "MacroDecl")>
+
+    %% Generate the typedef & instantiation buffers for const parameter structure
+    %% and the declaration buffer for constant parameters with macro declaration
+    %assign result = FcnGenConstPrmBuffers(startIdx)
+    %<SLibSetPrmBufferPart("Const", "Typedef",   "Code", result[0])>
+    %<SLibSetPrmBufferPart("Const", "Instance",  "Code", result[1])>
+    %<SLibSetPrmBufferPart("Const", "MacroDecl", "Code", result[2])>
+
+  %endfunction %% SLibCacheConstPrmBuffers
+
+  %% Function: SLibGenConstParamInSharedLocation ================================
+  %% Abstract:
+  %%   Tells the caller whether this parameter should be generated in the shared
+  %%   location. Assumes that this is a constant parameter. This code emulates that
+  %%   code which determins whether we will put a parameter in ConstP.
+  %%
+  %function SLibGenConstParamInSharedLocation(mdlParam) void
+    %%
+    %% SKIP EMPTY PARAMETERS
+    %%
+    %if (SLibGetWidthOfValueFromParamRec(mdlParam) < 1) || (LibBlockParameterWidth(mdlParam) < 1)
+      %return TLC_FALSE
+    %endif
+
+    %% Every shared constant will have the field FirstInstanceConstIdx
+    %if (mdlParam.WasAccessedAsVariable || ::CompiledModel.PadderActive)
+      %return ISFIELD(mdlParam, "FirstInstanceConstIdx")
+    %endif
+    %return TLC_FALSE
+  %endfunction %% SLibGenConstParamInSharedLocation
+
+  %% Function: SLibConstParamReferencedOnlyBySharedFcn ==========================
+  %% Abstract:
+  %%   Tells the caller whether this parameter is only referenced by a shared
+  %%   function. If it is, then we don't need to generate a macro redefine for it.
+  %%
+  %function SLibConstParamReferencedOnlyBySharedFcn(mdlParam) void
+    %return ISFIELD(mdlParam, "ReferencedOnlyByRLS") && mdlParam.ReferencedOnlyByRLS
+  %endfunction %%SLibConstParamReferencedOnlyBySharedFcn
+
+  %% Function: SLibConstParamAccessedOutsideSharedFcn ==========================
+  %% Abstract:
+  %%   Tells the caller whether this parameter is accessed outside of a shared
+  %%   function. If it is, then we don't need to generate a macro redefine for it.
+  %%
+  %function SLibConstParamAccessedOutsideSharedFcn(mdlParam) void
+    %return ISFIELD(mdlParam, "AccessedOutsideRLS") && mdlParam.AccessedOutsideRLS
+  %endfunction %%SLibConstParamAccessedOutsideSharedFcn
+
+  %% Function: SLibConstParamReferencedSystem ===================================
+  %% Abstract:
+  %%    Returns true if the parameter is accessed by the system. Used to
+  %%    determine whether we need to generate an extern decl in shared
+  %%    functions.
+  %%
+  %function SLibConstParamReferencedSystem(mdlParam, sysIdx) void
+    %% Don't go off the owner system.  Go off the graphical references
+    %if !ISFIELD(mdlParam, "RLSReferences")
+      %return TLC_FALSE
+    %endif
+
+    %foreach refIdx = SIZE(mdlParam.RLSReferences, 1)
+      %if mdlParam.RLSReferences[refIdx] == sysIdx
+        %return TLC_TRUE
+      %endif
+    %endforeach
+    %return TLC_FALSE
+  %endfunction %%SLibConstParamReferencedSystem
+
+  %% Function: FcnGenConstPrmBuffersHelper ====================================
+  %% Abstract:
+  %%   Helper function to generate the constant parameters definition buffer
+  %%   (and constant parameters structure definition if appropriate)
+  %%
+  %function FcnGenConstPrmBuffersHelper(startIdx, numPrms, hasElement)
+    %assign result = ["", "", "", -1]
+    %assign typedefBuffer = ""
+    %assign instBuffer    = ""
+    %assign macroBuffer   = ""
+    %assign structIsEmpty = TLC_TRUE
+    %assign hasUnconditionalElement = TLC_FALSE
+    %assign dummyElementName = "_rt_unused"
+    %assign prevInstEndIf = ""
+
+    %assign alignment = -1
+    %foreach prmIdx = numPrms
+      %assign mdlParam = Parameter[startIdx+prmIdx]
+
+      %% Generate preprocessor stuff for this parameter
+      %assign ppStuff = SLibDataPreprocessorStuff(mdlParam)
+      %assign ppIf = ppStuff[0]
+      %assign ppEndIf = ppStuff[1]
+      %if !ISEMPTY(ppIf)
+        %assign ppIf = ppIf + "\n"
+        %assign ppEndIf = ppEndIf + "\n"
+      %endif
+
+      %% If this is being generated to the shared location, don't
+      %% add to ConstP. We do, however, need to check if we need to
+      %% generate a macro declaration for this parameter
+      %if SLibGenConstParamInSharedLocation(mdlParam)
+        %if (ISFIELD(mdlParam, "MacroAccessAsVector") || ...
+          ISFIELD(mdlParam, "MacroAccessAsMatrix"))
+          %%
+          %% MACRO DECLARATIONS FOR CONST PARAMETERS:
+          %%
+          %assert SLibGenMacroForPrm(mdlParam)
+
+          %assign pMacroDecl = FcnGenOneConstPrmMacroDecl(mdlParam, TLC_TRUE)
+          %openfile macroDecl
+          %if !WHITE_SPACE(pMacroDecl)
+            %<ppIf>\
+            %<pMacroDecl>
+            %<ppEndIf>\
+          %endif
+          %closefile macroDecl
+
+          %% Assign return argument
+          %assign macroBuffer = macroBuffer + macroDecl
+        %endif
+        %continue
+      %endif
+
+      %% Generate buffer parts for this parameter
+      %assign locResult = SLibGenBuffersForOneConstPrm(mdlParam)
+      %assign typedefPart = locResult[0]
+      %assign instPart    = locResult[1]
+      %assign macroPart   = locResult[2]
+
+
+      %% Add buffers for this parameter to caches
+      %% (NOTE: It is quite possible for a parameter to be generated both as
+      %%        a macro and in the constant RTP structure.)
+      %if !ISEMPTY(typedefPart)
+        %assert (!ISEMPTY(instPart))
+
+        %% Construct guarded buffer part for this parameter's typedef
+        %% and append it to the typedef buffer
+        %openfile guardedTypedefPart
+        %<ppIf>\
+        %<typedefPart>
+        %if ISEMPTY(ppIf)
+          %assign hasUnconditionalElement = TLC_TRUE
+        %else
+          #define %<hasElement>
+        %endif
+        %<ppEndIf>\
+        %closefile guardedTypedefPart
+        %assign typedefBuffer = typedefBuffer + guardedTypedefPart
+
+        %% Construct guarded buffer part for this parameter's instance
+        %% and append it to the instance buffer.  Start with the previous
+        %% instance's #endif because we need the comma associated with any
+        %% previous instance to be inside the guarded region of the
+        %% previous instance
+        %openfile guardedInstPart
+        %if structIsEmpty
+          %assign structIsEmpty = TLC_FALSE
+        %else
+          ,
+        %endif
+        %<prevInstEndIf>\
+        %% suppress the new line because the comma provides it
+        %<ppIf>\
+        %<instPart>\
+        %closefile guardedInstPart
+        %assign instBuffer = instBuffer + guardedInstPart
+        %assign prevInstEndIf = ppEndIf
+      %endif
+
+      %% Construct guarded buffer part for this parameter's macro
+      %% and append it to the macro buffer
+      %if !ISEMPTY(macroPart)
+        %openfile guardedMacroPart
+        %<ppIf>\
+        %<macroPart>
+        %<ppEndIf>\
+        %closefile guardedMacroPart
+        %assign macroBuffer = macroBuffer + guardedMacroPart
+      %endif
+
+      %if mdlParam.Alignment > alignment
+        %assign alignment = mdlParam.Alignment
+      %endif
+    %endforeach
+
+    %% If the typedef has no unconditional element, add a dummy element
+    %% to ensure that the structure is never empty
+    %if !WHITE_SPACE(typedefBuffer)
+      %if !hasUnconditionalElement
+        %openfile unConditionalTypedefBuffer
+        #ifndef %<hasElement>
+        char %<dummyElementName>;
+        #endif
+        %closefile unConditionalTypedefBuffer
+        %assign typedefBuffer = typedefBuffer + unConditionalTypedefBuffer
+      %endif
+    %endif
+
+    %% If the typedef has no unconditional element, add the dummy element's
+    %% intializer to the instance, also add the final instance's endif
+    %if !WHITE_SPACE(instBuffer)
+      %openfile finalInstPart
+      %if hasUnconditionalElement
+        %% add a final newline
+
+        %<prevInstEndIf>
+      %else
+        ,
+        %<prevInstEndIf>
+        #ifndef %<hasElement>
+        0
+        #endif
+      %endif
+      %closefile finalInstPart
+      %assign instBuffer = instBuffer + finalInstPart
+    %endif
+
+    %assign result[0] = typedefBuffer
+    %undef typedefBuffer
+    %assign result[1] = instBuffer
+    %undef instBuffer
+    %assign result[2] = macroBuffer
+    %undef macroBuffer
+    %assign result[3] = alignment
+
+    %return result %% [typedefBuffer, instBuffer, macroBuffer, alignment]
+  %endfunction
+
+  %% Function: FcnGenConstPrmBuffers ============================================
+  %% Abstract:
+  %%   Generate the constant parameters definition buffer
+  %%   (and constant parameters structure definition if appropriate)
+  %%
+  %function FcnGenConstPrmBuffers(startIdx) void
+
+    %assign result = ["", "", "", -1]
+
+    %if NumConstPrms == 0
+      %return result
+    %endif
+
+    %assign constParamVarGroupIndex = System[NumSystems-1].ConstParameterVarGroupIndex[0]
+    %assign hasElement = VarGroups.VarGroup[constParamVarGroupIndex].HasElement
+    %assign tmpResult = FcnGenConstPrmBuffersHelper(...
+      startIdx, NumConstPrms, hasElement)
+    %assign typedefBuffer = tmpResult[0]
+    %assign instBuffer = tmpResult[1]
+    %assign macroBuffer = tmpResult[2]
+    %assign alignment = tmpResult[3]
+    %undef tmpResult
+
+    %% Complete buffers for parameter structure (typedef & instantiation)
+    %if !WHITE_SPACE(typedefBuffer)
+      %assign align = ""
+      %if !fieldDAFlag.supported && alignment > 0    %% need to align the whole structure
+        %assert structDAFlag.supported
+        %assign align = SLibGetAlignmentSyntax(::CompiledModel.Name, ::tConstParamType, ...
+          "", alignment, "DATA_ALIGNMENT_WHOLE_STRUCT")
+      %endif
+      %openfile tmpBuf
+      %if align != ""
+        %switch structDAFlag.position
+          %case "DATA_ALIGNMENT_PREDIRECTIVE"
+            typedef %<align> struct {
+              %<typedefBuffer>
+            } %<::tConstParamType>;
+            %break
+          %case "DATA_ALIGNMENT_POSTDIRECTIVE"
+            typedef struct {
+              %<typedefBuffer>
+            } %<::tConstParamType> %<align>;
+            %break
+          %case "DATA_ALIGNMENT_PRECEDING_STATEMENT"
+            %<align>
+            typedef struct {
+              %<typedefBuffer>
+            } %<::tConstParamType>;
+            %break
+          %case "DATA_ALIGNMENT_FOLLOWING_STATEMENT"
+            typedef struct {
+              %<typedefBuffer>
+            } %<::tConstParamType>;
+            %<align>
+            %break
+        %endswitch
+      %else
+        typedef struct {
+          %<typedefBuffer>
+        } %<::tConstParamType>;
+      %endif
+      %closefile tmpBuf
+      %assign typedefBuffer = tmpBuf
+    %endif
+
+    %if !WHITE_SPACE(instBuffer)
+      %if SLibAutosarCompilerAbstractionRequired()
+        %openfile definition
+        %<SLibAutosarCompilerAbstractionForDataDecl(TLC_TRUE, ::tConstParamType, TLC_FALSE, TLC_FALSE, ::tConstParamStruct, "DataGlobal")> = {
+          %<instBuffer>
+        };\
+        %closefile definition
+      %else
+        %assign qualifiers = SLibGetConstParamQualifiers()
+        %openfile definition
+        %<qualifiers> %<::tConstParamType> %<::tConstParamStruct> = {
+          %<instBuffer>
+        };\
+        %closefile definition
+      %endif
+      %openfile instBuffer
+      %<SLibAddPreStructDeclarePragma(::tConstParamStruct)>\
+      %<SLibApplyMemSecToDataDefn(definition, ...
+        "MemSecDataConstants", "%<::tConstParamStruct>")>\
+      %<SLibAddPostStructDeclarePragma(::tConstParamStruct)>\
+      %closefile instBuffer
+    %endif
+
+    %assign result[0] = typedefBuffer
+    %undef typedefBuffer
+    %assign result[1] = instBuffer
+    %undef instBuffer
+    %assign result[2] = macroBuffer
+    %undef macroBuffer
+
+    %return result %% [typedefBuffer, instBuffer, macroBuffer]
+
+  %endfunction %% FcnGenConstPrmBuffers
+
+
+  %% Function: SLibGenBuffersForOneConstPrm ====================================
+  %% Abstract:
+  %%   Given a constant model parameter, generate:
+  %%   - Decl & initStr to add to constant parameter structure.
+  %%    OR
+  %%   - Macro declaration for the parameter
+  %%
+  %% NOTE:
+  %% This function is called for ConstPrms and ConstPrmsWithInit
+  %%
+  %function SLibGenBuffersForOneConstPrm(mdlParam) void
+
+    %assign result             = ["", "", ""]
+    %assign inConstParamStruct = TLC_FALSE
+
+    %%
+    %% SKIP EMPTY PARAMETERS
+    %%
+    %if (SLibGetWidthOfValueFromParamRec(mdlParam) < 1) || (LibBlockParameterWidth(mdlParam) < 1)
+      %return result
+    %endif
+
+    %% Generate comment up front
+    %assign defnComment = SLibGenModelPrmDefnComment(mdlParam)
+
+    %% Constant parameters fall into 2 categories:
+    %% (1) Parameter structure (for any parameter accessed via address)
+    %% (2) Inlined/Macro (based on global setting)
+    %%
+    %% NOTE:
+    %% - If padder is active, all parameters are forced to be in the constant
+    %%   parameter structure even if they were never accessed via address
+    %%   (because padding is determined up front in the Simulink engine).
+    %% - Within a single model, it is quite possible for the a parameter to be
+    %%   accessed directly (inlined) and via address (parameter structure).
+    %%   If inline-via-macro is on, this could result in us needing to generate
+    %%   both structure AND macro declarations for the same parameter.
+    %%
+    %if (mdlParam.WasAccessedAsVariable || ::CompiledModel.PadderActive)
+      %%
+      %% CONST PARAMETER STRUCTURE:
+      %%
+      %assign retVal = FcnGenOneConstPrmDeclAndInit(mdlParam)
+      %assign pDecl = retVal[0]
+      %assign pInst = retVal[1]
+      %%
+      %% Declaration line in structure typedef
+      %%
+      %openfile declBuffer
+      %if !WHITE_SPACE(pDecl)
+        /* %<defnComment> */
+        %assign traceMarker = ""
+        %if ISFIELD(mdlParam, "GraphicalSource")
+          %assign traceMarker = SLibAddTrace("BlockName", "%<SLibGrBlockName(mdlParam.GraphicalSource)>")
+          %<SLibTraceBegin(traceMarker)>
+        %endif
+        %<pDecl>
+        %if mdlParam.Padding != 0
+          %assign optPadWidth = LibOptionalVectorWidth(mdlParam.Padding)
+
+          char pad_%<LibGetRecordIdentifier(mdlParam)>%<optPadWidth>;\
+        %endif
+        %assign inConstParamStruct = TLC_TRUE
+        %<SLibTraceEnd(traceMarker)>\
+      %endif
+      %closefile declBuffer
+
+      %% Assign return argument
+      %assign result[0] = declBuffer
+
+      %%
+      %% Instantiation / initialization in structure
+      %%
+      %openfile instBuffer
+      %if !WHITE_SPACE(pInst)
+        %assert inConstParamStruct
+        /* %<defnComment> */
+        %<pInst>\
+        %if mdlParam.Padding != 0
+          ,
+          %if mdlParam.Padding == 1
+            %assign padInit = "'a'"
+          %else
+            %assign padInit = "{"
+            %foreach loopIdx = mdlParam.Padding
+              %assign padInit = padInit + "'a'"
+              %if loopIdx != mdlParam.Padding-1
+                %assign padInit = padInit + ","
+              %endif
+            %endforeach
+            %assign padInit = padInit +"}"
+          %endif
+          %<padInit>\
+        %endif
+        %closefile instBuffer
+      %endif
+
+      %% Assign return argument
+      %assign result[1] = instBuffer
+    %endif
+
+    %if (ISFIELD(mdlParam, "MacroAccessAsVector") || ...
+      ISFIELD(mdlParam, "MacroAccessAsMatrix"))
+      %%
+      %% MACRO DECLARATIONS FOR CONST PARAMETERS:
+      %%
+      %assert SLibGenMacroForPrm(mdlParam)
+
+      %assign pMacroDecl = FcnGenOneConstPrmMacroDecl(mdlParam, inConstParamStruct)
+      %openfile macroBuffer
+      %if !WHITE_SPACE(pMacroDecl)
+
+        %% Comment only needed if param is not already declared in rtcP structure
+        %if !inConstParamStruct
+          /* %<defnComment> */
+        %endif
+        %<pMacroDecl>
+      %endif
+      %closefile macroBuffer
+
+      %% Assign return argument
+      %assign result[2] = macroBuffer
+    %endif
+
+    %return result %% [declBuffer, instBuffer, macroBuffer]
+
+  %endfunction %% SLibGenBuffersForOneConstPrm
+
+
+  %% Function: FcnGenOneConstPrmDeclAndInit ====================================
+  %% Abstract:
+  %%   Generates a const model parameter declaration.
+  %%
+  %function FcnGenOneConstPrmDeclAndInit(mdlParam) void
+
+    %% Check for valid storage class
+    %switch mdlParam.StorageClass
+      %case "Auto"
+        %break
+      %case "Auto_SFCN" %% Declared as ssGetSFcnParam
+      %case "ExportedGlobal"
+      %case "ImportedExtern"
+      %case "ImportedExternPointer"
+      %case "Custom"
+      %default
+        %% START_ASSERT
+        %assign errTxt = "Unhandled const model parameter type"
+        %<LibReportFatalError(errTxt)>
+        %% END_ASSERT
+    %endswitch
+
+    %% Generate declaration string
+    %assign pName = LibGetRecordIdentifier(mdlParam)
+    %assign dataType = SLibGetRecordContainerTypeName(mdlParam)
+    %if SLibIsNdIndexingFeatureOn() || SLibIsContainerCGTypeND(mdlParam)
+      %assign optDims = LibGetRecordVectorDims(mdlParam)
+    %else
+      %assign width = LibBlockParameterWidth(mdlParam)
+      %assign optDims = LibOptionalVectorWidth(width)
+    %endif
+
+    %% alignment.
+    %assign align=""
+    %if mdlParam.Alignment > 0 && fieldAlign
+      %assign align = SLibGetAlignmentSyntax(LibGetModelName(), pName, ...
+        dataType, mdlParam.Alignment, "DATA_ALIGNMENT_STRUCT_FIELD")
+    %endif
+    %assign declStr = "%<align> %<dataType> %<pName>%<optDims>;"
+    %assign traceMarker = SLibAddTrace2("ModelElemCategory", "%<SLibGetModelElemCategoryForParam(mdlParam)>", "StorageClass", "%<mdlParam.StorageClass>")
+    %assign declStr = "%<SLibTraceBegin(traceMarker)> %<declStr> %<SLibTraceEnd(traceMarker)>"
+
+    %% Generate parameter value (for initialization)
+    %assign initStr = SLibGetFormattedPrmValue(mdlParam, "")
+
+    %assign result = ["", ""]
+    %assign result[0] = declStr
+    %assign result[1] = initStr
+
+    %return result %% [declStr, initStr]
+
+  %endfunction %% FcnGenOneConstPrmDeclAndInit
+
+
+  %% Function: FcnGenOneConstPrmMacroDecl =======================================
+  %% Abstract:
+  %%   Generate a macro definition for an inlined constant parameter.
+  %%
+  %% NOTE:
+  %% - We can generate both vector & matrix #defines for the same parameter.
+  %% - We can generate #defines for a parameter even if the parameter is also
+  %%   included in the constant parameter structure.  In this case, we set the
+  %%   macro to simply map to the appropriate field in the rtcP structure.
+  %%
+  %function FcnGenOneConstPrmMacroDecl(mdlParam, inConstParamStruct) void
+    %assign prmSize = SLibGetSizeOfValueFromParamRec(mdlParam)
+    %assign nRows   = prmSize[0]
+    %assign nCols   = prmSize[1]
+
+    %assign numEls  = nRows * nCols
+    %assign complex = LibGetRecordIsComplex(mdlParam)
+
+    %assign genVect = ISFIELD(mdlParam, "MacroAccessAsVector") && (numEls > 0)
+
+    %%
+    %% For the case of matrix we also make sure that we have more than one
+    %% element. In the case of a scalar, the definition is same as the vector case
+    %%
+    %assign genMat  = ISFIELD(mdlParam, "MacroAccessAsMatrix") && ...
+      ((genVect && (numEls > 1)) || (!genVect && (numEls > 0)))
+
+    %openfile macroBuffer
+    %if genVect
+      %foreach elIdx = numEls
+        %assign macStr = SLibGenMacroStrForModelPrm(mdlParam, ...
+          [%<elIdx>], complex, tRealPart, "Vector")
+        %assign macVal = FcnGenValStrForMacroDefn(mdlParam, ...
+          [%<elIdx>], complex, tRealPart, inConstParamStruct, TLC_FALSE)
+        #define %<macStr> (%<macVal>)
+        %if complex
+          %assign macStr = SLibGenMacroStrForModelPrm(mdlParam, ...
+            [%<elIdx>], complex, tImagPart, "Vector")
+          %assign macVal = FcnGenValStrForMacroDefn(mdlParam, ...
+            [%<elIdx>], complex, tImagPart, inConstParamStruct, TLC_FALSE)
+          #define %<macStr> (%<macVal>)
+        %endif
+      %endforeach
+    %endif
+    %%
+    %if genMat
+      %% gracefully handle vectors as 1xN matrices
+      %foreach rIdx = nRows
+        %foreach cIdx = nCols
+          %assign macStr = SLibGenMacroStrForModelPrm(mdlParam, ...
+            [%<rIdx>, %<cIdx>], complex, tRealPart, "Matrix")
+          %assign macVal = FcnGenValStrForMacroDefn(mdlParam, ...
+            [%<rIdx>, %<cIdx>], complex, tRealPart, inConstParamStruct, TLC_TRUE)
+          #define %<macStr> (%<macVal>)
+          %if complex
+            %assign macStr = SLibGenMacroStrForModelPrm(mdlParam, ...
+              [%<rIdx>, %<cIdx>], complex, tImagPart, "Matrix")
+            %assign macVal = FcnGenValStrForMacroDefn(mdlParam, ...
+              [%<rIdx>, %<cIdx>], complex, tImagPart, inConstParamStruct, TLC_TRUE)
+            #define %<macStr> (%<macVal>)
+          %endif
+        %endforeach
+      %endforeach
+    %endif
+    %closefile macroBuffer
+    %return macroBuffer
+  %endfunction %% FcnGenOneConstPrmMacroDecl
+
+
+  %% Function: FcnGenValStrForMacroDefn ==========================================
+  %% Abstract:
+  %%   Get the value string that is appended to the end of a macro definition
+  %%
+  %function FcnGenValStrForMacroDefn(mdlParam, indices, complex, reim, ...
+    inConstParamStruct, isMatrixAccess) void
+
+    %if inConstParamStruct
+      %assign retValStr = FcnGenMacroValStrFromVariableDefn(mdlParam, indices, ...
+        complex, reim, isMatrixAccess)
+    %else
+      %if isMatrixAccess
+        %assign retValStr = FcnGetModelMatrixPrmVal(mdlParam, indices[0], ...
+          indices[1], complex, reim)
+      %else
+        %assign retValStr = FcnGetModelVectPrmVal(mdlParam, "", indices[0], ...
+          complex, reim)
+      %endif
+    %endif
+
+    %assign LengthOfRetVal = SIZE(retValStr)
+    %assign retVal = "" 
+    %assign hasBracket = (retValStr[0] == "(")
+
+    %if LengthOfRetVal[1] > 3 && hasBracket 
+      %assign retVal = retValStr[1]
+      %foreach idx = LengthOfRetVal[1] -3
+        %assign retVal = "%<retVal>%<retValStr[idx + 2]>"
+      %endforeach
+    %else
+      %assign retVal = retValStr
+    %endif
+
+    %if hasBracket
+      %assign retValWithReplacementType = "(" + GET_TYPE_ID_REPLACEMENT(retVal) + ")"
+    %else
+      %assign retValWithReplacementType = GET_TYPE_ID_REPLACEMENT(retVal)
+    %endif
+    %return retValWithReplacementType
+  %endfunction %% FcnGenValStrForMacroDefn
+
+
+  %% Function: FcnGenMacroValStrFromVariableDefn =================================
+  %% Abstract:
+  %%   Generate the value definition of a macro based on the assumption that a
+  %%   const variable has already been declared for a const parameter.
+  %%
+  %%   This results in generation of params of the form
+  %%   'rtcP_<varName>[<elIdx>]' for real prms and
+  %%   'rtcP_<varName>[<elIdx>].re'/'rtcP_<varName>[<elIdx>].im' for complex prms.
+  %%
+  %function FcnGenMacroValStrFromVariableDefn(mdlParam, indices, complex, ...
+    reim, isMatrixAccess) void
+
+    %% Generate the trailing string based on whether the data is complex
+    %assign trailStr = ""
+    %if complex
+      %if reim == tRealPart
+        %assign trailStr = ".re"
+      %elseif reim == tImagPart
+        %assign trailStr = ".im"
+      %endif
+    %endif
+
+    %% Generate the element idx if the data is a vector/matrix
+    %assign idxStr  = ""
+    %assign prmSize = SLibGetSizeOfValueFromParamRec(mdlParam)
+    %assign nRows   = prmSize[0]
+    %assign nCols   = prmSize[1]
+    %if (nRows > 1) || (nCols > 1)
+      %if isMatrixAccess
+        %assign rIdx   = indices[0]
+        %assign cIdx   = indices[1]
+        %assign idxStr = "[%<cIdx>*%<nRows>+%<rIdx>]"
+      %else
+        %assign idxStr = "[%<indices[0]>]"
+      %endif
+    %endif
+
+    %% Generate the variable name
+    %if SLibGenConstParamInSharedLocation(mdlParam)
+      %assign firstInstanceParam = ::CompiledModel.ModelParameters.Parameter[mdlParam.FirstInstanceConstIdx]
+      %assign nameStr = "%<tUnstructConstParameters>_%<firstInstanceParam.ChecksumName>"
+    %else
+      %assign nameStr = "%<::tConstParamStruct>.%<LibGetRecordIdentifier(mdlParam)>"
+    %endif
+
+
+    %assign retStr = "%<nameStr>%<idxStr>%<trailStr>"
+
+    %return retStr
+
+  %endfunction %% FcnGenMacroValStrFromVariableDefn
+
+  %% Function: FcnGetConstPDefGenerated =================================
+  %% Abstract:
+  %%   Returns whether the ConstPDefGenerated flag is present and true on a parameter.
+  %%   Tells us whether the ConstP definition has been generated.
+  %%
+  %function FcnGetConstPDefGenerated(mdlParam)
+    %return ISFIELD(mdlParam, "ConstPDefGenerated") && mdlParam.ConstPDefGenerated
+  %endfunction
+
+  %% Function: FcnGetConstPModelDeclGenerated =================================
+  %% Abstract:
+  %%   Returns whether the ConstPModelDeclGenerated flag is present and true on a parameter.
+  %%   Tell us whether we've generated the model's extern decl.
+  %%
+  %function FcnGetConstPModelDeclGenerated(mdlParam)
+    %return ISFIELD(mdlParam, "ConstPModelDeclGenerated") && mdlParam.ConstPModelDeclGenerated
+  %endfunction
+
+  %% Function: FcnGetConstPSharedFcnDeclsGenerated =================================
+  %% Abstract:
+  %%   Returns whether the ConstPSharedFcnDeclsGenerated flag is present and true on a parameter
+  %%   Tells us whether we've generated the shared fcn extern decls.
+  %%
+  %function FcnGetConstPSharedFcnDeclsGenerated(mdlParam)
+    %return ISFIELD(mdlParam, "ConstPSharedFcnDeclsGenerated") && mdlParam.ConstPSharedFcnDeclsGenerated
+  %endfunction
+
+  %% Function: SLibUnstructuredCacheConstantPrmBuffers =================================
+  %% Abstract:
+  %%   Generate the Decl & Instance buffers for UnstructuredConstant parameters.
+  %%
+  %function SLibCacheUnstructuredConstantPrmBuffers(startIdx) void
+
+    %<SLibCreatePrmBuffer("UnstructuredConstant", "MacroDecl")>
+    %<SLibCreatePrmBuffer("UnstructuredConstant", "ExternDecl")>
+
+    %% create record for objectInfo Array and csc memsec info
+    %createrecord objInfoArr { NumInfo 0 }
+
+    %assign definesBuffer = ""
+    %assign externsBuffer = ""
+
+    %% If the SCM Shared Constants feature is on
+    %assign ::WriteSharedConstantsToSCM = ...
+      FEVAL("slfeature", "WriteSharedConstantsToSCM") != 0
+
+    %createrecord objInfo { name ""; ...
+      kind         "constpdef"; ...
+      manglename   ""; ...
+      file         "const_params.c"; ...
+      checksum     0; ...
+      definition   ""; ...
+      dependencies ""; ...
+      builtin      0; ...
+      isComplex    0; ...
+      isMultiword  0; ...
+      aliasedType  ""; ...
+      Width       ""; ...
+      InitStr     ""; ...
+      dataType    ""; ...
+      ParamPrefix "%<tUnstructConstParameters>_"}
+
+    %assign numConstants = 0
+    %assign checkSumList = []
+
+    %foreach prmIdx = NumConstPrms
+      %assign mdlParam = Parameter[startIdx + prmIdx]
+      %if !SLibGenConstParamInSharedLocation(mdlParam)
+        %continue
+      %endif
+
+      %if !::CompiledModel.HasSharedConstants
+        %assign ::CompiledModel.HasSharedConstants = TLC_TRUE
+      %endif
+
+      %assign firstInstanceParam = Parameter[mdlParam.FirstInstanceConstIdx]
+      %assign paramDefGenerated = FcnGetConstPDefGenerated(firstInstanceParam)
+
+      %% We need to check each parameter for its #define. If it's not being accessed by an
+      %% RLS, then generate the macro definition. We do this for each parameter, as we may have
+      %% multiple parameters used by a model that all are the same underlying constant.
+      %if !SLibConstParamReferencedOnlyBySharedFcn(firstInstanceParam) && ...
+        SLibConstParamAccessedOutsideSharedFcn(mdlParam)
+        %assign comment = SLibGenModelPrmDefnComment(mdlParam)
+        %% If its a shared constant, then we should have already registered
+        %if ISFIELD(mdlParam,"TruncatedId")
+            %assign macroStr = "%<mdlParam.TruncatedId>"
+            %assign definesBuffer = definesBuffer + "#define %<macroStr> rtCP_%<firstInstanceParam.ChecksumName>/* %<comment> */\n"
+        %else
+            %assign identifier = "rtCP_" + LibGetRecordIdentifier(mdlParam)
+            %assign remLength = ::CompiledModel.ConfigSet.MaxIdLength 
+            %if SIZE(identifier)[1] <= remLength
+                %assign truncatedMdlPrm = identifier
+            %else
+                %assign truncatedMdlPrm = LibRequestIDWithLength(identifier, TLC_TRUE, TLC_FALSE, remLength)
+            %endif
+            %addtorecord mdlParam TruncatedId truncatedMdlPrm
+            %assign definesBuffer = definesBuffer + "#define %<truncatedMdlPrm> rtCP_%<firstInstanceParam.ChecksumName>/* %<comment> */\n"
+        %endif
+      %endif
+
+      %assign pName = "%<tUnstructConstParameters>_%<firstInstanceParam.ChecksumName>"
+      %assign dataType = SLibGetRecordContainerTypeName(firstInstanceParam)
+      %if SLibIsNdIndexingFeatureOn() || SLibIsContainerCGTypeND(mdlParam)
+        %assign optDims = LibCGTypeSymbolicVectorDims(mdlParam.CGTypeIdx)
+      %else
+        %assign prmSize = SLibGetSizeOfValueFromParamRec(firstInstanceParam)
+        %assign nRows   = prmSize[0]
+        %assign nCols   = prmSize[1]
+        %assign optDims = LibOptionalMatrixDims(nRows, nCols)
+      %endif
+      %assign externDecl = "extern const %<dataType> %<pName>%<optDims>;"
+      %assign varGroup = VarGroups.VarGroup[mdlParam.VarGroupIdx[0]]
+      %assign traceMarker = SLibAddTrace2("ModelElemCategory", "%<SLibGetModelElemCategoryForParam(mdlParam)>", "StorageClass", "%<SLibGetVarGroupStorageClass(varGroup)>")
+      %assign externDecl = "%<SLibTraceBegin(traceMarker)> %<externDecl> %<SLibTraceEnd(traceMarker)>"
+
+      %% If we come across a parameter that's not used by a shared function (i.e. used in the model), and
+      %% we haven't generated an extern decl for the model before (for this parameter), then add it to
+      %% the externs buffer.
+      %if !SLibConstParamReferencedOnlyBySharedFcn(firstInstanceParam) && ...
+        !FcnGetConstPModelDeclGenerated(firstInstanceParam)
+        %assign externsBuffer = externsBuffer + "%<externDecl>"
+        %addtorecord firstInstanceParam ConstPModelDeclGenerated 1
+      %endif
+
+      %% Now, go through each RLS reference and write its extern decl to the
+      %% system's SharedConstantsExterns field
+      %if !FcnGetConstPSharedFcnDeclsGenerated(firstInstanceParam)
+        %foreach refIdx = SIZE(firstInstanceParam.RLSReferences, 1)
+          %assign sysIdx = firstInstanceParam.RLSReferences[refIdx]
+          %assign system = System[sysIdx]
+          %if !LibIsSystemExistingLibrary(system)
+            %openfile declBuffer
+            %<externDecl>
+            %closefile declBuffer
+            %<LibAddToSystemField(system, "SharedConstantsExterns", declBuffer)>
+          %endif
+        %endforeach
+        %addtorecord firstInstanceParam ConstPSharedFcnDeclsGenerated 1
+      %endif
+
+      %% Don't add any constants already on disk.
+      %if firstInstanceParam.ConstantOnDisk || paramDefGenerated
+        %continue
+      %endif
+
+      %addtorecord firstInstanceParam ConstPDefGenerated 1
+
+      %% ************ Add to the filemap if featured Off **********************
+      %if ::WriteSharedConstantsToSCM
+        %assign checkSumList = checkSumList + 1
+        %assign checkSumList[numConstants] = firstInstanceParam.Checksum
+      %else
+        %assign dtIdx = LibGetRecordDataTypeId(firstInstanceParam)
+        %assign isBuiltinDataType = 0
+        %if LibIsFundamentalBuiltInDataType(dtIdx)
+          %assign isBuiltinDataType = 1
+        %elseif LibIsDataTypeFixpt(dtIdx) && !LibIsAliasDataType(dtIdx)
+          %assign isBuiltinDataType = 1
+        %endif
+        %assign dataTypeOfData = DataTypes.DataType[dtIdx]
+        %if isBuiltinDataType && ...
+          dataTypeOfData.IdAliasedThruTo >= 0 && dataTypeOfData.IdAliasedThruTo != dtIdx
+          %assign aliasedThruToType = DataTypes.DataType[dataTypeOfData.IdAliasedThruTo].Name
+        %else
+          %assign aliasedThruToType = ""
+        %endif
+        %assign isMultiword = LibIsDataTypeMultiWordFixpt(dtIdx)
+        %assign isComplex = LibGetRecordIsComplex(firstInstanceParam)
+
+        %% Now, construct the definition
+        %assign initStr = LibParameterInstanceInitStr(firstInstanceParam)
+        %assign cs = firstInstanceParam.Checksum
+
+        %assign fileName = "const_params." + ::LangFileExt
+        %%assign objInfoArr.NumInfo = objInfoArr.NumInfo + 1
+        %assign objInfo.name  = firstInstanceParam.ChecksumName
+        %assign objInfo.manglename = firstInstanceParam.ChecksumName
+        %assign objInfo.checksum = %<cs>
+        %assign objInfo.dependencies = dataTypeOfData.Name
+        %assign objInfo.builtin = isBuiltinDataType
+        %assign objInfo.isComplex = isComplex
+        %assign objInfo.isMultiword = isMultiword
+        %assign objInfo.aliasedType = aliasedThruToType
+        %if SLibIsNdIndexingFeatureOn() || SLibIsContainerCGTypeND(mdlParam)
+          %% Modify the line below for the ND case; either not assign 
+          %% optDims to Width, or change logic.
+          %assert TLC_FALSE
+        %endif
+        %assign objInfo.Width = optDims
+        %assign objInfo.InitStr = initStr
+        %assign objInfo.dataType = dataType
+        %assign sharedHdrInfo = FEVAL("rtwprivate", "addSharedConstants2FileMap", ::CompiledModel.Name, ::CompiledModel.RTWInfoMatFile.sharedSourcesDir, objInfo, 0)
+        %if !sharedHdrInfo.success
+          %<SLibReportErrorWithIdAndArgs("RTW:buildProcess:sharedConstantsChecksumMismatch", sharedHdrInfo.badName)>
+        %endif
+      %endif
+      %assign numConstants = numConstants + 1
+    %endforeach
+
+    %undef objInfo
+    %<SLibSetPrmBufferPart("UnstructuredConstant", "MacroDecl", ...
+      "Code", definesBuffer)>
+    %<SLibSetPrmBufferPart("UnstructuredConstant", "ExternDecl", ...
+      "Code", externsBuffer)>
+
+    %assign FileName  = "const_params"
+    %assign sourceExt = ::LangFileExt
+
+    %if numConstants > 0
+      %if ::WriteSharedConstantsToSCM
+        %% Set the 'GenerateConstants' attribute of shared constants to true if we are generating constants
+        %assign sharedHdrInfo = FEVAL("rtwprivate", "setGenerateConstantAttr", ...
+          ::CompiledModel.RTWInfoMatFile.sharedSourcesDir,checkSumList)
+      %else
+        %assign sharedHdrInfo = FEVAL("rtwprivate", "addSharedConstants2FileMap", ::CompiledModel.Name, ::CompiledModel.RTWInfoMatFile.sharedSourcesDir, "", 1)
+        %if !sharedHdrInfo.success
+          %<SLibReportErrorWithIdAndArgs("RTW:buildProcess:sharedConstantsChecksumMismatch", sharedHdrInfo.badName)>
+        %endif
+      %endif
+
+      %assign fileSep = FEVAL("filesep")
+      %openfile bannerBuff="%<::CompiledModel.RTWInfoMatFile.sharedSourcesDir>%<fileSep>%<FileName>.%<sourceExt>"
+      /*
+      * %<FileName>.%<sourceExt>
+      *
+      %<SLibCommonUtilHeaderInfo()>\
+      */
+      %closefile bannerBuff
+      %assign sharedFileLocal = ::CompiledModel.LocalSharedCodeManagerFile
+      %assign sharedFileMaster = ::CompiledModel.MasterSharedCodeManagerFile
+
+      %assign sharedFile = ""
+
+      %if sharedFileLocal == sharedFileMaster
+        %assign sharedFile = sharedFileLocal
+      %else
+        %assign sharedFile = sharedFileMaster
+      %endif
+
+      %if ::WriteSharedConstantsToSCM
+        %assign sharedHdrInfo = FEVAL("rtwprivate", "emitSCMSharedConstants", ...
+          ::CompiledModel.Name, ::CompiledModel.RTWInfoMatFile.sharedSourcesDir, sharedFile, "%<FileName>", 1)
+      %else
+        %assign sharedHdrInfo = FEVAL("rtwprivate", "emitSharedConstants", ...
+          ::CompiledModel.Name, ::CompiledModel.RTWInfoMatFile.sharedSourcesDir, sharedFile, "%<FileName>", 1, 1)
+        %% Indent the file with CBeautifier
+        %assign fileSep = FEVAL("filesep")
+        %assign outFileName = ::CompiledModel.RTWInfoMatFile.sharedSourcesDir + fileSep + FileName + "." + ::LangFileExt
+        %assign unused = FEVAL("rtwprivate","cBeautifierWithOptions", outFileName , ::CompiledModel.Name)
+      %endif
+      %<SLibAddGeneratedFileToList("%<FileName>.%<sourceExt>", ...
+        "utility","source",::CompiledModel.GenUtilsPath)>
+    %elseif SLibHasSharedConstantParameters()
+      %<SLibAddGeneratedFileToList("%<FileName>.%<sourceExt>", ...
+        "utility","source",::CompiledModel.GenUtilsPath)>
+      %assign aFileRec = SLibGetFileRecForUtilCode("util_src", FileName)
+      %<LibSetSourceFileSection(aFileRec, "WrittenToDisk", TLC_TRUE)>
+    %endif
+  %endfunction %% SLibCacheUnstructuredConstantPrmBuffers
+
+  %function SLibHasSharedConstantParameters()
+    %return ::CompiledModel.HasSharedConstants
+  %endfunction
+
+  %function SLibIsUnstructuredConstParam(param)
+    %return param.InConstSection && SLibGenConstParamInSharedLocation(param)
+  %endfunction
+
+%endif %% EXISTS("_PRM_CONSTANT_")
+
+%% [EOF] prm_constant.tlc

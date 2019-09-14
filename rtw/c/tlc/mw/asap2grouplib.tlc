@@ -1,0 +1,538 @@
+%% 
+%%  
+%% 
+%%
+%% Copyright 1994-2016 The MathWorks, Inc.
+%%
+%% Abstract: Library of functions for generating groups in ASAP2 
+%%
+%selectfile NULL_FILE
+
+%% DocFunction{Other Useful Functions}: LibASAP2CreateGroup ====================
+%% Abstract: 
+%%   Creates a group with the given groupName. Returns the created group. 
+%%   If the group already exists, returns the existing group.
+%% Arguments
+%%   1) groupName: The name of the group to be created       (Type: TLC STRING)
+%%   2) groupLongIdentifier: A comment associated with group (Type: TLC STRING)
+%% Returns: 
+%%   A TLC record corresponding to the group 
+%%
+%function LibASAP2CreateGroup(groupName, groupLongIdentifier, maskType) void
+  %%
+  %assign asapGroups = ::CompiledModel.ASAP2Groups
+  %assign tlcName = SLibMakeGroupName(groupName)
+  %if !ISFIELD(asapGroups, "G_%<tlcName>")
+    %addtorecord asapGroups                   \
+    ASAP2Group {                              \
+      Name               groupName            \
+      LongIdentifier     groupLongIdentifier  \
+      tlcName            tlcName              \
+      Annotation         ""                   \
+      Root               TLC_FALSE            \
+      RefCharacteristics {}                   \
+      RefMeasurements    {}                   \
+      SubGroups          {}                   \
+      IsValid            TLC_FALSE            \
+      MaskType           maskType             \
+    }
+    %addtorecord asapGroups G_%<tlcName> %<asapGroups.NumASAP2Groups>
+    %assign asapGroups.NumASAP2Groups = asapGroups.NumASAP2Groups + 1
+  %endif 
+  %return asapGroups.ASAP2Group[asapGroups.G_%<tlcName>]
+%endfunction
+
+%% Function: LibASAP2SetGroupIsRoot ============================================
+%% Abstract: 
+%%   Set the group as a ROOT.
+%% Argument(s)
+%%   1) group: The TLC record corresponding to the group (Type: TLC Record) 
+%% Returns: 
+%%   Nothing/Void 
+%%
+%function LibASAP2SetGroupIsRoot(group) void
+  %%
+  %assign asapGroups = ::CompiledModel.ASAP2Groups
+  %if ISFIELD(asapGroups, "G_%<group.tlcName>")
+    %assign asapGroups.ASAP2Group[ASAP2Groups.G_%<group.Name>].Root = TLC_TRUE
+  %else
+    %assign errMsg = group.Name + " is an invalid GROUP"
+    %<LibReportFatalError(errMsg)>
+  %endif 
+%endfunction
+
+%% Function: LibASAP2SetGroupAnnotation ========================================
+%% Abstract: 
+%%   Set the grou's annotation
+%% Argument(s)
+%%   1) group: TLC record corresponding to the group      (Type: TLC Record) 
+%%   2) annotation: annotation associated with the group. (Type: TLC String) 
+%% Returns: 
+%%   Nothing/Void 
+%function LibASAP2SetGroupAnnotation(group, annotation) void
+  %%
+  %assign asapGroups = ::CompiledModel.ASAP2Groups
+  %if ISFIELD(asapGroups, "G_%<group.tlcName>")
+    %assign asapGroups.ASAP2Group[ASAP2Groups.G_%<group.Name>].Annotation = ...
+      annotation
+  %else
+    %assign errMsg = group.Name + " is an invalid GROUP"
+    %<LibReportFatalError(errMsg)>
+  %endif 
+%endfunction
+
+%% DocFunction{Other Useful Functions}: LibASAP2SAddSubGroupToGroup ============
+%% Abstract: 
+%%   Adds subGroup as SUB_GROUP of group.
+%% Arguments
+%%   1) group: The TLC record corresponding to the group      (Type: TLC Record)
+%%   2) subGroup:The TLC record corresponding to the subgroup.(Type: TLC Record)
+%% Returns: 
+%%   Nothing/Void 
+%%
+%function LibASAP2AddSubGroupToGroup(group, subGroup) void
+  %%
+  %if ISEQUAL(group, subGroup)
+    %return   %% do nothing
+  %endif
+  %assign asapGroups = ::CompiledModel.ASAP2Groups
+  %if ISFIELD(asapGroups, "G_%<group.tlcName>")
+    %if subGroup.Root
+      %assign errMsg = subGroup.Name + " is a Root. Cannot add as subgroup."
+      %<LibReportFatalError(errMsg)>
+    %else
+      %assign group = asapGroups.ASAP2Group[ASAP2Groups.G_%<group.tlcName>]
+      %assign subGrouptlcName = SLibMakeGroupName(subGroup.Name)
+      %if !ISFIELD(group.SubGroups, "SG_%<subGrouptlcName>")
+        %addtorecord group.SubGroups SG_%<subGrouptlcName> subGroup.Name
+      %endif
+    %endif
+  %else
+    %assign errMsg = group.Name + " is an invalid GROUP"
+    %<LibReportFatalError(errMsg)>
+  %endif 
+%endfunction
+
+%% DocFunction{Other Useful Functions}: LibASAP2AddCharacteristicToGroup =======
+%% Abstract: 
+%%   Adds characteristicName as REF_CHARACTERISTIC of group
+%% Arguments
+%%   1) group: The TLC record corresponding to the group     (Type: TLC Record)
+%%   2) characteristicName: The identifier of characteristic.(Type: TLC String) 
+%% Returns: 
+%%   Nothing/Void 
+%%
+%function LibASAP2AddCharacteristicToGroup(group, characteristicName) void
+  %%
+  %assign asapGroups = ::CompiledModel.ASAP2Groups
+  %if ISFIELD(asapGroups, "G_%<group.tlcName>")
+%%breakpoint
+    %assign group = asapGroups.ASAP2Group[ASAP2Groups.G_%<group.tlcName>]
+    %% Convert characteristicName to a valid TLC name
+     %assign charTLCName = FEVAL("regexprep",characteristicName, "[^\\w+]","_")
+    %if !ISFIELD(group.RefCharacteristics, "Char_%<charTLCName>")
+      %addtorecord group.RefCharacteristics Char_%<charTLCName> ...
+        characteristicName
+    %endif
+  %else
+    %assign errMsg = group.Name + " is an invalid GROUP"
+    %<LibReportFatalError(errMsg)>
+  %endif 
+%endfunction
+
+%% DocFunction{Other Useful Functions}: LibASAP2AddMeasurementToGroup ==========
+%% Abstract: 
+%%   Adds measurementName as REF_MEASUREMENT of group.
+%% Arguments
+%%   1) group: The TLC record corresponding to the group (Type: TLC Record)
+%%   2) measurementName: The identifier of measurement.  (Type: TLC String) 
+%% Returns: 
+%%   Nothing/Void 
+%%
+%function LibASAP2AddMeasurementToGroup(group, measurementName) void
+  %%
+  %assign asapGroups = ::CompiledModel.ASAP2Groups
+  %if ISFIELD(asapGroups, "G_%<group.tlcName>")
+    %assign group = asapGroups.ASAP2Group[ASAP2Groups.G_%<group.tlcName>]
+    %% Convert measurementName to a valid TLC name
+    %assign measTLCName = FEVAL("regexprep",measurementName, "[^\\w+]","_")
+    %if !ISFIELD(group.RefMeasurements, "Meas_%<measTLCName>")
+      %addtorecord group.RefMeasurements Meas_%<measTLCName> measurementName
+    %endif
+  %else
+    %assign errMsg = group.Name + " is an invalid GROUP"
+    %<LibReportFatalError(errMsg)>
+  %endif 
+%endfunction
+
+%% Function: LibASAP2CreateGraphicalGroups =====================================
+%% Abstract:
+%%   1) Creates groups and subgroups. 
+%%      A group is created for each graphical subsystem in the model. 
+%%      The graphical hierarchy is reflected via the SUB_GROUPS.
+%%   2) Generates model_dwork_dependency.list file.
+%%      The generated file is used by rtw.asap2MergeMdlRefs function
+%%
+%% Arguments
+%%   None
+%% Returns: 
+%%   Nothing/Void 
+%%
+%function LibASAP2CreateGraphicalGroups() void
+  %openfile DWORKDEPLIST = "%<::CompiledModel.Name>_dwork_dependency.list"
+  %% Write DWork name to dependency list
+  %if IsModelReferenceTarget()
+    %assign genMdlRefDWork = ...
+      !IsModelRefScalableBuild() || ::CompiledModel.GenSingleInstanceMdlRefDWork
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+    %if genMdlRefDWork || !baseSystem.HasDWorkArg
+      1 %<baseSystem.Interface.tsysMdlrefDWork>
+    %else
+      0 %<FcnSysVarGroupNonreusedName(baseSystem, "DWork")>
+    %endif
+  %else
+    0 %<::CompiledModel.GlobalScope.tDWork>
+  %endif
+  %% Create a root GROUP
+  %% -------------------
+  %assign rootGroup = LibASAP2CreateGroup("%<::CompiledModel.Name>", ...
+    "%<::CompiledModel.Name>", "")
+  %assign tmpVar = LibASAP2SetGroupIsRoot(rootGroup)
+  %with ::CompiledModel.BlockHierarchyMap
+    %foreach sysIdx = NumSubsystems
+      %if (Subsystem[sysIdx].NumBlocks < 1)
+        %continue
+      %endif
+      %assign grpName      = FcnConvertSLNameToASAP2Name(Subsystem[sysIdx].Name)
+      %assign grBlkIdx     = Subsystem[sysIdx].SubsystemBlockIndex
+      %assign grpComment   = SLibMangledGrBlockPath(grBlkIdx)
+      %assign maskType     = Subsystem[sysIdx].MaskType
+      %assign thisGrp      = LibASAP2CreateGroup(grpName,grpComment,maskType)
+      %assign parentSysIdx = grBlkIdx[0]
+      %if (parentSysIdx == -1)
+        %assign parentGrp = rootGroup
+      %else
+        %assign parentSys  = Subsystem[parentSysIdx]
+        %assign parentName = FcnConvertSLNameToASAP2Name(parentSys.Name)
+        %assign maskType   = Subsystem[parentSysIdx].MaskType
+        %assign parentGrp  = LibASAP2CreateGroup(parentName, "", maskType)
+      %endif
+      %assign tmpVar = LibASAP2AddSubGroupToGroup(parentGrp, thisGrp)
+      %% Check for referenced model blocks and add to subgroup    
+      %with Subsystem[sysIdx]
+        %foreach blkIdx = NumBlocks
+          %if ISEQUAL(Block[blkIdx].Type,"ModelReference")
+            %assign sbIdx = Block[blkIdx]._blkref
+            %% Create referenced model placeholder pattern
+            %% E.g. "mr_grp2link_modelName"
+            %assign refMdlName = ""
+            %if ::CompiledModel.HasCodeVariants && ...
+              ISFIELD(Block[blkIdx], "CodeVariantModelRefSysBlockRef")
+              %assign sbCVidxArr = Block[blkIdx].CodeVariantModelRefSysBlockRef
+              %% Create subgroups for each model reference variant
+              %% Also dump dwork dependency for each model reference variant
+              %foreach refIdx = SIZE(FIELDNAMES(sbCVidxArr),1)
+                %assign flName = FIELDNAMES(sbCVidxArr)[refIdx]
+                %assign sbCVidx = GETFIELD(sbCVidxArr, flName)  
+                %assign sysBlk = ::CompiledModel.System[sbCVidx[0]].Block[sbCVidx[1]]
+                %assign refMdlName = sysBlk.ParamSettings.ReferencedModelName
+                
+                %assign subGrpName = "mr_grp2link" + "_" + refMdlName  
+                %if ISFIELD(sysBlk, "DWork") 
+                  %if sysBlk.NumDWork > 1
+                    %continue
+                  %endif                  
+                  %assign dIdx  = sysBlk.DWork.FirstRootIdx
+                  %assign typeName = FcnGetDWorkTypeNameForIdx(dIdx)
+                  %% Add DWork name to placeholder pattern
+                  %% E.g. "mr_grp2link_modelName_DWorkName"
+                  %assign validTypeName = FEVAL("regexprep",typeName, "[^\\w+]","_")
+                  %assign subGrpName = subGrpName + "_" + validTypeName
+                  %<typeName>@%<refMdlName>                   
+                %endif
+                %if EXISTS(subGrp)
+                  %assign subGrp.Name = subGrpName
+                %else
+                  %assign tmpVar = subGrp {Name subGrpName; Root 0}
+                %endif
+                %assign tmpVar = LibASAP2AddSubGroupToGroup(thisGrp, subGrp)
+              %endforeach %% refIdx       
+                                        
+            %else %% ::CompiledModel.HasCodeVariants
+              %assign refMdlName = ::CompiledModel.System[sbIdx[0]]....
+                Block[sbIdx[2]].ParamSettings.ReferencedModelName            
+              %assign subGrpName = "mr_grp2link" + "_" + refMdlName        
+              %% For multi-instance referenced models add DWork name
+              %if ISFIELD(Block[blkIdx], "DWork") 
+                %% ModelReference blocks with multiple DWords are not supported
+                %% (for e.g. multi-instance referenced models in a 'For Loop 
+                %% Subsystem', multi-instance referenced models with a 
+                %% variable-dimensions IO)
+                %% ModelReference blocks with a self structure do not need to
+                %% record its DWork since it will be contained within this struct
+                %% NOTE: Simulink Coder does not allow test points inside 'For Each
+                %% Subsystem'. It also does not allow non-Auto storage class 
+                %% objects inside multi-instance referenced models.
+                %if Block[blkIdx].NumDWorks > 1 || SLibGetUseRTMcgType()
+                  %continue
+                %endif
+                %assign dIdx  = Block[blkIdx].DWork._idx
+                %assign typeName = FcnGetDWorkTypeNameForIdx(dIdx)
+                %% Add DWork name to placeholder pattern
+                %% E.g. "mr_grp2link_modelName_DWorkName"
+                %assign validTypeName = FEVAL("regexprep",typeName, "[^\\w+]","_")
+                %assign subGrpName = subGrpName + "_" + validTypeName
+                %<typeName>@%<refMdlName>
+              %endif
+              %if EXISTS(subGrp)
+                %assign subGrp.Name = subGrpName
+              %else
+                %assign tmpVar = subGrp {Name subGrpName; Root 0}
+              %endif
+              %assign tmpVar = LibASAP2AddSubGroupToGroup(thisGrp, subGrp)
+            %endif
+          %endif
+        %endforeach
+        %endwith
+    %endforeach
+  %endwith
+%closefile DWORKDEPLIST
+%endfunction
+
+%% DocFunction{Other Useful Functions}: LibASAP2AddCharacteristicToGraphicalGroups
+%% Abstract:
+%%   Add a Characteristic to one or more groups reflecting the locations of 
+%%   the corresponding parameter in the Simulink model. 
+%% NOTE: 
+%%   TO BE INVOKED/CALLED ONLY FROM THE FOLLOWING TEMPLATE FUNCTIONS
+%%      - ASAP2UserFcnWriteCharacteristic_Scalar
+%%      - ASAP2UserFcnWriteCharacteristic_Lookup1D
+%%      - ASAP2UserFcnWriteCharacteristic_Lookup2D
+%% Arguments
+%%   1) param: The record corresponding to characteristic. (Type: TLC Record)
+%% Returns: 
+%%   Nothing/Void
+%%
+%function LibASAP2AddCharacteristicToGraphicalGroups(param) void
+  %if ISFIELD(param,"BlkGrRef")
+    %% Scalar: ::CompiledModel.GlobalMemoryMap.ModelParameters.ModelParameter.Instance
+    %assign BlkRefs = param.BlkGrRef
+  %elseif ISFIELD(param,"GraphicalRef")
+    %% New lookup tables: ::CompiledModel.ModelParameters.Parameter
+    %assign BlkRefs = param.GraphicalRef
+  %else
+    %% Old lookup tables are not supported
+    %return
+  %endif
+  %assign numBlocks = SIZE(BlkRefs, 0)
+  %foreach idx = numBlocks
+    %assign blkRef  = BlkRefs[idx]
+    %if ( (blkRef[1] != -1) && (blkRef[0] != -1) )
+      %assign grSubSys =  ::CompiledModel.BlockHierarchyMap.Subsystem[blkRef[0]]
+      %% Only add CHARACTERISTICs belonging to current model to the GROUP 
+      %if grSubSys.Block[blkRef[1]].Type != "ModelReference"
+        %assign parentName = FcnConvertSLNameToASAP2Name(grSubSys.Name)
+        %assign parentGrp  = LibASAP2CreateGroup(parentName, "", "")
+        %<LibASAP2AddCharacteristicToGroup( parentGrp, LibASAP2GetSymbol(param) )>
+      %endif
+    %endif
+  %endforeach
+%endfunction
+
+%% DocFunction{Other Useful Functions}: LibASAP2AddMeasurementToGraphicalGroup
+%% Abstract:
+%%   Add a measurement to the group and subgroups reflecting the location of the
+%%   corresponding signal/state in the Simulink model
+%% NOTE: 
+%%   TO BE INVOKED/CALLED ONLY FROM THE FOLLOWING TEMPLATE FUNCTION
+%%      - ASAP2UserFcnWriteMeasurement
+%% Arguments
+%%   1) signal: the record corresponding to measurement.
+%% Returns: 
+%%   Nothing/Void
+%%
+%function LibASAP2AddMeasurementToGraphicalGroup(signal) void
+  %assign parentGrp = LibASAP2CreateGroup("%<::CompiledModel.Name>", "", "")
+  %if ISFIELD(signal, "GrSrc")
+    %assign blkRef  = signal.GrSrc
+    %if ( (blkRef[1] != -1) && (blkRef[0] != -1) )
+      %assign grSubSys   = ::CompiledModel.BlockHierarchyMap.Subsystem[blkRef[0]]
+      %assign parentName = FcnConvertSLNameToASAP2Name(grSubSys.Name)
+      %assign parentGrp  = LibASAP2CreateGroup(parentName, "", "")
+    %endif
+  %endif
+  %<LibASAP2AddMeasurementToGroup( parentGrp, LibASAP2GetSymbol(signal) )>
+%endfunction
+
+
+%% Function: SLibMakeGroupName =================================================
+%% Abstract:
+%%      This regular expression rreplacement returns a string without
+%%      these characters: []<>-*+. as they can not be used as a tlc 
+%%      structure field name.
+%%
+%function SLibMakeGroupName(id)
+  %assign id = FEVAL("regexprep", id, "[\\[\\]\\<\\>\\-\\+\\*\\.]", "_")
+  %return id
+%endfunction
+
+%% ===============================
+%% ==== Local Functions ONLY =====
+%% ===============================
+
+%% Function: SLibOutputGroups ==================================================
+%% Abstract:
+%%      Outputs GROUPS based on cache generated.
+%%
+%function SLibOutputGroups() Output
+%with ::CompiledModel.ASAP2Groups
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  %% Update IsValid flags for GROUPs
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  %foreach idx = NumASAP2Groups
+    %assign grpIdx = NumASAP2Groups-idx-1
+    %assign group  = ASAP2Group[grpIdx]
+    %assign grpMaskIsValid =...
+            !FEVAL("isBlockFilteredFromGroup", group.MaskType)
+    %% Enable IsValid flag based on SUB_GROUP IsValid flags
+    %if !ISEMPTY(group.SubGroups)
+      %assign subGrpNames   = FIELDNAMES(group.SubGroups)
+      %assign numNames      = SIZE(subGrpNames,1)
+      %foreach nameIdx = numNames
+        %assign subName = GETFIELD(group.SubGroups, subGrpNames[nameIdx])
+        %% Skip referenced model place holder SUB_GROUP
+        %if !ISEMPTY(FEVAL("strfind", subName, "mr_grp2link"))
+          %continue
+        %endif
+        %% Remove first character 'S'
+        %assign snames = FEVAL("eval", "feval(@(x)x(2:end), '" + subGrpNames[nameIdx] + "')") 
+        %%
+        %assign subIdx   = GETFIELD(::CompiledModel.ASAP2Groups, snames)
+        %assign subMaskIsValid =...
+                !FEVAL("isBlockFilteredFromGroup", ASAP2Group[subIdx].MaskType)
+        %if ASAP2Group[subIdx].IsValid && grpMaskIsValid
+          %% SUB_GROUP is valid enable IsValid flag
+          %assign ASAP2Group[grpIdx].IsValid = TLC_TRUE
+        %else
+          %% SUB_GROUP is invalid remove the field
+          %assign tmpVar = REMOVEFIELD(ASAP2Group[grpIdx].SubGroups,...
+                                       subGrpNames[nameIdx])
+        %endif
+        %% Move CHARACTERISTIC and MEASUREMENT to current group
+        %if !subMaskIsValid ||...
+            (!grpMaskIsValid && subMaskIsValid)
+          %% Move SUB_GROUP's characteristic to current group
+          %if !ISEMPTY(ASAP2Group[subIdx].RefCharacteristics)
+            %assign refPar   = ASAP2Group[subIdx].RefCharacteristics
+            %assign parNames = FIELDNAMES(refPar)
+            %foreach pIdx = SIZE(parNames,1)
+              %if !ISFIELD(ASAP2Group[grpIdx].RefCharacteristics, parNames[pIdx])
+                %addtorecord ASAP2Group[grpIdx].RefCharacteristics ...
+                %<parNames[pIdx]> "%<GETFIELD(refPar, parNames[pIdx])>"
+                %assign tmpVar = REMOVEFIELD(ASAP2Group[subIdx]....
+                                 RefCharacteristics,parNames[pIdx])
+              %endif
+            %endforeach
+          %endif
+          %% Move SUB_GROUP's measurement to current group
+          %if !ISEMPTY(ASAP2Group[subIdx].RefMeasurements)
+            %assign refSig   = ASAP2Group[subIdx].RefMeasurements
+            %assign sigNames = FIELDNAMES(refSig)
+            %foreach sIdx = SIZE(sigNames,1)
+              %if !ISFIELD(ASAP2Group[grpIdx].RefMeasurements, sigNames[sIdx])
+                %addtorecord ASAP2Group[grpIdx].RefMeasurements ...
+                %<sigNames[sIdx]> "%<GETFIELD(refSig, sigNames[sIdx])>"
+                %assign tmpVar = REMOVEFIELD(ASAP2Group[subIdx]....
+                                 RefMeasurements,sigNames[sIdx])
+              %endif
+            %endforeach
+          %endif
+          %% Set SUB_GROUP IsValid flag to false
+          %assign ASAP2Group[subIdx].IsValid = TLC_FALSE
+        %endif
+      %endforeach
+    %endif
+    %% Enable IsValid based on CHARACTERISTIC, MEASUREMENT and mask type
+    %if (grpMaskIsValid &&...
+        (!ISEMPTY(group.RefCharacteristics) || ...
+        !ISEMPTY(group.RefMeasurements) ||...
+        !ISEMPTY(group.SubGroups))) 
+      %assign ASAP2Group[grpIdx].IsValid = TLC_TRUE  
+    %endif
+  %endforeach
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  %% Output GROUPs to ASAP2 file
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  %foreach idx = NumASAP2Groups
+    %assign group = ASAP2Group[idx]
+    %if (group.IsValid == TLC_TRUE)
+    /begin GROUP 
+      /* Name                   */       %<group.Name>
+      /* Long identifier        */       "%<group.LongIdentifier>"
+    %if !ISEMPTY(group.Annotation)
+      /* Annotation             */       "%<group.Annotation>"
+    %endif
+    %if group.Root
+     /* Root                    */       ROOT
+    %endif
+    %assign subGrpNames = FIELDNAMES(group.SubGroups)
+    %assign numNames  = SIZE(subGrpNames)[1]
+    %if (numNames > 0)
+      /begin SUB_GROUP
+      %foreach nameIdx = numNames
+        %<GETFIELD(group.SubGroups, subGrpNames[nameIdx])>
+      %endforeach
+      /end SUB_GROUP
+    %endif
+    %assign refCharNames = FIELDNAMES(group.RefCharacteristics)
+    %assign numNames = SIZE(refCharNames)[1]
+    %if (numNames > 0)
+      /begin REF_CHARACTERISTIC
+      %foreach nameIdx = numNames
+        %<GETFIELD(group.RefCharacteristics, refCharNames[nameIdx])>
+      %endforeach
+      /end REF_CHARACTERISTIC
+    %endif
+    %assign refMeasNames = FIELDNAMES(group.RefMeasurements)
+    %assign numNames  = SIZE(refMeasNames)[1]
+    %if (numNames > 0)
+      /begin REF_MEASUREMENT
+      %foreach nameIdx = numNames
+        %<GETFIELD(group.RefMeasurements, refMeasNames[nameIdx])>
+      %endforeach
+      /end REF_MEASUREMENT
+    %endif
+    /end GROUP
+    
+    %endif
+  %endforeach
+%endwith
+%endfunction
+
+%% Function: FcnConvertSLNameToASAP2Name =======================================
+%% Abstract:
+%%   Strips off white character, special characters and coverts into a valid
+%%   ASAP2 identifier. Returns valid identifier
+%%
+%function FcnConvertSLNameToASAP2Name(slName) void
+  %if ISEQUAL(slName, "<Root>") || ISEQUAL(slName, "%<::CompiledModel.Name>")
+    %return "%<::CompiledModel.Name>"
+  %endif
+  %if BlockCommentType == "BlockPathComment"
+    %assign sysName = SYSNAME(slName)
+  %else
+    %assign rtwName = FEVAL("coder.internal.convertBlockSIDNameToRTWName", "%<LibGetModelName()>", slName)
+    %assign sysName = SYSNAME(rtwName)
+  %endif
+  %assign sExpr   = sysName[0] + "_" + sysName[1]
+  %assign str = "char(bitor(bitand('%<sExpr>'>='0','%<sExpr>'<='9')," + ...
+    "bitor(bitand('%<sExpr>'>='a','%<sExpr>'<='z'),bitand('%<sExpr>'>='A'," + ...
+    "'%<sExpr>'<='Z'))).*'%<sExpr>' + ~bitor(bitand('%<sExpr>'>='0','%<sExpr>'<='9')" + ...
+    ",bitor(bitand('%<sExpr>'>='a','%<sExpr>'<='z'),bitand('%<sExpr>'>='A'," + ...
+    "'%<sExpr>'<='Z'))).*'_')"
+   %return FEVAL("eval", str)
+%endfunction
+
+
+
+%% [EOF] asap2grouplib.tlc

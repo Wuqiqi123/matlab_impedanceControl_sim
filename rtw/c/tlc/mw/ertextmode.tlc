@@ -1,0 +1,241 @@
+%% ============================================================================
+%% File : ertextmode.tlc
+%%
+%% Abstract:
+%%   External Mode support for code generation's Embedded-C code format.
+%%
+%% Copyright 2003-2013 The MathWorks, Inc.
+%%
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_ERT_EXTMODE_") == 0
+%assign _ERT_EXTMODE_ = 1
+
+%% Function: SLibErtGenExtModeCode ======================================
+%% Abstract:
+%%   Generate extModeHead and extModeTrailer, and cache code
+%%   When GenerateGRTWrapper is true
+%% returns empty code because grt_main() 
+%% will call ext mode interface function.
+%%
+%function SLibErtGenExtModeCode(buffsRec, isPeriodicRateGrouping) void
+  %assign ::BlockFcn = "Output"
+
+  %openfile extModeHeader
+  %% VxWorks doesn't need to pause and check for stop request here
+  %if (ExtMode == 1) && (TargetOS != "VxWorksExample") && !EXISTS(C6000_EXT_MODE) && (!ExtModeXCP || ExtModeXCPClassicInterface)
+    /* External mode */
+    {
+    boolean_T rtmStopReq = %<GET_TYPE_ID_REPLACEMENT("false")>;
+    rtExtModePauseIfNeeded(%<RTMGet("RTWExtModeInfo")>, ...
+      %<NumRuntimeExportedRates>, ...
+      &rtmStopReq);
+    if (rtmStopReq) {
+      %<RTMSetStopRequested("true")>;
+    }
+    
+    if (%<RTMGetStopRequested()> == %<GET_TYPE_ID_REPLACEMENT("true")>) {
+      %if !GenerateGRTWrapper
+        %% Do NOT set error status for classic call interface (for backward compatibility)
+        %<RTMSetErrStat("\"Simulation finished\"")>;
+      %endif
+      break;
+    }
+    }
+  %endif
+  %closefile extModeHeader
+  %addtorecord buffsRec ExtModeHeader extModeHeader
+
+  %assign ::BlockFcn = "RootUpdate"
+  %if ExtMode == 1 
+    %if !isPeriodicRateGrouping
+      %% Always SingleTasking mode for ERT
+      %openfile extModeTrailer
+      
+      %if (!ExtModeXCP || ExtModeXCPClassicInterface)
+        /* External mode */
+        rtExtModeUploadCheckTrigger(%<NumRuntimeExportedRates>);
+      %endif
+
+      %foreach tidIdx = NumRuntimeExportedRates
+        %% Set all tids, independent of tid01Eq
+        %if ::IncludeLoggingInstrumentation
+          %<FcnGenerateTidGuardOpenCode(tidIdx)>
+        %else
+          %<FcnGenerateTidGuardOpenCodeInMain(tidIdx)>
+        %endif
+
+        %if (!ExtModeXCP || ExtModeXCPClassicInterface)
+          rtExtModeUpload(%<tidIdx>, (real_T)%<RTMGetTaskTimeForTID(tidIdx)>);
+        %else
+          %if (NumRuntimeExportedRates != 1) || !CombineOutputUpdateFcns
+            %% In the case of Multirate model or if CombineOutputUpdateFcns is disabled
+            %% the model generated code never invokes the external Mode APIs,
+            %% so by adding it here we guarantee that the extmodeEvent() is correctly 
+            %% invoked in rt_OneStep()
+            extmodeErrorCode_T errorCode = EXTMODE_SUCCESS;
+            extmodeSimulationTime_T currentTime = (extmodeSimulationTime_T) %<RTMGetTaskTimeForTID(tidIdx)>;
+  
+            /* Trigger External Mode event */
+            errorCode = extmodeEvent(%<tidIdx>,currentTime);
+            if (errorCode != EXTMODE_SUCCESS) {
+                /* Code to handle External Mode event errors
+                   may be added here */
+            }
+          %endif
+        %endif
+
+        %<FcnGenerateTidGuardCloseCode(tidIdx)>
+      %endforeach
+      %closefile extModeTrailer
+      %addtorecord buffsRec ExtModeTrailer extModeTrailer
+    %else
+      %% MultiTasking mode/RateGrouping
+      %openfile extModeTrailer0
+      
+      %if (!ExtModeXCP || ExtModeXCPClassicInterface)
+        /* External mode */
+        rtExtModeUploadCheckTrigger(%<NumRuntimeExportedRates>);
+      %endif
+      %closefile extModeTrailer0
+      %assign tid01Eq = FixedStepOpts.TID01EQ
+      %foreach tidIdx = NumRuntimeExportedRates
+        %openfile tmpBuff
+        %if tidIdx == 0
+          %<extModeTrailer0>
+        %endif
+        %if (!ExtModeXCP || ExtModeXCPClassicInterface)
+          %if tid01Eq && tidIdx == 0
+            rtExtModeUpload(%<tid01Eq>, (real_T)%<RTMGetTaskTimeForTID(tidIdx)>);
+          %else
+            rtExtModeUpload(%<tidIdx>, (real_T)%<RTMGetTaskTimeForTID(tidIdx)>);
+          %endif
+        %else
+          %if (NumContStates > 0) && (tidIdx == 0)
+            %% If the model contains Continuous States, the extmodeEvent()
+            %% needs to be invoked in the modelStep0
+            {
+                extmodeErrorCode_T errorCode = EXTMODE_SUCCESS;
+            %if tid01Eq
+                /* Trigger External Mode event */          
+	        errorCode = extmodeEvent(%<tid01Eq>,%<RTMGetTaskTimeForTID(tidIdx)>);
+            %else
+                /* Trigger External Mode event */
+	        errorCode = extmodeEvent(%<tidIdx>,%<RTMGetTaskTimeForTID(tidIdx)>);
+            %endif
+
+                if (errorCode != EXTMODE_SUCCESS) {
+                    /* Code to handle External Mode event errors
+                       may be added here */
+                }
+            }
+          %endif 
+        %endif
+        %closefile tmpBuff
+        %addtorecord buffsRec ExtModeTrailer%<tidIdx> tmpBuff
+      %endforeach
+    %endif
+  %endif
+%endfunction  %% SLibErtGenExtModeCode
+
+%% Function: SLibGenERTExtModeInit =============================================
+%% Abstract:
+%%   Generate initialization code for external mode. 
+%%   When GenerateGRTWrapper is true
+%% returns empty code because grt_main() 
+%% will call ext mode interface function.
+%%
+%function SLibGenERTExtModeInit() void
+  
+  %openfile extModeInitBuf
+  %if (!ExtModeXCP || ExtModeXCPClassicInterface)
+    /* External mode */
+    %if !PurelyIntegerCode
+      rtSetTFinalForExtMode(&%<RTMGet("TFinal")>);
+    %else
+      rtSetTFinalForExtMode(rteiGetPtrTFinalTicks(%<RTMGet("RTWExtModeInfo")>));
+    %endif
+
+    %% for VxWorks, this initialization is done elsewhere
+    %if TargetOS != "VxWorksExample" && !EXISTS(C6000_EXT_MODE)
+      rtExtModeCheckInit(%<NumRuntimeExportedRates>);
+      {
+        boolean_T rtmStopReq = %<GET_TYPE_ID_REPLACEMENT("false")>;
+        rtExtModeWaitForStartPkt(%<RTMGet("RTWExtModeInfo")>, ...
+          %<NumRuntimeExportedRates>, ...
+          &rtmStopReq);
+        if (rtmStopReq) {
+          %<RTMSetStopRequested("true")>;
+        }
+      }
+    %endif
+    
+    rtERTExtModeStartMsg();
+  %else
+    /* External Mode initialization */
+    %if !PurelyIntegerCode
+      errorCode = extmodeInit(%<RTMGet("RTWExtModeInfo")>, &%<RTMGet("TFinal")>);
+    %else
+      errorCode = extmodeInit(%<RTMGet("RTWExtModeInfo")>, (extmodeSimulationTime_T *)rteiGetPtrTFinalTicks(%<RTMGet("RTWExtModeInfo")>));
+    %endif
+    if (errorCode != EXTMODE_SUCCESS) {
+        /* Code to handle External Mode initialization errors
+           may be added here */
+    }
+
+    if (errorCode == EXTMODE_SUCCESS) {
+        /* Wait until a Start or Stop Request has been received from the Host */
+        extmodeWaitForHostRequest(EXTMODE_WAIT_FOREVER);
+
+        if (extmodeStopRequested()) {
+          %<RTMSetStopRequested("true")>;
+        }
+    }
+  %endif
+
+  %closefile extModeInitBuf
+  
+  %return extModeInitBuf
+
+%endfunction %% SLibGenERTExtModeInit
+
+%% Function: FcnGenerateExtModeOneStep ====================
+%% Abstract:
+%%  Generate the rtExtModeOneStep function call
+%%
+%function FcnGenerateExtModeOneStep() void
+  %openfile retBuf
+
+  %if (!ExtModeXCP || ExtModeXCPClassicInterface)
+      /* External mode */
+      %% for VxWorks, the stepping is done by a seperate task
+      %if TargetOS != "VxWorksExample" && !EXISTS(C6000_EXT_MODE)
+        {
+          boolean_T rtmStopReq = %<GET_TYPE_ID_REPLACEMENT("false")>;
+          rtExtModeOneStep(%<RTMGet("RTWExtModeInfo")>, ...
+            %<NumRuntimeExportedRates>, ...
+            &rtmStopReq);
+          if (rtmStopReq) {
+            %<RTMSetStopRequested("true")>;
+          }
+        }
+      %endif
+  %else
+    /* Run External Mode background activities */
+    errorCode = extmodeBackgroundRun();
+    if (errorCode != EXTMODE_SUCCESS) {
+        /* Code to handle External Mode background task errors
+           may be added here */
+    }
+
+  %endif
+
+  %closefile retBuf
+
+  %return retBuf
+%endfunction
+
+%endif %% _ERT_EXTMODE_
+
+%% [EOF] ertextmode.tlc

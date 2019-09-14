@@ -1,0 +1,1634 @@
+%%
+%% Copyright 2015-2018 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   This system TLC library file contains functions that are related to 
+%%   Simulink.CoderGroups
+%%
+
+%if EXISTS("_DATAGROUPLIB_") == 0
+%assign _DATAGROUPLIB_ = 1
+
+%% Function: SLibIsCoderGroupUseAccessFcnForDataRecord ========================================
+%% Abstract:
+%%  This function check if record is In CoderGroup and if the record is using access function 
+%%
+%function SLibIsCoderGroupUseAccessFcnForDataRecord(record) void
+  %%if !SLibIsLegacyStorageClassForDataRecord(record) && ...
+  %if SLibDataRecordIsInCoderGroup(record) && ...
+  ISFIELD(record,"UseAccessFunctions") && record.UseAccessFunctions == 1 
+    %return TLC_TRUE
+  %endif
+  %return TLC_FALSE
+%endfunction
+
+%% Function: SLibVargroupElementAutoDataInitConversion ========================================
+%% Abstract:
+%%  Helper function to convert Auto DataInit to Static or Dynamic
+%%
+%function SLibVargroupElementAutoDataInitConversion(recType) void
+  %if recType == "P"
+    %return "Static"
+  %else
+    %return "Dynamic"
+  %endif
+%endfunction
+
+%% Function: SLibCoderDataGroupAutoDataInitConversion ============================================
+%% Abstract:
+%%   return "Static" if parameters are mapped to "Auto" DataInit CoderDataGroup
+%%   return "Static" if  both parameters and signals are mapped to "Auto" DataInit CoderDataGroup
+%%   return "Dynamic" if others are mapped to "Auto" DataInit CoderDataGroup
+%%
+%function SLibCoderDataGroupAutoDataInitConversion(group) void
+  %assert(group.DataInit == "Auto")
+  %assign autoDataInit = "Auto"
+  %if group.GroupContains == "ParameterElementOnly" || group.GroupContains == "ParameterAndSignalElement"
+    %assign autoDataInit = "Static"
+  %elseif group.GroupContains == "SignalElementOnly"
+    %assign autoDataInit = "Dynamic"
+  %endif
+  %return autoDataInit
+%endfunction
+
+%% Function: LibCoderDataGroupStructIsEmpty ============================================
+%% Abstract:
+%%   Does the root system have a CoderDataGroup of the given name?
+%%
+%function LibCoderDataGroupStructIsEmpty(group) void
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assign fieldName = "HasCoderDataGroup" + group.Name + "Arg"
+  %if SLibIsSynthesizedRTM(group)
+    %return !IsModelRefScalableBuild() ? ::CompiledModel.EmptyRealTimeObject : TLC_TRUE
+  %elseif group.AsStructure == "None"
+    %return TLC_TRUE
+  %endif
+  %assert (ISFIELD(::CompiledModel.System[baseSysIdx], fieldName))
+  %return (::CompiledModel.System[baseSysIdx].%<fieldName> == 0)
+%endfunction
+
+%% Function: FcnGetCoderGroupForVarGroup ==============================================
+%function FcnGetCoderGroupForVarGroup(varGroup) void
+  %assert varGroup.Category == "HierarchicalCoderData"
+  %return ::CompiledModel.CoderDataGroup[varGroup.CoderDataGroupIndex]
+%endfunction
+
+%% Function: SLibHaveRootDataGroupVarGroup ============================================
+%% Abstract:
+%%   Does the root system have a non-empty CoderDataGroup var group of the given name?
+%%
+%function SLibHaveRootDataGroupVarGroup(group) void
+  %assign rootSystemIndex = GetBaseSystemIdx()
+  %foreach varGroupIndex = ::CompiledModel.VarGroups.NumVarGroups
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIndex]
+
+    %if varGroup.NumVarGroupElements <= 0
+      %continue
+    %endif
+    %if (varGroup.SysIdx == rootSystemIndex) && ...
+      (LibGetVarGroupCategory(varGroupIndex) == "HierarchicalCoderData")
+      %assign coderGroupIndex = varGroup.CoderDataGroupIndex
+      %assign coderGroup = ::CompiledModel.CoderDataGroup[coderGroupIndex]
+      %if coderGroup.Name == group.Name
+        %return TLC_TRUE
+      %endif
+    %endif
+  %endforeach
+
+  %return TLC_FALSE
+
+%endfunction
+
+%% Function: LibCoderDataGroupStructsAreEmpty ============================================
+%% Abstract:
+%%   Does the root system have any CoderDataGroups?
+%%
+%function LibCoderDataGroupStructsAreEmpty() void
+  %foreach idx = ::CompiledModel.NumCoderDataGroups
+    %if !LibCoderDataGroupStructIsEmpty(::CompiledModel.CoderDataGroup[idx])
+      %return TLC_FALSE
+    %endif
+  %endforeach
+  %return TLC_TRUE
+%endfunction
+
+%% Function: SLibCoderDataGroupIndex =======================================================
+%% Abstract:
+%%   Return the group index for the specified name
+%%
+%function SLibCoderDataGroupIndex(groupName) void
+  %foreach idx = ::CompiledModel.NumCoderDataGroups
+    %assign group = ::CompiledModel.CoderDataGroup[idx]
+    %if group.Name == groupName
+      %return group.GroupIndex
+    %endif
+  %endforeach
+  %return -1
+%endfunction
+
+%% Function: RTMModelPtrsToCoderDataGroupIsReqFcn ===========================
+%% Abstract:
+%%   Does the address of the statically declared CoderDataGroup structures need to be 
+%%   saved in rtModel. This is conditionally saved for simplified reusable call
+%%   interface and always saved for classic call interface.
+%function RTMModelPtrsToCoderDataGroupIsReqFcn(groupIndex) void
+  %assign group = ::CompiledModel.CoderDataGroup[groupIndex]
+  %if LibCoderDataGroupStructIsEmpty(group) || SLibGetUseRTMcgType()
+    %return TLC_FALSE
+  %endif
+  %if SLibMultiInstance() && ...
+    !GenerateClassInterface && ...
+    !SLibUseBackwardCompatibleReusableInterface()
+    %return TLC_TRUE
+  %endif
+  %return RTMModelPtrsToInstanceDataIsReqFcn()
+  
+%endfunction %%  RTMModelPtrsToRootDWorkIsReqFcn
+
+%function FcnGetChildDataGroup(group, sid) void
+  %foreach idx = SIZE(::CompiledModel.CoderDataGroups.CoderDataGroup, 1)
+    %assign coderDataGroup = ::CompiledModel.CoderDataGroups.CoderDataGroup[idx]
+    %if (coderDataGroup.UserProvidedName == group.UserProvidedName) && ...
+      coderDataGroup.Depth == 1 && ...
+      ISFIELD(coderDataGroup, "CompiledModelBlockIndex") && ...
+      (coderDataGroup.CompiledModelBlockIndex == sid)
+      %return coderDataGroup
+    %endif
+  %endforeach
+  %<LibReportFatalError("Should not get here")>
+%endfunction
+
+%% Function: SLibIsSelfVarGroup =====================================================
+%function SLibIsSelfVarGroup(aVarGroup) void
+  %return ISFIELD(aVarGroup, "IsSelfCoderDataGroupVarGroup") && ...
+    aVarGroup.IsSelfCoderDataGroupVarGroup
+%endfunction
+
+%% Function: SLibIsSelfCoderGroup
+%% Abstract:
+%%   Given a system index and a coder group index, returns true iff the coder
+%%   group for that system is the self coder group for the model.
+%%   This implies that the system must be a base system for this function
+%%   to return true.
+%function SLibIsSelfCoderGroup(sysIdx, coderGroupIdx) void
+  %return GetBaseSystemIdx() == sysIdx && ...
+    SLibGetDoesSelfHasCoderDataGroup() && ...
+    SLibGetSelfCoderDataGroupIndex() == coderGroupIdx
+%endfunction
+
+%% Function: SLibIsAutosarPIMCoderGroup
+%% Abstract: 
+%%    Given a coder data group, check whether it is synthesized for Autosar
+%%    PerInstanceMemory.
+%function SLibIsAutosarPIMCoderGroup(coderGroup) void
+  %return ISFIELD(coderGroup, "SynthesizedNamePrefix") && ...
+    !ISEMPTY(coderGroup.SynthesizedNamePrefix) && ...
+    (coderGroup.SynthesizedNamePrefix == "_PIM")
+%endfunction
+
+%% Function: SLibIsAutosarStaticMemoryCoderGroup
+%% Abstract:
+%%    Given a coder data group, check whether it is synthesized for Autosar 
+%%    Static Memory.
+%function SLibIsAutosarStaticMemoryCoderGroup(coderGroup) void
+  %return ISFIELD(coderGroup, "SynthesizedNamePrefix") && ...
+    !ISEMPTY(coderGroup.SynthesizedNamePrefix) && ...
+    (coderGroup.SynthesizedNamePrefix == "_VAR")
+%endfunction
+
+%% Function: SLibIsAutosarInstPCoderGroup
+%% Abstract:
+%%    Given a coder data group, check whether it is synthesized for Autosar 
+%%    PerInstanceParameter.
+%function SLibIsAutosarInstPCoderGroup(coderGroup) void
+  %return ISFIELD(coderGroup, "SynthesizedNamePrefix") && ...
+    !ISEMPTY(coderGroup.SynthesizedNamePrefix) && ...
+    (coderGroup.SynthesizedNamePrefix == "_ARInstP")
+%endfunction
+
+%% Function: SLibGetVarGroupIdxForCoderGroup
+%% Abstract:
+%%   Given a system index and a coder group index, returns the vargroup id
+%%   that corresponds to the given system's coder group.
+%function SLibGetVarGroupIdxForCoderGroup(sysIdx, coderDataGroupIdx) void
+  %assign group = ::CompiledModel.CoderDataGroup[coderDataGroupIdx]
+  %assign groupName = group.Name
+  %assign groupToken = "CoderDataGroup" + groupName
+
+  %return FcnSysVarGroupIndex(System[sysIdx], groupToken, 0)
+%endfunction
+
+%% Function: SLibGetRTMPointerVariableNameInsideSelfStructure()
+%% Abstract:
+%%   User-defined and legacy RTM can co-exist, in which case, we may have a pointer
+%%   to legacy RTM inside the Self structure. This function returns the name of that
+%%   pointer variable, if applicable. Otherwise, it returns an empty string.
+%function SLibGetRTMPointerVariableNameInsideSelfStructure() void
+  %if SLibIsSelfUserDefinedAndStructured()
+    %% todo (sr): register and check for clashes in the Self structure    
+    %return (::CompiledModel.Name + "_" + "rtm" + "_" + "ref")
+  %endif
+  
+  %return ""
+%endfunction
+
+%% Function: SLibCanInlineRTMIntoSelf()
+%% Abstract:
+%%   Returns true iff coder group self exists and we can inline
+%%   legacy RTM content directly inside this self's typedef.
+%%   This can only happen if self's memory section is non const.
+%function SLibCanInlineRTMIntoSelf() void  
+  %return SLibGetDoesSelfHasCoderDataGroup() && SLibIsSelfStructured() && ...
+    !SLibHasSelfWithConstantMemorySection() && !GenerateClassInterface
+%endfunction
+
+%% Function: FcnGetVargroupInitializer ============================================
+%% Abstract:
+%%     Return the initializer for the vargroup 
+%function FcnGetVargroupInitializer(varGroupIndex, path, dynamicInit, symbolic) void
+  %createrecord initializer {}
+  %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIndex]        
+  %assign cgTypeIdx = varGroup.CGTypeIdx
+ 
+  %% Begin vargroup
+  %foreach elemIdx = varGroup.NumVarGroupElements
+    %assign element = varGroup.VarGroupElements[elemIdx]
+    %assign idnum  = IDNUM(element)
+    %assign recType = idnum[0]
+    %assign recIdx  = idnum[1]
+    %switch recType
+      %case "LDW"
+      %case "W"
+      %case "U"
+      %case "Y"
+      %case "B"
+      %case "ZE"
+        %assign dataRec = SLibGetDataRecForVarGroupMember(recType, recIdx)
+        %assign cgTypeIdx = LibGetRecordCGTypeIdx(dataRec)
+        %% Exclude things like function-call-event signals
+        %if SLibEmitRecordInCoderDataGroupStruct(cgTypeIdx)
+          %assign value = FcnGetDynamicDataInitFromCGType(cgTypeIdx)
+          %addtorecord initializer Elements { Element value }
+        %endif
+        %break
+
+      %case "P"
+        %assign prm = ::CompiledModel.ModelParameters.Parameter[recIdx]
+        %if SLibIsParamUnstructured(prm)
+          %assert 0
+          %continue
+        %endif
+        %if (SLibGetWidthOfValueFromParamRec(prm) > 0) && !SLibOmitParameter(prm)
+          %if symbolic && (prm.TestpointIndex >= 0)
+            %addtorecord initializer Elements { Element "TP%<prm.TestpointIndex>" }
+            %assign group = FcnGetCoderGroupForVarGroup(::CompiledModel.VarGroups.VarGroup[varGroupIndex])
+            %if SLibAccessViaPointerInSelf(group)
+              %assign separator = "->"
+            %else
+              %assign separator = "."
+            %endif
+            %assign dynamicPath = path + separator + LibGetRecordIdentifier(prm)
+            %addtorecord dynamicInit TP%<prm.TestpointIndex> dynamicPath
+          %else
+            %openfile value
+            %<SLibGetFormattedPrmValue(prm, "")>
+            %closefile value
+            %addtorecord initializer Elements { Element value }
+          %endif
+        %endif
+        %break
+
+      %case "PD"
+        %addtorecord initializer Elements { Element element }
+        %break
+        
+      %case "VG"
+        %assign fieldName = LibCGTypeMemberName(cgTypeIdx, elemIdx)
+        %assign deeperpath = path + "." + fieldName
+        %addtorecord initializer Elements { Element FcnGetVargroupInitializer(recIdx, deeperpath, dynamicInit, symbolic) }
+        %break
+        
+      %case "RTM"
+        %assign elemCGTypeIdx = LibCGTypeMemberCGTypeIdx(cgTypeIdx, recIdx)
+        %assign value = FcnGetDynamicDataInitFromCGType(elemCGTypeIdx)
+        %addtorecord initializer Elements { Element value }
+        %break
+        
+      %case "PCDG"
+        %assign group = FcnGetCoderGroupForVarGroup(varGroup)
+        %assign childDataGroup = FcnGetChildDataGroup(group, recIdx)
+        %assert childDataGroup.AsStructure == "InParent"
+        %addtorecord initializer Elements { Element childDataGroup.Initializer }
+        %break
+        
+      %case "RCDG"
+          %if symbolic
+            %addtorecord initializer Elements { Element element }
+          %else
+            %assign group = ::CompiledModel.CoderDataGroup[recIdx]
+            %openfile value
+            &(%<SLibCoderDataGroupInstance(group)>)
+            %closefile value
+            %addtorecord initializer Elements { Element value }
+          %endif
+        %break
+
+      %case "RVG"
+        %openfile value
+        %<SLibGetNullDefinitionFromTfl()>
+        %closefile value
+        %addtorecord initializer Elements { Element value }
+        %break
+
+      %default
+        %<LibReportFatalError("Unhandled vargroup initialization")>
+        %break
+    %endswitch
+  %endforeach 
+  %return initializer
+%endfunction
+
+%% Function: FcnGetDataGroupInitializer ============================================
+%% Abstract:
+%%     Return the initializer for the data group
+%function FcnGetDataGroupInitializer(group, path, dynamicInit) void
+  %if SLibDataGroupStaticInit(group)
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]      
+    %assign varGroupIndex = FcnSysVarGroupIndex(baseSystem, "CoderDataGroup" + group.Name, 0)
+    %if varGroupIndex != -1
+       %return FcnGetVargroupInitializer(varGroupIndex, path, dynamicInit, ...
+          group.IsInstanceSpecific && SLibDataGroupStaticInit(group) && IsModelReferenceTarget())
+    %else
+      %return ""
+    %endif
+  %else
+    %return ""
+  %endif
+%endfunction
+
+%function SLibHasSelfWithConstantMemorySection() void
+  %assign selfCoderGroupIndex = SLibGetSelfCoderDataGroupIndex()
+  %if selfCoderGroupIndex == -1
+    %return TLC_FALSE
+  %else
+    %assign selfCoderGroup = ::CompiledModel.CoderDataGroup[selfCoderGroupIndex]
+    %return SLibDataGroupMemorySectionConst(selfCoderGroup)
+  %endif
+%endfunction
+
+%function SLibHasSelfWithStaticInit() void
+  %assign selfCoderGroupIndex = SLibGetSelfCoderDataGroupIndex()
+  %if selfCoderGroupIndex == -1
+    %return TLC_FALSE
+  %else
+    %assign selfCoderGroup = ::CompiledModel.CoderDataGroup[selfCoderGroupIndex]
+    %return SLibDataGroupStaticInit(selfCoderGroup)
+  %endif
+%endfunction
+
+%% Function: SLibRootCoderGroupVarGroupIdx =====================================
+%% Abstract:
+%%   Returns the root level VarGroup index for a given CoderGroup.
+%%
+%function SLibRootCoderGroupVarGroupIdx(group) void
+  %assign rootSystemIndex = GetBaseSystemIdx()
+  %foreach varGroupIndex = ::CompiledModel.VarGroups.NumVarGroups
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIndex]
+    %if (varGroup.SysIdx == rootSystemIndex) && ...
+      (LibGetVarGroupCategory(varGroupIndex) == "HierarchicalCoderData")
+      %assign coderGroupIndex = varGroup.CoderDataGroupIndex
+      %assign coderGroup = ::CompiledModel.CoderDataGroup[coderGroupIndex]
+      %if coderGroup.Name == group.Name
+        %return varGroupIndex
+      %endif
+    %endif
+  %endforeach
+  %return -1
+%endfunction
+
+%% Function: SLibGetRootVarGroupIdxForCoderGroup =======================================
+%% Abstract:
+%%   Returns the root vargroup index for a given Simulink.CoderGroup.
+%%
+%function SLibGetRootVarGroupIdxForCoderGroup(aGroup) void
+  %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]      
+  %assign varGroupIdx = ...
+    FcnSysVarGroupIndex(baseSystem, "CoderDataGroup" + aGroup.Name, 0)
+  %assert SLibRootCoderGroupVarGroupIdx(aGroup) == varGroupIdx
+  %return varGroupIdx
+%endfunction
+
+
+%% Function: SLibVarGroupForCoderGroup ===========================================
+%% Abstract:
+%%   Returns a vargroup for a given Simulink.CoderGroup.
+%%
+%function SLibVarGroupForCoderGroup(aGroup) void
+  %assign varGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(aGroup)
+  %if 0 > varGroupIdx
+    %return []
+  %endif
+  %return ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+%endfunction
+
+%% Function: SLibCoderGroupPackageAsStruct ======================================
+%% Abstract:
+%%   Returns true if a given coder group is implemented as structure.
+%%
+%function SLibCoderGroupPackageAsStruct(aGroup) void
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(aGroup)
+  %if -1 < rootVarGroupIdx
+    %return SLibVarGroupIsStruct(rootVarGroupIdx)
+  %endif
+  %return TLC_TRUE
+%endfunction
+
+%function SLibCoderDataGroupNumElements(aGroup) void
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(aGroup)
+  %if -1 < rootVarGroupIdx
+    %if !SLibVarGroupIsStruct(rootVarGroupIdx)
+      %return SLibVarGroupNumElements(rootVarGroupIdx)
+    %elseif SLibVarGroupNumElements(rootVarGroupIdx) > 0 ...
+      && !LibCoderDataGroupStructIsEmpty(aGroup)
+      %return 1
+    %endif
+  %endif
+  %return 0  
+%endfunction
+
+%function SLibCrossSystemIdxElement(aGroup, idx) void
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(aGroup)
+  %assign retVal = -1
+  %if -1 < rootVarGroupIdx
+    %assign rootVarGroup = ::CompiledModel.VarGroups.VarGroup[rootVarGroupIdx]
+    %assign member = rootVarGroup.VarGroupElements[idx]
+    %assign idnum = IDNUM(member)
+    %switch idnum[0]
+      %case "VG"
+        %assign childVG = ::CompiledModel.VarGroups.VarGroup[idnum[1]]
+        %assign retVal = childVG.SysIdx
+        %break
+    %endswitch
+  %endif
+  %return retVal
+%endfunction
+
+%function SLibCrossCoderDataGroupElement(aGroup, idx) void
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(aGroup)
+  %assign retVal = []
+  %if -1 < rootVarGroupIdx
+    %assign rootVarGroup = ::CompiledModel.VarGroups.VarGroup[rootVarGroupIdx]
+    %assign member = rootVarGroup.VarGroupElements[idx]
+    %assign idnum = IDNUM(member)
+    %switch idnum[0]
+      %case "VG"
+        %assign childVG = ::CompiledModel.VarGroups.VarGroup[idnum[1]]
+        %assign childCDGIdx = ISFIELD(childVG, "CoderDataGroupIndex") ? childVG.CoderDataGroupIndex : -1
+        %assign retVal = childCDGIdx > -1 ? ::CompiledModel.CoderDataGroup[childCDGIdx] : []
+        %break
+      %case "PCDG"
+        %assign retVal = FcnGetChildDataGroup(aGroup, idnum[1])
+        %break
+      %case "RCDG"
+        %assign retVal = ::CompiledModel.CoderDataGroup[idnum[1]]
+        %break
+    %endswitch
+  %endif
+  %return retVal
+%endfunction
+
+%function SLibCoderDataGroupElementInstance(aGroup, idx) void
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(aGroup)
+  %if -1 < rootVarGroupIdx
+    %if !SLibVarGroupIsStruct(rootVarGroupIdx)
+      %assign instance  = SLibVarGroupElementName(rootVarGroupIdx, idx)
+      %assign cgTypeIdx = SLibVarGroupElementType(rootVarGroupIdx, idx)
+      %return instance + LibCGTypeSymbolicVectorDims(cgTypeIdx)
+    %endif
+  %endif
+  %if IsModelRefScalableBuild() && !GenerateClassInterface
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+    %return FcnSysVarGroupNonreusedName(baseSystem, "CoderDataGroup" + aGroup.Name)
+  %else
+    %return SLibCoderDataGroupInstance(aGroup)
+  %endif
+%endfunction
+
+%function SLibCoderDataGroupElementBaseType(aGroup, idx) void
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(aGroup)
+  %if -1 < rootVarGroupIdx
+    %if !SLibVarGroupIsStruct(rootVarGroupIdx)
+      %assign cgTypeIdx = SLibVarGroupElementType(rootVarGroupIdx, idx)
+      %assign baseType = SLibGetTypeNameFromCGType(cgTypeIdx)
+      %if SLibVarGroupElementIsVolatile(rootVarGroupIdx, idx)
+        %assign baseType = "volatile " + baseType
+      %endif
+      %return baseType  
+    %endif
+  %endif
+  %return SLibCoderDataGroupType(aGroup)
+%endfunction
+
+%function SLibCoderDataGroupElementInit(aGroup, instanceInit, idx) void
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(aGroup)
+  %if -1 < rootVarGroupIdx
+    %if !SLibVarGroupIsStruct(rootVarGroupIdx)
+      %return instanceInit[idx]
+    %endif
+  %endif
+  %openfile init 
+  {
+    %<instanceInit>
+  }\
+  %closefile init
+  %return init
+%endfunction
+
+%% Function: SLibCoderDataGroupType ================================================
+%% Abstract:
+%%     Return the name of the type of the data group
+%function SLibCoderDataGroupType(group) void
+  %if group.IsSelf && SLibCanInlineRTMIntoSelf()
+    %return tSimStructType
+  %elseif IsModelReferenceTarget()
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+    %assign groupToken = "CoderDataGroup" + group.Name
+    %return FcnSysVarGroupType(baseSystem, groupToken)
+  %else
+    %assign token = "::tCoderDataGroup" + group.Name + "Type"
+    %return %<token>
+  %endif
+%endfunction
+  
+%% Function: FcnApplyMemSecToDataDefnForGroup ===================================
+%% Abstract
+%%   Helper function
+%function FcnApplyMemSecToDataDefnForGroup(definition, group, identifier, system, isModelData, isDecl, isFirstElement, isLastElement) void
+  %if IsModelReferenceSimTarget() && group.AsStructure == "None"
+    %return ""
+  %endif
+  %assign msName = group.MemorySection
+  %assign applyMemSec = FcnApplyMemSec()
+  %openfile buffer
+  %if !isModelData
+    %<SLibIfSystemPreprocessorCondition(system)>\
+
+  %endif
+  %if applyMemSec
+    %assign pragmaPerVar = 1
+    %assign prePragma = ""
+    %assign postPragma = ""
+    %assign comment = ""
+    %assign msInfo = []
+
+    %if !ISEMPTY(msName)
+      %if group.MemorySectionIsLegacy
+        %assign msDefn = SLibGetInternalMemorySectionDefForName(msName)
+        
+        %assign pragmaPerVar = ISFIELD(msDefn, "PragmaPerVar") && msDefn.PragmaPerVar
+        %assign prePragma = msDefn.PrePragma
+        %assign postPragma = msDefn.PostPragma
+        %assign comment = msDefn.Comment
+    %else
+        %assign pragmaPerVar = CGMODEL_ACCESS("MemorySection.PragmaPerVar", msName)
+        %assign prePragma = FcnSanitizeUserString(CGMODEL_ACCESS("MemorySection.PrePragma", msName))
+        %if !ISEMPTY(prePragma)
+          %assign prePragma = FEVAL("regexprep", prePragma, "\\\\n", FEVAL("newline"))
+        %endif
+        %assign postPragma = FcnSanitizeUserString(CGMODEL_ACCESS("MemorySection.PostPragma", msName))
+        %if !ISEMPTY(postPragma)
+          %assign postPragma = FEVAL("regexprep", postPragma, "\\\\n", FEVAL("newline"))
+        %endif
+        %assign comment = FcnSanitizeUserString(CGMODEL_ACCESS("MemorySection.Comment", msName))
+        %if !ISEMPTY(comment)
+          %assign comment = FEVAL("regexprep", comment, "\\\\n", FEVAL("newline"))
+        %endif
+      %endif
+    %endif
+
+    %createrecord qualifierInfo { \
+      IsConst group.IsMemorySectionConst \
+      IsVolatile group.IsMemorySectionVolatile \
+      Qualifier group.MemorySectionQualifier \
+      }
+
+    %if ISEMPTY(msInfo)
+      %createrecord msInfo { \
+        PragmaPerVar pragmaPerVar \
+        PrePragma prePragma \
+        PostPragma postPragma \
+        Comment comment \
+      }
+    %endif
+
+    %<SLibCreateDefinitionStatement(definition, msInfo, qualifierInfo, ...
+      identifier, TLC_TRUE, isDecl, isFirstElement, isLastElement)>
+  %elseif isDecl
+    extern %<definition>
+  %else
+    %<definition>
+  %endif
+  %if !isModelData
+    %<SLibEndIfSystemPreprocessorCondition(system)>\
+  %endif
+  %closefile buffer
+  %return buffer
+%endfunction
+
+%% Function: SLibApplyMemSecToDataDefnForGroup ===================================
+%% Abstract
+%%   This function creates a data definition.  Rather than inserting a
+%%   definition directly, data should now go through this central mechanism
+%%   to add memory section things like pragmas, modifiers, etc.  This
+%%   function is similar to SLibApplyMemSecToDataDefnForSystem()
+%function SLibApplyMemSecToDataDefnForGroup(definition, group, identifier, system, isModelData) void
+  %return FcnApplyMemSecToDataDefnForGroup(definition, group, identifier, system, isModelData, TLC_FALSE, TLC_TRUE, TLC_TRUE)
+%endfunction
+
+%% Function: SLibApplyMemSecToDataDeclForGroup ===================================
+%% Abstract
+%%   This function creates a data declaration.  Rather than inserting a
+%%   definition directly, data should now go through this central mechanism
+%%   to add memory section things like pragmas, modifiers, etc.  This
+%%   function is similar to SLibApplyMemSecToDataDeclForSystem()
+%function SLibApplyMemSecToDataDeclForGroup(definition, group, identifier, system, isModelData) void
+  %return FcnApplyMemSecToDataDefnForGroup(definition, group, identifier, system, isModelData, TLC_TRUE, TLC_TRUE, TLC_TRUE)
+%endfunction
+
+%% Function: SLibTypeQualifierForGroup ===========================================
+%% Abstract
+%%   This function returns a type qualifier for a group
+%function SLibTypeQualifierForGroup(group) void
+  %assign applyMemSec = FcnApplyMemSec()
+  %if applyMemSec
+    %return SLibGetQualifierString(group.MemorySectionQualifier, ...
+      group.IsMemorySectionConst, group.IsMemorySectionVolatile)
+  %endif
+%endfunction
+
+%% Function: SLibCoderDataGroupIsImported ========================================
+%% Abstract:
+%%     Return whether the data group has imported data scope
+%function SLibCoderDataGroupIsImported(group) void
+  %return group.DataScope == "Imported"
+%endfunction
+
+%% Function: SLibStructTypeDefScopeIsImported ========================================
+%% Abstract:
+%%     Return whether the data group has imported struct type definition
+%function SLibStructTypeDefScopeIsImported(group) void
+  %return group.StructTypeDefScope == "Imported"
+%endfunction
+
+%% Function: SLibCoderDataGroupIsOpaque ========================================
+%% Abstract:
+%%     Return whether the data group has opaque data scope
+%function SLibCoderDataGroupIsOpaque(group) void
+  %return group.IsOpaque
+%endfunction
+
+%% Function: SLibCoderDataGroupIsImportedFromFile =================================
+%% Abstract:
+%%     Return whether the data group has imported data scope with a header 
+%%     file other than model.h
+%function SLibCoderDataGroupIsImportedFromFile(group) void
+  %if group.IsLegacyStorageClass
+    %return TLC_TRUE
+  %endif
+  
+  %if !SLibCoderDataGroupIsImported(group)
+    %return TLC_FALSE
+  %endif
+
+  %% Get the base system's vargroup and check the header file. If it's not
+  %% model.h, then return
+  %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]      
+  %assign varGroupIndex = FcnSysVarGroupIndex(baseSystem, "CoderDataGroup" + group.Name, 0)
+
+  %assign modelNameHeader = ::CompiledModel.Name+".h"
+  %assert varGroupIndex != -1
+    
+  %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIndex]
+  %assign headerFile = varGroup.CoderDataGroupHeaderFile
+  %if headerFile == modelNameHeader
+    %return TLC_FALSE
+  %else
+    %return TLC_TRUE
+  %endif
+%endfunction
+  
+%% Function: SLibCoderDataGroupInstance ============================================
+%% Abstract:
+%%     Return the name of the instance of the data group
+%function SLibCoderDataGroupInstance(group) void
+  %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]      
+  %assign varGroupIndex = FcnSysVarGroupIndex(baseSystem, "CoderDataGroup" + group.Name, 0)
+  %if varGroupIndex != -1 && group.IsSelf != 1
+    %return ::CompiledModel.VarGroups.VarGroup[varGroupIndex].StructureInstanceName  
+  %else
+    %assign token = "::tCoderDataGroup" + group.Name
+    %return %<token>
+  %endif
+%endfunction
+
+
+%% Function: SLibCoderDataGroupRTMFieldName ============================================
+%% Abstract:
+%%     Return the name of the field of the data group in the rtM
+%function SLibCoderDataGroupRTMFieldName(group) void
+  %if ::CompiledModel.SuppressSelf
+    %return ""
+  %endif
+
+  %if SLibGetDoesSelfHasCoderDataGroup()
+    %if SLibAccessViaPointerInSelf(group)
+      %assign eleNameOrIndex = "RCDG" + STRING(group.GroupIndex)
+    %elseif group.AsStructure == "InSelf"
+      %assign eleNameOrIndex = "VG" + STRING(SLibRootCoderGroupVarGroupIdx(group))
+    %else
+      %return ""
+    %endif
+    %assign selfVarGroupIdx = SLibGetSelfVarGroupIndex()
+    %assign elIdx = SLibGetElementIdxFromVarGroup(selfVarGroupIdx, eleNameOrIndex)
+    %% Undefined
+    %if -1 == elIdx
+      %return "CoderGroup" + group.Name
+    %else
+      %return SLibVarGroupElementName(selfVarGroupIdx, elIdx)
+    %endif
+  %else
+    %assign rootVarGroupIndex = SLibGetRootVarGroupIdxForCoderGroup(group)
+    %if rootVarGroupIndex > -1
+      %assign rootVarGroup = ::CompiledModel.VarGroups.VarGroup[rootVarGroupIndex]
+      %assert ISFIELD(rootVarGroup, "StructureReferenceName")
+      %return rootVarGroup.StructureReferenceName
+    %else
+      %% Propagated coder data group case
+      %return "CoderGroup" + group.Name
+    %endif
+  %endif
+%endfunction
+
+%% Function: SLibDataRecordIsInCoderGroup() =========================================
+%% Abstract:
+%%  Check if this record has a varGroupIndex and then check if
+%%  that belongs to a coderDataGroupVarGroup. Return true if 
+%%  that is the case. 
+%function SLibDataRecordIsInCoderGroup(dataRec) void
+  %assign coderGroupId = SLibGetCoderGroupIdForDataRecord(dataRec)
+  %return coderGroupId != -1 ? TLC_TRUE : TLC_FALSE
+%endfunction
+
+%% Function: SLibIsCoderGroupVarGroup
+%% Abstract:
+%%   Returns true iff the given vargroup maps to a codergroup
+%function SLibIsCoderGroupVarGroup(varGroup) void
+  %return ISFIELD(varGroup, "Category") && varGroup.Category == "HierarchicalCoderData"
+%endfunction
+
+%% Function: SLibGetCoderGroupIdForDataRecord
+%% Abstract:
+%%  Given a data record, returns the coder group vargroup index.
+%%  If no such index can be found, returns -1.
+%function SLibGetCoderGroupIdForDataRecord(dataRec) void
+  %if( ISFIELD(dataRec,"VarGroupIdx") )
+    %assign varGroupIdx = dataRec.VarGroupIdx[0]
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+    %if LibGetVarGroupCategory(varGroupIdx) == "HierarchicalCoderData"
+      %assert ISFIELD(varGroup, "CoderDataGroupIndex")
+      %return varGroup.CoderDataGroupIndex
+    %endif
+  %endif
+  %return -1
+%endfunction
+
+%% Function: SLibIsLegacyStorageClassForDataRecord()  ================
+%% Abstract:
+%%  This function returns true if a particular data record
+%%  belongs to a "Legacy Storage Class" vargroup. This is needed
+%%  to help emit default mapping with Custom Storage classes.
+%function SLibIsLegacyStorageClassForDataRecord(dataRec) void
+  %if( ISFIELD(dataRec,"VarGroupIdx") )
+    %assign varGroupIdx = dataRec.VarGroupIdx[0]
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+    %if varGroup.Category == "HierarchicalCoderData"
+      %assign group = FcnGetCoderGroupForVarGroup(varGroup)
+      %return group.IsLegacyStorageClass
+    %endif
+  %endif
+  %return TLC_FALSE
+%endfunction
+
+%% Function: SLibGetCoderDataGroupStructForRecord() =========================================
+%% Abstract:
+%%  Assuming that the dataRec passed in is in a coder data group,
+%%  return that coder data group struct name. 
+%%  This function should only ever be called after calling 
+%%  SLibDataRecordIsInCoderGroup() above passes true.  
+%function SLibGetCoderDataGroupStructForRecord(dataRec) void
+  %assert SLibDataRecordIsInCoderGroup(dataRec) == TLC_TRUE
+  %assign structName = ""
+  %if( ISFIELD(dataRec,"VarGroupIdx") )
+    %assign varGroupIdx = dataRec.VarGroupIdx[0]
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+    %if (LibGetVarGroupCategory(varGroupIdx) == "HierarchicalCoderData" && (varGroup.PackageAsStruct != 0))
+      %assign structName = varGroup.Name
+    %endif
+  %endif
+  %return structName
+%endfunction
+
+%% Function: SLibEmitRecordInCoderDataGroupStruct() =========================================
+%% Abstract:
+%%  Assuming that the CGType passed in has proper type, then
+%%  we should group the member associated with this type. Some types 
+%%  like 'fcn_call' should not be emitted. For now this function only
+%%  checks for 'fcn_call' type. It could be expanded in future.
+%function SLibEmitRecordInCoderDataGroupStruct(CGTypeIdx) void
+  %assign emitRec = TLC_TRUE
+  %assign cgType = ::CompiledModel.CGTypes.CGType[CGTypeIdx]
+  %if(ISFIELD(cgType,"Name"))
+    %if cgType.Name == "fcn_call"
+      %assign emitRec = TLC_FALSE
+    %endif
+  %endif
+  %return emitRec
+%endfunction
+
+%% Function: SLibAllocatesCoderDataGroup ==========================================
+%% Abstract:
+%%    Return if this model allocates specific data group
+%function SLibAllocatesCoderDataGroup(group) void
+  %% InstP is never defined by a sub model
+  %if group.ContainsInstanceSpecificParameter && IsModelReferenceTarget()
+    %return TLC_FALSE
+  %elseif (group.AsStructure == "InParent") && (group.IsInstanceSpecific == TLC_TRUE)
+    %return !SLibMultiInstance()
+  %elseif (group.AsStructure == "Standalone") && (group.IsInstanceSpecific == TLC_TRUE)
+    %return !SLibMultiInstance()
+  %else
+    %return TLC_TRUE
+  %endif
+%endfunction
+
+%% Function: SLibAllocatesCoderDataGroups ==========================================
+%% Abstract:
+%%    Return if this model allocates data groups in general
+%function SLibAllocatesCoderDataGroups() void
+  %if IsModelReferenceTarget()
+    %return !::CompiledModel.OkToMultiInstanceModelref
+  %else
+    %return !MultiInstanceERTCode
+  %endif
+%endfunction
+
+%% Function: FcnIsSingleInstanceAccessFunction(group) void
+%% Abstract:
+%%    Return true if this group is has an access function that is not for teh 
+%%    data transfer group
+%function FcnIsSingleInstanceAccessFunction(group) void
+  %return group.HasAccessMethod && !group.IsDataTransferGroup
+%endfunction
+
+
+%% Function: SLibAccessGroupThroughSelf ===================================
+%% Abstract:
+%%    Return true if this group is InParent or InSelf or StandAloneMultiInstance
+%function SLibAccessGroupThroughSelf(group) void
+  %if FcnIsSingleInstanceAccessFunction(group)
+    %return TLC_FALSE
+  %endif
+
+  %return (SLibAccessViaPointerInSelf(group) || (group.AsStructure == "InSelf"))
+%endfunction
+
+%% Function: SLibDataGroupDynamicInit ======================================
+%% Abstract:
+%%    Return true if this group is dynamically initialized
+%function SLibDataGroupDynamicInit(group) void
+  %assert !ISEMPTY(group)
+  %if group.DataInit == "Auto"
+    %return  (SLibCoderDataGroupAutoDataInitConversion(group) == "Dynamic")
+  %else
+    %return (group.DataInit == "Dynamic")
+  %endif
+%endfunction
+
+%% Function: SLibDataGroupStaticInit ======================================
+%% Abstract:
+%%    Return true if this group is statically initialized
+%function SLibDataGroupStaticInit(group) void
+  %assert !ISEMPTY(group)
+  %if group.DataInit == "Auto"
+    %return  (SLibCoderDataGroupAutoDataInitConversion(group) == "Static")
+  %else
+    %return (group.DataInit == "Static")
+  %endif
+%endfunction
+
+%% Function: SLibDataGroupMemorySectionConst =================================
+%% Abstract:
+%%    Return true if this group has a constant memory section
+%function SLibDataGroupMemorySectionConst(group) void
+  %return group.IsMemorySectionConst
+%endfunction
+
+%% Function: SLibSuppressRTMDeclaration ========================================
+%% Abstract:
+%%  Return true if the RTM declaration should be suppressed.
+%%
+%function SLibSuppressRTMDeclaration() void
+  %assign varGroupIdx = SLibGetSelfCoderDataGroupVarGroupIndex()
+  %if -1 < varGroupIdx && !SLibSynthesizedRTM()
+    %return !SLibVarGroupIsStruct(varGroupIdx)
+  %endif
+  %return TLC_FALSE
+%endfunction
+
+%% Function: SLibNeedGroupTypesForTesting ========================================
+%% Abstract:
+%%  Return true the model has Imported groups and the
+%%  GenerateImportedDataGroupsTypes feature is on.
+%%
+%function SLibNeedGroupTypesForTesting()
+  %assign hasImportedGroups = TLC_FALSE
+  %foreach idx = ::CompiledModel.NumCoderDataGroups
+    %assign group = ::CompiledModel.CoderDataGroup[idx]
+    %if SLibCoderDataGroupIsImported(group)
+      %assign hasImportedGroups = TLC_TRUE
+      %break
+    %endif
+  %endforeach
+  %return hasImportedGroups && ::CompiledModel.GenerateImportedDataGroupsTypes
+%endfunction
+
+
+%% Function: IsFieldAndTrue_loc ========================================
+%% Abstract:
+%%  Returns true if a record contains a field and that field is true otherwise return false
+%%
+%function IsFieldAndTrue_loc(record,field) void
+  %return ISFIELD(record,field) && record.%<field> == TLC_TRUE
+%endfunction
+
+%% Function: isDynamicDeclarationRequired_loc ========================================
+%% Abstract:
+%%  Helper function to select dynamic coder data groups to be declared within a model. This will also return true
+%%  for statically initialized groups when we are externally declaring the group
+%%
+%function isDynamicDeclarationRequired_loc(prefix,instanceData) void
+  %if (instanceData.group.AsStructure == "None" && instanceData.elementDataInit == "Static") || ...
+      (instanceData.group.AsStructure != "None" && SLibDataGroupStaticInit(instanceData.group))
+    %return TLC_FALSE
+  %else
+    %assign isAllocatedInCppClass = instanceData.group.AsStructure == "InSelf" && GenerateClassInterface
+    %assign AllocateGroup = SLibAllocatesCoderDataGroup(instanceData.group) || isAllocatedInCppClass
+    %return AllocateGroup || (prefix == "static")
+  %endif
+%endfunction
+
+%% Function: isStaticDeclarationRequired_loc ========================================
+%% Abstract:
+%%  Helper function to select statically initialized coder data groups to be declared within a model.
+%%
+%function isStaticDeclarationRequired_loc(prefix,instanceData) void
+  %if (instanceData.group.AsStructure == "None" && instanceData.elementDataInit != "Static") || ...
+      (instanceData.group.AsStructure != "None" && !SLibDataGroupStaticInit(instanceData.group))
+    %return TLC_FALSE
+  %% Speical case for declare instP group even when not allocated
+  %elseif (prefix == "extern") && instanceData.group.ContainsInstanceSpecificParameter
+    %return TLC_TRUE
+  %else
+    %assign isAllocatedInCppClass = instanceData.group.AsStructure == "InSelf" && GenerateClassInterface
+    %assign AllocateGroup = SLibAllocatesCoderDataGroup(instanceData.group) || isAllocatedInCppClass
+    %return AllocateGroup || (prefix == "static")
+  %endif
+%endfunction
+
+%% Function: isImportExportGroupEmitted_loc ========================================
+%% Abstract:
+%%  Helper function to filter coder groups based on wheter they are exported or imported (needed for testing purposes)
+%%
+%function isImportExportGroupEmitted_loc(group,instanceFilter) void
+  %if SLibCoderDataGroupIsImportedFromFile(group)
+    %return IsFieldAndTrue_loc(instanceFilter,"Imported")
+  %else
+    %return IsFieldAndTrue_loc(instanceFilter,"Exported")
+  %endif
+%endfunction
+
+%% Function: isStandaloneOrNoneAccessThroughSelfGroupEmitted ========================================
+%% Abstract:
+%%  Helper function to filter coder groups based on wheter they are standalone or none or accessed
+%%  through self
+%%
+%function isStandaloneOrNoneAccessThroughSelfGroupEmitted(group,instanceFilter) void
+  %if SLibStandAloneSingleInstance(group) || group.AsStructure == "None"
+    %return IsFieldAndTrue_loc(instanceFilter,"AccessStandalone")
+  %else
+    %return IsFieldAndTrue_loc(instanceFilter,"AccessThroughSelf")
+  %endif
+%endfunction
+
+%% Function: FcnCommentCoderGroupElement =================================
+%% Abstract:
+%%  Return comment for coder group element if usntructured
+%function FcnCommentCoderGroupElement(instanceData) void
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(instanceData.group)
+  %if (-1 < rootVarGroupIdx) && !SLibVarGroupIsStruct(rootVarGroupIdx)
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[rootVarGroupIdx]
+    %assign idnum = IDNUM(varGroup.VarGroupElements[instanceData.emittedVarIdx])
+    %assign recType = idnum[0]
+    %assign recIdx  = idnum[1]
+    %return SLibGetCommentForVarGroupMember(recType, recIdx)
+  %endif
+%endfunction
+
+
+%% Function: SLibEmitStaticInitCoderDataGroup ========================================
+%% Abstract:
+%%  Return declaration of staticically initialized data
+%%
+%function SLibEmitStaticInitCoderDataGroup(system,classQualifier,prefix,parentGroup,instanceData) void
+  %assign declaration = ""
+  %if isStaticDeclarationRequired_loc(prefix,instanceData)
+    %if prefix == "extern"
+      %% Extern declaration is added after memory section to avoid compiler warnings
+      %assign prefix = ""
+      %assign init = ""
+    %else
+      %assign instanceInit = instanceData.group.AsStructure == "InSelf" ? instanceData.group.Initializer : parentGroup.Initializer
+      %if ISEMPTY(instanceInit)
+        %assign init = ""
+      %else
+      %assign init = " = " + SLibCoderDataGroupElementInit(instanceData.group, instanceInit, instanceData.emittedVarIdx)
+    %endif
+    %endif
+    %openfile declaration
+    %assign comment = ""
+    %assign comment = FcnCommentCoderGroupElement(instanceData)
+    %if SLibAutosarCompilerAbstractionRequired()
+      %<prefix> %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, instanceData.baseType, TLC_FALSE, TLC_FALSE, instanceData.identifier, "DataGlobal")>%<init>; %<comment>
+    %else
+      %assert !WHITE_SPACE(instanceData.baseType) && !WHITE_SPACE(instanceData.identifier)
+      %<prefix> %<instanceData.baseType> %<classQualifier>%<instanceData.identifier>%<init>; %<comment>
+    %endif
+    %closefile declaration
+  %endif
+  %return declaration
+%endfunction
+
+%% Function: SLibEmitDynamicInitCoderDataGroup ========================================
+%% Abstract:
+%%  Return declaration of dynamically initialized data
+%%
+%function SLibEmitDynamicInitCoderDataGroup(system,classQualifier,prefix,parentGroup,instanceData) void
+  %assign declaration = ""
+  %if prefix == "extern"
+    %% Extern declaration is added after memory section to avoid compiler warnings
+    %assign prefix = ""
+  %endif
+  %if isDynamicDeclarationRequired_loc(prefix,instanceData)
+    %openfile declaration
+    %if SLibAutosarCompilerAbstractionRequired()
+      %<prefix> %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, instanceData.baseType, TLC_FALSE, TLC_FALSE, instanceData.identifier, "DataGlobal")>;
+    %else
+      %assert (!WHITE_SPACE(instanceData.baseType) && !WHITE_SPACE(instanceData.identifier))
+      %<prefix> %<instanceData.baseType> %<classQualifier>%<instanceData.identifier>;
+    %endif
+    %closefile declaration
+  %endif
+  %return declaration
+%endfunction
+
+%% Function: FcnSkipDeclareCoderDataGroupInstance_loc ======================================
+%% Abstract: 
+%%  Should we skip declaring an instance for this coder data group element?
+%%
+%function FcnSkipDeclareCoderDataGroupInstance_loc(system, groupIdx, varIdx) void
+  %assign group      = ::CompiledModel.CoderDataGroup[groupIdx]
+  %assign baseType   = SLibCoderDataGroupElementBaseType(group, varIdx)
+  %assign crossgroup = SLibCrossCoderDataGroupElement(group,varIdx)
+  %assert !ISEMPTY(group)
+  %if (baseType == "fcn_call") || ...
+    (ISFIELD(group, "IsSelf") && group.IsSelf ? ...
+    !ISEMPTY(crossgroup) && SLibCoderDataGroupNumElements(crossgroup) == 0 : ...
+    SLibCoderDataGroupNumElements(group) == 0)
+    %return TLC_TRUE
+  %endif
+  %if group.AsStructure == "None"
+    %assign varGroupIdx = SLibGetVarGroupIdxForCoderGroup(system.SystemIdx, groupIdx)
+    %assign varGroupElement = SLibVarGroupElementSource(varGroupIdx, varIdx)
+    %assign idnum = IDNUM(varGroupElement)
+    %assign recType = idnum[0]
+    %if recType != "VG"
+      %assign needDef = SLibNeedGenDataDefFromVarGroup(varGroupElement, system.SystemIdx)
+      %return TLC_FALSE == needDef[0] && WHITE_SPACE(needDef[2])
+    %endif
+  %endif
+  %return TLC_FALSE
+%endfunction
+  
+%function FcnVarGroupHeaderFile(varGroup, system) void
+  %assign varGroupHeaderFile = SLibGetFileNameWithoutExtension(varGroup.CoderDataGroupHeaderFile)
+  %assign useDefaultFile = TLC_FALSE
+  %if ISEMPTY(varGroupHeaderFile)
+    %assign useDefaultFile = TLC_TRUE
+  %elseif (varGroupHeaderFile == system.SystemHeaderFileName) && ...
+    (!SLibIsCoderGroupVarGroup(varGroup) || ...
+    FcnGetCoderGroupForVarGroup(varGroup).IsSynthesized)
+    %assign useDefaultFile = TLC_TRUE
+  %endif
+  %if useDefaultFile
+    %assign varGroupHeaderFile = ""
+  %endif
+  %return varGroupHeaderFile
+%endfunction
+
+%function FcnVarGroupDefinitionFile(varGroup, system) void
+  %assign varGroupDefinitionFile = SLibGetFileNameWithoutExtension(varGroup.CoderDataGroupDefinitionFile)
+  %assign useDefaultFile = TLC_FALSE
+  %if ISEMPTY(varGroupDefinitionFile)
+    %assign useDefaultFile = TLC_TRUE
+  %elseif (varGroupDefinitionFile == system.SystemSourceFileName) && ...
+    (!SLibIsCoderGroupVarGroup(varGroup) || ...
+    FcnGetCoderGroupForVarGroup(varGroup).IsSynthesized)
+    %assign useDefaultFile = TLC_TRUE
+  %endif
+  %if useDefaultFile
+    %assign varGroupDefinitionFile = ""
+  %endif
+  %return varGroupDefinitionFile
+%endfunction
+
+%% Function: SLibDeclareCoderDataGroupInstances_loc ========================================
+%% Abstract:
+%%  Loop through Coder Data Groups and declare data based on supplied emit functions
+%%
+%function SLibDeclareCoderDataGroupInstances_loc(system,prefix,emitFunctions,instanceFilter) void
+  %assign returnBuffer = ""
+  %assign externDecl = (prefix == "extern")
+  %foreach groupIdx = ::CompiledModel.NumCoderDataGroups
+    %assign group = ::CompiledModel.CoderDataGroup[groupIdx]
+    %assign numVars = SLibCoderDataGroupNumElements(group)
+    %% Prescreen data groups based on traits independent of group properties like static/dynamic init
+    %if numVars == 0 || ...
+      (GenerateClassInterface && group.IsInstanceSpecific && WHITE_SPACE(prefix)) || ...
+      (GenerateClassInterface && !group.IsInstanceSpecific && externDecl) || ...
+      group.IsOpaque || ...
+      !isStandaloneOrNoneAccessThroughSelfGroupEmitted(group,instanceFilter) || ...
+      !isImportExportGroupEmitted_loc(group,instanceFilter) || ...
+      (SLibIsGroupSelfCoderGroup(group) && IsFieldAndTrue_loc(instanceFilter,"ModelData")) || ...
+      (group.AsStructure == "InSelf" && ...
+      (SLibIsSelfStructured() || !SLibGetUseRTMcgType() && !ISEMPTY(SLibCoderDataGroupRTMFieldName(group)) && !GenerateClassInterface ))
+      %continue
+    %endif
+    %assign varGroupIdx = SLibGetVarGroupIdxForCoderGroup(system.SystemIdx, groupIdx)
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+
+    %assign isDefinition = prefix != "extern" 
+    %assign varGroupHeaderFile = FcnVarGroupHeaderFile(varGroup, system)
+    %assign varGroupDefinitionFile = FcnVarGroupDefinitionFile(varGroup, system)
+
+    %assign emitComment = TLC_TRUE
+    %assign isFirstElement = TLC_TRUE
+    %assign lastElementIndex = 0
+    %foreach varIdx = numVars
+      %if !FcnSkipDeclareCoderDataGroupInstance_loc(system, groupIdx, varIdx)
+        %assign lastElementIndex = varIdx
+      %endif
+    %endforeach
+    %assign classQualifier = ""
+    %if GenerateClassInterface && !group.IsInstanceSpecific
+      %if !WHITE_SPACE(::NamespaceName)
+        %assign classQualifier = ::NamespaceName + "::"
+      %else
+        %assign classQualifier = ""
+      %endif
+      %assign classQualifier = classQualifier + ::CPPClassName + "::"
+    %endif  
+    %assign emittedVarIdx = 0
+    %foreach varIdx = numVars
+      %assign declaration  = ""
+      %assign declarationWithMemSection = ""
+      %assign crossgroup = SLibCrossCoderDataGroupElement(group,varIdx)
+      %if !ISEMPTY(crossgroup) &&  crossgroup.AsStructure == "InSelf" && ...
+        group.IsSelf && SLibGetDoesSelfHasCoderDataGroup()
+        %assert !SLibIsSelfStructured()
+        %continue %% crossgroup already emitted
+      %endif
+	  
+      %assign elementDataInit = group.DataInit
+      %if elementDataInit == "Auto"
+        %assign memberElement = varGroup.VarGroupElements[varIdx]
+        %assign idnum = IDNUM(memberElement)
+        %assign recType = idnum[0]
+	%assign elementDataInit = SLibVargroupElementAutoDataInitConversion(recType)
+      %endif	  
+	  
+      %% create closure of group instance specific data to stabalize emit function interfaces
+      %createrecord instanceData { \
+        emittedVarIdx emittedVarIdx \
+        identifier SLibCoderDataGroupElementInstance(group, varIdx) \
+        baseType   SLibCoderDataGroupElementBaseType(group, varIdx) \
+        sysIdx     SLibCrossSystemIdxElement(group, varIdx) \
+        group      ISEMPTY(crossgroup)?group:crossgroup \
+        elementDataInit elementDataInit \
+      }
+      %addtorecord instanceData groupToken "CoderDataGroup"+instanceData.group.Name
+
+      %% filter out fcn_call port types and empty coder data groups
+      %if FcnSkipDeclareCoderDataGroupInstance_loc(system, groupIdx, varIdx)
+          %continue
+      %endif
+
+      %% cycle through emit functions to get declaration
+      %foreach fcnIdx = SIZE(emitFunctions,1)
+        %assign tmpBuf = %<emitFunctions[fcnIdx]>(system,classQualifier,prefix,group,instanceData)
+        %if !WHITE_SPACE(tmpBuf)
+          %assign declaration = declaration + tmpBuf + "\n"
+        %endif
+      %endforeach
+
+      %% apply memory section code to declaration
+      %if !WHITE_SPACE(declaration)
+        %openfile declarationWithMemSection
+        %<GetHideChildDefineSymbol("ifndef")>\
+        %assign treatAsModelData = !(SLibIsGroupSelfCoderGroup(group) && group.AsStructure == "None" && instanceData.sysIdx != GetBaseSystemIdx())
+        %assign varSys = instanceData.sysIdx > -1 ? ::CompiledModel.System[instanceData.sysIdx] : system
+        %<SLibAddPreStructDeclarePragma(instanceData.identifier)>\
+        %if IsModelReferenceSimTarget()
+          %<prefix> %<declaration>\
+        %else
+          %<FcnApplyMemSecToDataDefnForGroup(declaration,instanceData.group,instanceData.identifier, varSys, ...
+            treatAsModelData, externDecl,isFirstElement,(varIdx==lastElementIndex))>\
+        %endif
+        %<SLibAddPostStructDeclarePragma(instanceData.identifier)>\
+        %<GetHideChildDefineSymbol("endif")>\
+        %closefile declarationWithMemSection
+      %endif
+
+      %% Update the header/definition file if a sub vargroup and None
+      %assign headerFile = varGroupHeaderFile
+      %assign definitionFile = varGroupDefinitionFile
+      %if group.AsStructure == "None"
+        %assign member = varGroup.VarGroupElements[varIdx]
+        %assign idnum = IDNUM(member)
+        %if idnum[0] == "VG"
+          %assign childVG = ::CompiledModel.VarGroups.VarGroup[idnum[1]]
+          %if SLibIsCoderGroupVarGroup(childVG)
+            %assign headerFile = FcnVarGroupHeaderFile(childVG, system)
+            %assign definitionFile = FcnVarGroupDefinitionFile(childVG, system)
+          %endif
+        %endif
+      %endif
+
+      %% If this model is multi-instance top, and group is accessed through self, 
+      %% ignore the definition file, let be returned to declare/define nominally
+      %if MultiInstanceERTCode && !IsModelReferenceTarget() && SLibAccessGroupThroughSelf(group)
+        %assign headerFile = ""
+        %assign definitionFile = ""
+      %endif
+      
+      %% Cache declaration/definition
+      %if !WHITE_SPACE(declarationWithMemSection)
+        %% emit comment if we either are switching coder groups within the group or this is the first emitted var
+        %assign comment = (emitComment || !ISEMPTY(crossgroup)) ? "/* "+instanceData.group.Identification+" */\n" : ""
+        %% reset comment emission switch based on if we changed groups from the parent group
+        %assign emitComment = !ISEMPTY(crossgroup)
+        %if isDefinition && !ISEMPTY(definitionFile)
+          %assign defFile = SLibAddModelFile("SystemBody", "Simulink", definitionFile)
+          %<SLibSetModelFileAttribute(defFile, "Definitions", comment + declarationWithMemSection)>
+          %<SLibSetModelFileAttribute(defFile, "Group", "data")>
+          %assign modelHeader = SLibGetFileNameForCode("mdl_hdr") + ".h"
+          %<FcnAddDependentHeaderForCoderGroup(defFile,modelHeader)>
+        %elseif !isDefinition && !ISEMPTY(headerFile) && group.DataScope != "Imported"
+          %assign memberElement = varGroup.VarGroupElements[varIdx]
+          %assign traceMarker = SLibAddTrace2("ModelElemCategory", SLibGetModelElemCategory(memberElement), "StorageClass", instanceData.group.UserProvidedName)
+          %assign declarationWithMemSection = SLibTraceBegin(traceMarker) + declarationWithMemSection + SLibTraceEnd(traceMarker)
+          %assign declFile = SLibAddModelFile("SystemHeader", "Simulink", headerFile)
+          %<SLibSetModelFileAttribute(declFile, "Declarations", comment + declarationWithMemSection)>
+          %<SLibSetModelFileAttribute(declFile, "Group", "data")>
+        %else
+          %assign returnBuffer = returnBuffer + comment + declarationWithMemSection
+        %endif
+      %endif
+      %assign isFirstElement = TLC_FALSE
+      
+      %assign emittedVarIdx = emittedVarIdx + 1
+    %endforeach /% numVars %/
+  %endforeach /% ::CompiledModel.NumCoderDataGroups %/
+  %return returnBuffer
+%endfunction /% SLibDeclareCoderDataGroupInstances_loc %/
+
+%% Function: SLibDeclareCoderDataGroupInstances ========================================
+%% Abstract:
+%%  Return declaration of both static and dynamic initialized coder data groups
+%% Filter supplied can specify what type of data group
+%%   - Dynamic: dyncamic initialized groups
+%%   - Static: static initialized groups
+%%   - Imported: imported groups not in model.h
+%%   - Exported: exported groups and imported groups in model.h
+%%   - Standalone: groups with AsStructure set to Standalone
+%%   - AccessThroughSelf: groups with AsStructure set to InSelf or InParent
+%%   - ModelData: skip model data group
+%%
+%function SLibDeclareCoderDataGroupInstances(system,prefix,InstanceFilter) void
+  %assign idx = 0
+  %assign emitFunctions = ""
+  %assign comma = ""
+  %if IsFieldAndTrue_loc(InstanceFilter,"Static")
+    %assign emitFunctions = emitFunctions+comma+"\"SLibEmitStaticInitCoderDataGroup\""
+    %assign comma = ","
+  %endif
+  %if IsFieldAndTrue_loc(InstanceFilter,"Dynamic")
+    %assign emitFunctions = emitFunctions+comma+"\"SLibEmitDynamicInitCoderDataGroup\""
+    %assign comma = ","
+  %endif
+  %return SLibDeclareCoderDataGroupInstances_loc(system,prefix,[%<emitFunctions>],InstanceFilter)
+%endfunction
+
+%function SLibStandAloneMultiInstance(group) void
+  %return (group.AsStructure == "Standalone") && ...
+    group.IsInstanceSpecific && SLibMultiInstance()
+%endfunction
+
+%function SLibStandAloneSingleInstance(group) void
+  %return (group.AsStructure == "Standalone") && ...
+    (!group.IsInstanceSpecific || !SLibMultiInstance())
+%endfunction
+
+%function SLibAccessViaPointerInSelf(group) void
+  %return (group.AsStructure == "InParent") || SLibStandAloneMultiInstance(group)
+%endfunction
+
+%% Function: SLibGetSingleInstanceGroupIdx ========================================
+%% Abstract: Given a group, return the corresponding group's index with single-instance
+%%           implementation and same user provided name as the given group.
+%function SLibGetSingleInstanceGroupIdx(aGroup)
+  %if aGroup.ImplementationType == "SingleInstance"
+    %return aGroup.GroupIndex
+  %endif
+  %if aGroup.IsPolymorphic
+    %foreach idx = ::CompiledModel.NumCoderDataGroups
+      %assign group = ::CompiledModel.CoderDataGroup[idx]
+      %if group.UserProvidedName == aGroup.UserProvidedName && ...
+        group.ImplementationType == "SingleInstance"
+        %return idx
+      %endif
+    %endforeach    
+  %endif
+  %return -1
+%endfunction
+
+%% Function: FcnSetServiceDataGroupElements
+%% Abstract:
+%%   Adds message serice info into coder data group info
+%function FcnSetServiceDataGroupElements(groupToken, baseIdx, groupIdx) void
+  %assign varGroupIdx = FcnSysVarGroupIndex(::CompiledModel.System[baseIdx], groupToken, 0)
+  %assign aVarGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+  %assign numElements = aVarGroup.NumVarGroupElements
+  %assign elemIdx = 0
+  %foreach eIdx = numElements
+    %assign varGroupElement = aVarGroup.VarGroupElements[eIdx]
+    %assign idnum = IDNUM(varGroupElement)
+    %assign recType = idnum[0]
+    %assign recIdx  = idnum[1]
+    %if recType == "W"
+      %assign dataRec = SLibGetDataRecForVarGroupMember(recType, recIdx)
+      %if dataRec.Name == "CompMsgService" && dataRec.SigSrc[0] >= 0 && dataRec.SigSrc[2] >= 0 %% not virtual
+        %assign ownerBlk = ...
+          ::CompiledModel.System[dataRec.SigSrc[0]].Block[dataRec.SigSrc[2]]
+          %%BlockHierarchyMap.Subsystem[dataRec.SigSrc[0]].Block[dataRec.SigSrc[2]]
+        %assign aSID = ownerBlk.SID
+        %assign blkName = ownerBlk.Name
+        %assign numDworks = ownerBlk.NumDWork
+        %foreach dIdx = numDworks
+          %assign thisDwork = ownerBlk.DWork[dIdx]
+          %if thisDwork.Name == "CompMsgService"
+            %assign name = thisDwork.Name
+            %assign dworkIdx = thisDwork.FirstRootIdx
+            %addtorecord ::CompiledModel.CoderDataGroups.CoderDataGroup[groupIdx] GroupElement { \
+              BlockName blkName; \
+              BlockSID aSID; \
+              DWorkName name; \
+              DWorkIdx dworkIdx \
+            }
+          %endif
+        %endforeach
+      %endif
+    %endif
+  %endforeach
+%endfunction  
+
+%% Function: SLibNonEmptyParamCoderGroupExists
+%% Abstract:
+%%   Returns true iff atleast one parameter coder group exists
+%function SLibNonEmptyParamCoderGroupExists() void
+  %if ::CompiledModel.NumCoderDataGroups <= 0
+    %return TLC_FALSE
+  %endif
+  %foreach varGroupIndex = ::CompiledModel.VarGroups.NumVarGroups
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIndex]
+    %if varGroup.NumVarGroupElements <= 0
+      %continue
+    %endif
+    %if SLibIsCoderGroupVarGroup(varGroup)
+      %assign coderGroupIndex = varGroup.CoderDataGroupIndex
+      %assign coderGroup = ::CompiledModel.CoderDataGroup[coderGroupIndex]
+      %if SLibDataGroupStaticInit(coderGroup)
+        %return TLC_TRUE
+      %endif
+    %endif
+  %endforeach
+  %return TLC_FALSE
+%endfunction
+
+%% Function: SLibInitializeUnstructuredGroup ========================================
+%% Abstract:
+%%  Given an unstructured coder group, initializes its elements.
+%function SLibInitializeUnstructuredGroup(aGroupIdx) void
+  %assign group = ::CompiledModel.CoderDataGroup[aGroupIdx]
+  %assign rootVarGroupIdx = SLibGetRootVarGroupIdxForCoderGroup(group)
+  %if rootVarGroupIdx < 0
+    %return ""
+  %endif
+  
+  %assign varGroup = ::CompiledModel.VarGroups.VarGroup[rootVarGroupIdx]
+
+  %assert !varGroup.PackageAsStruct
+
+  %assign skipGroup = ...
+    group.AsStructure != "None" || ... 
+    group.DataInit == "Static" || ...
+    group.DataInit == "None" || ...
+    group.DataScope == "Imported"
+  %if skipGroup
+    %return ""
+  %endif
+    
+  %openfile buff  
+  
+  %assert varGroup.NumVarGroupElements == SIZE(varGroup.VarGroupElements, 1)
+  %assert varGroup.NumVarGroupElements == SIZE(varGroup.VarGroupElementIds, 1)
+  %assert varGroup.NumVarGroupElements == SIZE(varGroup.VarGroupElementCGTypes, 1)
+  %foreach elIdx = varGroup.NumVarGroupElements
+    %assign element = SLibVarGroupElementSource(rootVarGroupIdx, elIdx)
+    %assign idnum  = IDNUM(element)
+    %assign recType = idnum[0]
+    %assign recIdx  = idnum[1]
+    %if recType == "PCDG" || recType == "RCDG" || recType == "VG" || SLibIsLocalVariableRecordType(rootVarGroupIdx, elIdx)
+      %continue
+    %endif
+    %%parameter with Auto DataInit will only be statically initialized
+    %if group.DataInit == "Auto" && SLibVargroupElementAutoDataInitConversion(recType) == "Static"
+      %continue
+    %endif
+	
+    %assign dataRec = SLibGetDataRecForVarGroupMember(recType, recIdx)
+    %with dataRec
+      %if recType == "Y"
+        %assign sysIdx        = dataRec.Block[0]
+        %assign blkIdx        = dataRec.Block[1]
+        %assign outportBlock  = System[sysIdx].Block[blkIdx]
+        %with outportBlock
+          %if SLibRemoveZeroInitForDataDefault(dataRec)
+            %continue
+          %endif
+        %endwith
+      %elseif SLibRemoveZeroInitForDataDefault(dataRec)
+        %continue
+      %endif          
+      
+      %assign cgTypeIdx = LibGetRecordCGTypeIdx(dataRec)
+      %if LibCGTypeIsUnknown(cgTypeIdx)
+        %continue
+      %endif
+      
+      %assign slTypeIdx = LibGetDataTypeIdAliasedThruToFromId(LibGetRecordDataTypeId(dataRec))
+      %assign id = varGroup.VarGroupElementIds[elIdx]          
+      %assign isComplex = LibGetRecordIsComplex(dataRec)
+      %assign width = LibGetRecordSymbolicWidth(dataRec)
+      %assign isScalar = (width == "1")
+      %assign isMultiWord = LibIsDataTypeMultiWordFixpt(slTypeIdx)
+      %assign sep = "."
+      
+      %% See if we can use memset
+      %if (!isScalar || isMultiWord) && FcnMemsetToZeroInitSuffice(slTypeIdx)
+        %assign dtName = SLibGetRecordContainerBaseTypeName(dataRec)
+        
+        %assign srcLoc = id
+        %if !isScalar
+          %assign srcLoc = id + "[0]"
+        %endif
+
+        %assign memsetWidth = "%<width>U"
+        %if isScalar && !isComplex
+          %assign memsetWidthStr = "sizeof(%<dtName>)"
+        %elseif isScalar && isComplex
+          %assign memsetWidthStr = "2*sizeof(%<dtName>)"
+        %elseif !isScalar && !isComplex
+          %assign memsetWidthStr = "%<memsetWidth>*sizeof(%<dtName>)"
+        %else %% !isScalar && isComplex
+          %assign memsetWidthStr = "2*%<memsetWidth>*sizeof(%<dtName>)"
+        %endif
+        
+        (void) %<LibGenMemFcnCall("memset", "&%<srcLoc>", "0", memsetWidthStr)>;
+      %else %% if we can not use memset
+        %if LibCGTypeIsChar(cgTypeIdx)
+          %assign initVal = "'a'"
+          %assign isComplex = TLC_FALSE
+        %elseif isMultiWord
+          %assign initVal = SLibGetDtGroundName(slTypeIdx, isComplex, tRealPart)
+        %else
+          %assign initVal = SLibGetDefaultInitialValue(dataRec, tRealPart)
+        %endif
+        
+        %if isScalar
+          %if isComplex
+            %<id>%<sep>%<tRealPart> = %<initVal>;
+            %<id>%<sep>%<tImagPart> = %<initVal>;
+          %else
+            %<varGroup.VarGroupElementIds[elIdx]> = %<initVal>;
+          %endif
+        %elseif  %<width> >= RollThreshold
+          %assign loopCode = SLibEmitForLoopCounterCode(width, "i")
+          {
+            %<loopCode[0]>
+            %<loopCode[1]> {
+              %if isComplex
+                %<id>[i]%<sep>%<tRealPart> = %<initVal>;
+                %<id>[i]%<sep>%<tImagPart> = %<initVal>;
+              %else
+                %<id>[i] = %<initVal>;
+              %endif
+            }
+          }
+        %else
+          %foreach initIdx = %<width>
+            %if isComplex
+              %<id>[%<initIdx>]%<sep>%<tRealPart> = %<initVal>;
+              %<id>[%<initIdx>]%<sep>%<tImagPart> = %<initVal>;
+            %else
+              %<id>[%<initIdx>] = %<initVal>;
+            %endif
+          %endforeach
+        %endif              
+      %endif            
+    %endwith  
+  %endforeach    
+  
+  %closefile buff
+  
+  
+  %if !ISEMPTY(buff) && !WHITE_SPACE(buff)
+    %openfile buffWithVariant
+    %assign comment = "/* Unstructured storage class initialization */"
+    %assign ppStuff = SLibDataPreprocessorStuff(dataRec)
+    %assign ppIf = ppStuff[0]
+    %assign ppFi = ppStuff[1]
+    
+    %assign vcRecord = SLibGetDataInlineVariantNetConditions(dataRec)
+    %assign ifCond = vcRecord.ifCond
+    %assign ifEndCond = vcRecord.endIfCond
+    
+    %<ifCond>
+    %<ppIf>
+    %<comment>
+    %<buff>                      
+    %<ppFi>
+    %<ifEndCond>
+    
+    %closefile buffWithVariant
+    
+    %assign buff = buffWithVariant
+  %endif
+  
+  %return buff
+%endfunction
+
+%% Function: SLibIsCoderGroupInVolatileMemory ========================================
+%% Abstract:
+%%  Given a group index, tells whether the group has a volatile memory section.
+%function SLibIsCoderGroupInVolatileMemory(aGroupIdx) void
+  %if (aGroupIdx >= 0)
+    %return ::CompiledModel.CoderDataGroup[aGroupIdx].IsMemorySectionVolatile
+  %endif
+  %return TLC_FALSE
+%endfunction
+
+%function SLibGetVarGroupStorageClass(varGroup) void
+  %assign groupIdx = ISFIELD(varGroup,"CoderDataGroupIndex") ? ...
+    varGroup.CoderDataGroupIndex : -1
+  %if groupIdx >= 0
+    %assign groupName = CoderDataGroup[groupIdx].UserProvidedName
+    %if CoderDataGroup[groupIdx].IsSynthesized == 1 && groupName == "_SharedDSM"
+      %assign groupName = "Default"
+    %endif
+    %return groupName
+  %else
+    %return "Default"
+  %endif  
+%endfunction
+
+%endif%%  _DATAGROUPLIB_

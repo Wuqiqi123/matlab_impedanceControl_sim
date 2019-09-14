@@ -1,0 +1,319 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   This system TLC library file contains functions that are common
+%%   between the different code generators for producing the the model's
+%%   block IO structure definition.
+
+%if EXISTS("_COMMONHDR_BLKIOLIB_") == 0
+%assign _COMMONHDR_BLKIOLIB_ = 1
+
+
+%% ============================================================================
+%% Create global cache variables to hold each structure definition
+%% ============================================================================
+
+%<LibAddToCompiledModel("BlockIOStructDefn", 0)>
+%<LibAddToCompiledModel("ConstBlockIOStructDefn", 0)>
+
+%function FcnGenBlockIODefNotHandledInVarGroup(bo)
+  %openfile retBuf
+  %assign blkName = SLibGrBlockName(bo.GrSrc)
+  %assign traceMarker = SLibAddTrace("BlockName", "%<blkName>")
+  %<SLibTraceBegin(traceMarker)>
+  %assign boId = LibGetRecordIdentifier(bo)
+  %if bo.DeclareAsPointer == "yes" || bo.Autosar4p0ImplicitRead == "yes"
+    %with bo
+      %assign comment  = "/* " + SLibGrBlockCommentName(GrSrc) + " */"
+      %assign dataType = SLibGetRecordDataTypeName(bo, "")
+      %assign width = LibGetRecordWidth(bo)
+      %assign optWidth = LibOptionalVectorWidth(width)
+      
+      %assert SLibAutosarActive()
+      %assign constPrefix = SLibAutosarGetPtrConstPrefix()
+      %if width > 1
+        %if bo.Autosar4p0ImplicitRead == "yes"
+          %<constPrefix> %<dataType> *%<boId>; %<comment>
+        %else          
+          %<constPrefix> %<dataType> (*%<boId>)%<optWidth>; %<comment>
+        %endif
+      %else
+        %<constPrefix> %<dataType> *%<boId>; %<comment>
+      %endif
+    %endwith
+  %else
+    %if bo.BitFieldWidth > 0
+      %with bo
+        %assign bitfldtype = SLibGetTypeForBitfield(BitFieldWidth)
+        %assign comment  = "/* '" + SLibGrBlockName(GrSrc) + "' */"
+        %<bitfldtype> %<boId>:%<BitFieldWidth>; %<comment>
+      %endwith
+    %endif
+  %endif
+  %<SLibTraceEnd(traceMarker)>
+  %closefile retBuf
+  
+  %return retBuf
+%endfunction
+
+%% Function: LibCacheSystemBlkIOStructDef ======================================
+%% Abstract:
+%%   Cache the definition of the system BlockIO structure.
+%%
+%function LibCacheSystemBlkIOStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  %assign blockioBuff = SLibGetSystemDataDefUsingVarGroup(sysIdx,"BlockIO")
+  %assign blockIoDef = ""
+  %assign identifierTag = ""
+  %if (sysIdx < (NumSystems-1))
+    %if !GenerateClassInterface || !IsModelReferenceBaseSys(System[sysIdx])
+      %assign identifier = FcnSysVarGroupType(System[sysIdx],"BlockIO")
+    %else
+      %assign identifier = ::tBlockIOType
+    %endif
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* Block signals for %<sysInfo> */
+    %closefile comment
+  %else
+    %assign ::CompiledModel.BlockIOStructDefn = ...
+      WHITE_SPACE(blockioBuff[0])?"":"NonEmpty"
+    %assign identifier = ::tBlockIOType
+    %if SLibAutosarActive()
+      %assign identifierTag = ::CompiledModel.GlobalScope.tBlockIOTypeTag
+    %endif
+    %openfile comment
+    /* Block signals (%<::AutoOrDefaultStorageClass> storage) */
+    %closefile comment
+  %endif
+  %%
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  %if blockioBuff[1] > 0 || userTypes!=""
+    %openfile blockIoDef
+    %if userTypes!=""
+      %<userTypes>
+    %endif
+    %if blockioBuff[1] > 0
+        %<comment>\
+        %assign nonInlSysIdx = System[sysIdx].NonInlinedParentSystemIdx
+        %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+          %<GetHideChildDefineSymbol("ifndef")>\
+        %endif
+        %<SLibIfSystemPreprocessorCondition(System[sysIdx])>
+        %%<SLibIfSystemVariantCondition16b(System[sysIdx])>
+        %assign align = -1
+        %if structDAFlag.supported && !fieldDAFlag.supported
+          %assign align = blockioBuff[2]
+        %endif
+        %<SLibDumpStructDefWithAlignment(identifierTag, identifier, align, blockioBuff[0])>
+        %%<SLibEndIfSystemVariantCondition16b(System[sysIdx])>
+        %<SLibEndIfSystemPreprocessorCondition(System[sysIdx])>
+        %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+          %<GetHideChildDefineSymbol("endif")>\
+        %endif
+    %endif
+    %closefile blockIoDef
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_BIO_typedef", System[sysIdx], blockIoDef)>
+%endfunction
+
+%% Function: LibCacheSystemConstBlkIOStructDef =================================
+%% Abstract:
+%%   Cache the definition of the system constant BlockIO structure.
+%%
+%function LibCacheSystemConstBlkIOStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  %assign blockioBuff = SLibGetSystemDataDefUsingVarGroup(sysIdx, "ConstBlockIO")
+  %assign blockIoDef = ""
+  %assign trailer = ""
+  %assign identifierTag = ""
+  
+  %if (sysIdx < (NumSystems-1))
+    %assign identifier = FcnSysVarGroupType(System[sysIdx],"ConstBlockIO")
+    %assign varGrpIdx = FcnSysVarGroupIndex(System[sysIdx],"ConstBlockIO",0)
+    %if varGrpIdx >= 0 && ::GenCPP
+      %assign identifierTag = ::CompiledModel.VarGroups.VarGroup[varGrpIdx].VarGroupTypeTag
+    %endif
+
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* Invariant block signals for %<sysInfo> */
+    %closefile comment
+  %else
+    %assign ::CompiledModel.ConstBlockIOStructDefn = ...
+      WHITE_SPACE(blockioBuff[0])?"":"Nonempty"
+    %assign identifier = ::tConstBlockIOType
+    %if ::GenCPP
+      %assign identifierTag = ::CompiledModel.GlobalScope.tConstBlockIOTypeTag
+    %endif
+    %openfile comment
+    /* Invariant block signals (%<::AutoOrDefaultStorageClass> storage) */
+    %closefile comment
+    %%
+    %% The #define below is not done for RealTime because of name clash
+    %if (CodeFormat != "RealTime" && !SLibIsERTCodeFormat()) 
+      %openfile trailer
+      /* For easy access from the SimStruct */
+      %assign str = "(%<::tConstBlockIOType> *) " ...
+        "%<RTMuGet("ConstBlockIO")>"
+      #define %<::tConstBlockIOStruct> (%<str>)
+      
+      %undef str
+      %closefile trailer
+    %endif
+  %endif
+  
+  %assign constQualifier = ((::GenCPP) ? "const" : "")
+  %if blockioBuff[1] > 0
+    %openfile blockIoDef
+    %if blockioBuff[1] > 0
+
+    %<comment>\
+    %assign nonInlSysIdx = System[sysIdx].NonInlinedParentSystemIdx
+    %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+      %<GetHideChildDefineSymbol("ifndef")>\
+    %endif
+    %<SLibIfSystemVariantCondition(System[sysIdx])>
+    %<SLibIfSystemPreprocessorCondition(System[sysIdx])>
+    %assign align = "" 
+    %if structDAFlag.supported && blockioBuff[2] > 0
+      %assign align = SLibGetAlignmentSyntax(::CompiledModel.Name, identifier, "", ...
+                                             blockioBuff[2], "DATA_ALIGNMENT_WHOLE_STRUCT")
+    %endif
+    %if align != "" 
+      %if structDAFlag.position == "DATA_ALIGNMENT_PREDIRECTIVE"
+        typedef %<constQualifier> struct %<align> %<identifierTag> {
+      %elseif structDAFlag.position == "DATA_ALIGNMENT_PRECEDING_STATEMENT"
+        %<align>
+        typedef %<constQualifier> struct %<identifierTag> {
+      %else
+        typedef %<constQualifier> struct %<identifierTag> {
+      %endif
+    %else
+      typedef %<constQualifier> struct %<identifierTag> {
+    %endif
+      %<blockioBuff[0]>
+    %if align != "" 
+      %if structDAFlag.position == "DATA_ALIGNMENT_POSTDIRECTIVE" 
+        } %<identifier> %<align>;
+      %elseif structDAFlag.position == "DATA_ALIGNMENT_FOLLOWING_STATEMENT"
+        } %<identifier>;
+        %<align>
+      %else 
+        } %<identifier>;
+      %endif
+    %else
+      } %<identifier>;
+    %endif
+    %<SLibEndIfSystemPreprocessorCondition(System[sysIdx])>
+    %<SLibEndIfSystemVariantCondition(System[sysIdx])>
+    %<trailer>\
+    %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+      %<GetHideChildDefineSymbol("endif")>\
+    %endif
+    %endif
+    %closefile blockIoDef
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_constBIO_typedef", System[sysIdx], blockIoDef)>
+%endfunction
+
+
+%% Function: LibBlockIOStructIsEmpty ==========================================
+%% Abstract:
+%%   Does the root system have any blockIO?
+%%
+%function LibBlockIOStructIsEmpty() void
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasBlockIOArg") == 1)
+  %assert !((::CompiledModel.DWorkAndBlockIOCombined == 1) && ...
+    (System[baseSysIdx].HasBlockIOArg == 1))
+  %return (System[baseSysIdx].HasBlockIOArg == 0)
+%endfunction
+
+%% Function: SLibModelBlockIOStructIsEmpty =====================================
+%% Abstract:
+%%   Does the model have any blockIO.
+%%
+%function SLibModelBlockIOStructIsEmpty() void
+  %assert !((::CompiledModel.DWorkAndBlockIOCombined == 1) && ...
+    (::CompiledModel.HasBlockIOArg == 1))
+  %return (::CompiledModel.HasBlockIOArg == 0)
+%endfunction
+
+
+%% Function: LibConstBlockIOStructIsEmpty =====================================
+%% Abstract:
+%%   Does the root system have any constBlockIO?
+%%
+%function LibConstBlockIOStructIsEmpty() void
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasConstBlockIOArg") == 1)
+  %return (System[baseSysIdx].HasConstBlockIOArg == 0)
+%endfunction
+
+%% Function: SLibModelConstBlockIOStructIsEmpty ================================
+%% Abstract:
+%%   Does the model have any constBlockIO.
+%%
+%function SLibModelConstBlockIOStructIsEmpty() void
+  %return (::CompiledModel.HasConstBlockIOArg == 0)
+%endfunction
+
+%% Function: SLibVerifyBlockOutputPorts ========================================
+%% Abstract:
+%%   Verify that for each data output port in the global block outputs and the
+%%   local block outputs points to the correct record in the system.
+%function SLibVerifyBlockOutputPorts() void
+  %% Check the global block outputs.
+  %foreach boIdx = ::CompiledModel.BlockOutputs.NumGlobalBlockOutputs
+    %assign blkOut = ::CompiledModel.BlockOutputs.GlobalBlockOutput[boIdx]
+    %if SLibOmitRecord(blkOut) || ISEMPTY(blkOut.SigSrc)
+      %continue
+    %endif
+    %assign sysIdx  = blkOut.SigSrc[0]
+    %assign blkIdx  = blkOut.SigSrc[2]
+    %assign portIdx = blkOut.SigSrc[3]
+    %assign block   = ::CompiledModel.System[sysIdx].Block[blkIdx]
+    %%
+    %% The opaque block always lives in the root system, so we won't be able
+    %% to trace canonical outputs correctly. This code will be removed,
+    %% once we depricate input and output port records of the opaque block.
+    %% Those are only maintained to facilitate TLC code that is not part of
+    %% the main code generation.
+    %%
+    %if block.Type == "Opaque"
+      %continue
+    %endif
+    %assign port    = block.DataOutputPort[portIdx]
+    %assign idNum   = IDNUM(port.SignalSrc[0])
+    
+    %if idNum[0] == "y" %% The block output can point to a canonical output of a
+      %continue         %% reusable subsystem. In this case the signal can't be
+    %endif              %% traced back directly.
+    %assign boId1 = LibGetRecordIdentifier(blkOut)
+    %assign reverseBlkOut = ::CompiledModel.BlockOutputs.GlobalBlockOutput[idNum[1]]
+    %assign boId2 = LibGetRecordIdentifier(reverseBlkOut)
+    
+    %if boId1 != boId2
+      %warning %<boId1> != %<boId2>
+      %warning LogicalSource == %<reverseBlkOut.LogicalSrc>
+      %return TLC_FALSE
+    %endif
+  %endforeach
+
+  %return TLC_TRUE
+%endfunction
+
+
+%endif %%  _COMMONHDR_BLKIOLIB_

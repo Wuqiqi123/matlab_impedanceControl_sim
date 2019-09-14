@@ -1,0 +1,1123 @@
+%%  
+%%
+%% Abstract:
+%%   TLC file for generating rt_lookup functions via Target Function 
+%%   Library (TFL).
+%%
+%% Copyright 2007-2013 The MathWorks, Inc.
+
+%implements "genrtlookup" "C"
+
+%% Function: rt_Lookup ====================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. 
+%%      Creates header and source file contents.
+%%
+%function rt_Lookup(fctInfo,fileH,fileC) void
+
+  %% Generate utility function if needed
+  %<local_rt_getlookupindex()>
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  #include "rt_look.h"
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %assign fcnName = "rt_Lookup"
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real_T rt_Lookup(const real_T *x, int_T xlen, real_T u, const real_T *y);
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+    
+  %% Create source file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  #include "%<fctInfo.FileName>.h"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>  
+
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %assign fcnReturns = "real_T"
+  %assign fcnParams = "const real_T *x, int_T xlen, real_T u, const real_T *y"
+  %assign fcnAbstract = "1D lookup routine for data type of real_T."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract fcnAbstract; Category "utility"; GeneratedBy "genrtlookup.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+   %<fcnReturns> %<fcnName>(%<fcnParams>)
+   {
+     int_T idx = rt_GetLookupIndex(x, xlen, u);
+     real_T num = y[idx+1] - y[idx];
+     real_T den = x[idx+1] - x[idx];
+     
+     /* Due to the way the binary search is implemented
+     in rt_look.c (rt_GetLookupIndex), den cannot be
+     0.  Equivalently, m cannot be inf or nan. */
+     
+     real_T m = num/den;
+     
+     return (y[idx] + (m * (u - x[idx])));
+   }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+   
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>  
+%endfunction
+
+%% Function: rt_Lookup32 ==================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. 
+%%      Creates header and source file contents.
+%%
+%function rt_Lookup32(fctInfo,fileH,fileC) void
+
+  %% Generate utility function if needed
+  %<local_rt_getlookupindex32()>
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>  
+
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  #include "rt_look32.h"
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>  
+
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %assign fcnName = "rt_Lookup32"
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real32_T rt_Lookup32(const real32_T *x, int_T xlen, real32_T u, const real32_T *y);
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>  
+    
+  %% Create source file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>  
+  
+  %openfile buf
+  #include "%<fctInfo.FileName>.h"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>  
+
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %assign fcnReturns = "real32_T"
+  %assign fcnParams = "const real32_T *x, int_T xlen, real32_T u, const real32_T *y"
+  %assign fcnAbstract = "1D lookup routine for data type of real32_T."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtlookup.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+   %<fcnReturns> %<fcnName>(%<fcnParams>)
+   {
+     int_T idx = rt_GetLookupIndex32(x, xlen, u);
+     real32_T num = y[idx+1] - y[idx];
+     real32_T den = x[idx+1] - x[idx];
+     
+     /* Due to the way the binary search is implemented
+     in rt_look.c (rt_GetLookupIndex), den cannot be
+     0.  Equivalently, m cannot be inf or nan. */
+     
+     real32_T m = num/den;
+     
+     return (y[idx] + m * (u - x[idx]));
+   }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+   
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>  
+
+%endfunction
+
+%% Function: rt_Lookup2D_General ==========================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. 
+%%      Creates header and source file contents.
+%%
+%function rt_Lookup2D_General(fctInfo,fileH,fileC) void
+
+  %% Generate utility function if needed
+  %<local_rt_getlookupindex()>
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  #include "rt_look.h"
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+  %assign fcnName = "rt_Lookup2D_General"
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real_T rt_Lookup2D_General (const real_T *rowVals, 
+                                     const int_T numRowVals,
+                                     const real_T *colVals, 
+                                     const int_T numColVals,
+                                     const real_T *outputValues,
+                                     const real_T uX, const real_T uY,
+                                     const int_T colZeroIdx,
+                                     const ZeroTechnique colZeroTechnique,
+                                     const real_T *outputAtRowZero);                       
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+  
+  %% Create source file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  #include "%<fctInfo.FileName>.h"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>
+
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %assign fcnReturns = "real_T"
+  %assign fcnParams = ["const real_T *rowVals, const int_T numRowVals, ", ...
+                       "const real_T *colVals, const int_T numColVals, ", ...
+                       "const real_T *outputValues, ", ...
+                       "const real_T uX, const real_T uY, ", ...
+                       "const int_T colZeroIdx, ", ...
+                       "const ZeroTechnique colZeroTechnique, ",...
+                       "const real_T *outputAtRowZero"]
+   %assign fcnAbstract = "2D general lookup routine for data type of real_T"
+   %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+     Category "utility"; GeneratedBy "genrtlookup.tlc"}
+   %<SLibDumpFunctionBanner(fcnRec)>
+   %undef fcnRec
+   %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+   %<fcnReturns> %<fcnName>(%<fcnParams[0]>
+                               %<fcnParams[1]>
+                               %<fcnParams[2]>
+                               %<fcnParams[3]> 
+                               %<fcnParams[4]>
+                               %<fcnParams[5]>
+                               %<fcnParams[6]>)
+   {
+     int_T yIdx;
+     real_T ylo, yhi;
+     real_T retValue;
+     
+     if (uY == 0.0) {
+       yIdx = colZeroIdx;
+     } else {
+       yIdx = rt_GetLookupIndex(colVals,numColVals,uY);
+     }
+     ylo = colVals[yIdx];
+     yhi = colVals[yIdx+1];
+     
+     if (uX == 0.0) {
+       real_T Zx0ylo, Zx0yhi;
+       Zx0ylo = outputAtRowZero[yIdx];
+       Zx0yhi = outputAtRowZero[yIdx+1];
+       
+       if (colZeroTechnique == NORMAL_INTERP) {
+         retValue = (INTERP(uY,ylo,yhi,Zx0ylo,Zx0yhi));
+       } else {
+         if (uY != 0.0) {
+           retValue = (INTERP(uY,ylo,yhi,Zx0ylo,Zx0yhi));
+         } else {
+           if (colZeroTechnique == AVERAGE_VALUE) {
+             retValue = (Zx0yhi + outputAtRowZero[yIdx+2])/2.0;
+           } else {
+             /* (colZeroTechnique == MIDDLE_VALUE) */
+             retValue = (outputAtRowZero[yIdx+2]);
+           }
+         }
+       }
+     } else {
+       int_T xIdx;
+       real_T xlo, xhi, Zx0ylo, Zx0yhi;
+       
+       xIdx = rt_GetLookupIndex(rowVals,numRowVals,uX);
+       xlo = rowVals[xIdx];
+       xhi = rowVals[xIdx+1];
+       
+       Zx0ylo = INTERP(uX,xlo,xhi,
+                       *(outputValues +  xIdx    + numRowVals*yIdx),
+                       *(outputValues + (xIdx+1) + numRowVals*yIdx));
+                       
+       Zx0yhi = INTERP(uX,xlo,xhi,
+                       *(outputValues +  xIdx    + numRowVals*(yIdx+1)),
+                       *(outputValues + (xIdx+1) + numRowVals*(yIdx+1)));
+
+       if (colZeroTechnique == NORMAL_INTERP) {
+         retValue = (INTERP(uY,ylo,yhi,Zx0ylo,Zx0yhi));
+       } else {
+         if (uY != 0.0) {
+           retValue = (INTERP(uY,ylo,yhi,Zx0ylo,Zx0yhi));
+         } else {
+           if (colZeroTechnique == AVERAGE_VALUE) {
+             real_T Zx0yvh = INTERP(uX,xlo,xhi,
+                                    *(outputValues +  xIdx    + numRowVals*(yIdx+2)),
+                                    *(outputValues + (xIdx+1) + numRowVals*(yIdx+2)));
+             retValue = ((Zx0yhi+Zx0yvh)/2.0);
+           } else {
+             /* (colZeroTechnique == MIDDLE_VALUE) */
+             retValue = (INTERP(uX,xlo,xhi,
+                                *(outputValues +  xIdx    + numRowVals*(yIdx+2)),
+                                *(outputValues + (xIdx+1) + numRowVals*(yIdx+2)) ));
+           }
+         }
+       }
+     }
+     return retValue;
+   }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+  
+%endfunction
+
+%% Function: rt_Lookup2D_Normal ===========================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. 
+%%      Creates header and source file contents.
+%%
+%function rt_Lookup2D_Normal(fctInfo,fileH,fileC) void
+
+  %% Generate utility function if needed
+  %<local_rt_getlookupindex()>
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  #include "rt_look.h"
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %assign fcnName = "rt_Lookup2D_Normal"
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real_T rt_Lookup2D_Normal (const real_T *xVals, const int_T numX,
+                                    const real_T *yVals, const int_T numY,
+                                    const real_T *zVals,
+                                    const real_T x, const real_T y);
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+  
+  %% Create source file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  #include "%<fctInfo.FileName>.h"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>
+  
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %assign fcnReturns = "real_T"
+  %assign fcnParams = ["const real_T *xVals, const int_T numX,", ...
+                       "const real_T *yVals, const int_T numY,", ...
+                       "const real_T *zVals,", ...
+                       "const real_T x, const real_T y"]
+  %assign fcnAbstract = "2D normal lookup routine for data type of real_T."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtlookup.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams[0]>
+                              %<fcnParams[1]>
+                              %<fcnParams[2]>
+                              %<fcnParams[3]>)
+   {
+     int_T xIdx, yIdx;
+     real_T ylo, yhi;
+     real_T Zx0yhi, Zx0ylo, xlo, xhi;
+     real_T corner1, corner2;
+     
+     xIdx = rt_GetLookupIndex(xVals,numX,x);
+     xlo = xVals[xIdx];
+     xhi = xVals[xIdx+1];
+     
+     yIdx = rt_GetLookupIndex(yVals,numY,y);
+     ylo = yVals[yIdx];
+     yhi = yVals[yIdx+1];
+     
+     corner1 = *(zVals +  xIdx    + (numX * yIdx));
+     corner2 = *(zVals + (xIdx+1) + (numX * yIdx));
+     Zx0ylo = INTERP(x, xlo, xhi, corner1, corner2);
+     
+     corner1 = *(zVals +  xIdx    + (numX * (yIdx+1)));
+     corner2 = *(zVals + (xIdx+1) + (numX*(yIdx+1)));
+     Zx0yhi = INTERP(x, xlo, xhi, corner1, corner2);
+     
+     return (INTERP(y,ylo,yhi,Zx0ylo,Zx0yhi));
+   }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+
+%endfunction
+
+%% Function: rt_Lookup2D32_General=========================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. 
+%%      Creates header and source file contents.
+%%
+%function rt_Lookup2D32_General(fctInfo,fileH,fileC) void
+
+  %% Generate utility function if needed
+  %<local_rt_getlookupindex32()>
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  #include "rt_look32.h"
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>  
+  
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %assign fcnName = "rt_Lookup2D32_General"
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>    
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real32_T rt_Lookup2D32_General (const real32_T *rowVals, 
+                                         const int_T numRowVals,
+                                         const real32_T *colVals, 
+                                         const int_T numColVals,
+                                         const real32_T *outputValues,
+                                         const real32_T uX, const real32_T uY,
+                                         const int_T colZeroIdx,
+                                         const ZeroTechnique colZeroTechnique,
+                                         const real32_T *outputAtRowZero);
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+  
+  %% Create source file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  #include "%<fctInfo.FileName>.h"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>  
+  
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %assign fcnReturns = "real32_T"
+  %assign fcnParams = ["const real32_T *rowVals,", ...
+                       "const int_T numRowVals,", ...
+                       "const real32_T *colVals,", ...
+                       "const int_T numColVals,", ...
+                       "const real32_T *outputValues,", ...
+                       "const real32_T uX, const real32_T uY,", ...
+                       "const int_T colZeroIdx,", ...
+                       "const ZeroTechnique colZeroTechnique,", ...
+                       "const real32_T *outputAtRowZero"]
+  %assign fcnAbstract = "2D general lookup routine for data type of real32_T"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtlookup.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName> (%<fcnParams[0]>
+                                   %<fcnParams[1]>
+                                   %<fcnParams[2]>
+                                   %<fcnParams[3]>
+                                   %<fcnParams[4]>
+                                   %<fcnParams[5]>
+                                   %<fcnParams[6]>
+                                   %<fcnParams[7]>
+                                   %<fcnParams[8]>)
+   {
+     int_T yIdx = 0;
+     real32_T ylo = 0.0;
+     real32_T yhi = 0.0;
+     real32_T retValue = 0.0;
+     
+     if (uY == 0.0) {
+       yIdx = colZeroIdx;
+     } else {
+       yIdx = rt_GetLookupIndex32(colVals,numColVals,uY);
+     }
+     ylo = colVals[yIdx];
+     yhi = colVals[yIdx+1];
+     
+     if (uX == 0.0) {
+       real32_T Zx0ylo, Zx0yhi;
+       Zx0ylo = outputAtRowZero[yIdx];
+       Zx0yhi = outputAtRowZero[yIdx+1];
+       
+       if (colZeroTechnique == NORMAL_INTERP) {
+         retValue = (INTERP(uY,ylo,yhi,Zx0ylo,Zx0yhi));
+       } else {
+         if (uY != 0.0) {
+           retValue = (INTERP(uY,ylo,yhi,Zx0ylo,Zx0yhi));
+         } else {
+           if (colZeroTechnique == AVERAGE_VALUE) {
+             retValue = (Zx0yhi + outputAtRowZero[yIdx+2])/2.0F;
+           } else {
+             /* (colZeroTechnique == MIDDLE_VALUE) */
+             retValue = (outputAtRowZero[yIdx+2]);
+           }
+         }
+       }
+     } else {
+       int_T xIdx;
+       real32_T xlo, xhi, Zx0ylo, Zx0yhi;
+       
+       xIdx = rt_GetLookupIndex32(rowVals,numRowVals,uX);
+       xlo = rowVals[xIdx];
+       xhi = rowVals[xIdx+1];
+       
+       Zx0ylo = INTERP(uX,xlo,xhi,
+                       *(outputValues +  xIdx    + (numRowVals * yIdx)),
+                       *(outputValues + (xIdx+1) + (numRowVals * yIdx)));
+                       
+       Zx0yhi = INTERP(uX,xlo,xhi,
+                       *(outputValues +  xIdx    + (numRowVals * (yIdx+1))),
+                       *(outputValues + (xIdx+1) + (numRowVals * (yIdx+1))));
+
+       if (colZeroTechnique == NORMAL_INTERP) {
+         retValue = (INTERP(uY,ylo,yhi,Zx0ylo,Zx0yhi));
+       } else {
+         if (uY != 0.0) {
+           retValue = (INTERP(uY,ylo,yhi,Zx0ylo,Zx0yhi));
+         } else {
+           if (colZeroTechnique == AVERAGE_VALUE) {
+             real32_T Zx0yvh = INTERP(uX,xlo,xhi,
+                                      *(outputValues +  xIdx    + (numRowVals * (yIdx+2))),
+                                      *(outputValues + (xIdx+1) + (numRowVals * (yIdx+2))));
+             retValue = ((Zx0yhi+Zx0yvh)/2.0F);
+           } else {
+             /* (colZeroTechnique == MIDDLE_VALUE) */
+             retValue = (INTERP(uX,xlo,xhi,
+                                *(outputValues +  xIdx    + (numRowVals*(yIdx+2))),
+                                *(outputValues + (xIdx+1) + (numRowVals*(yIdx+2)))));
+           }
+         }
+       }
+     }
+     return retValue;
+   }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+
+%endfunction
+
+%% Function: rt_Lookup2D32_Normal =========================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. 
+%%      Creates header and source file contents.
+%%
+%function rt_Lookup2D32_Normal(fctInfo,fileH,fileC) void
+
+  %% Generate utility function if needed
+  %<local_rt_getlookupindex32()>
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+  
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  #include "rt_look32.h"
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>  
+  
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %assign fcnName = "rt_Lookup2D32_Normal"
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real32_T rt_Lookup2D32_Normal (const real32_T *xVals, const int_T numX,
+                                        const real32_T *yVals, const int_T numY,
+                                        const real32_T *zVals,
+                                        const real32_T x, const real32_T y);
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+  
+  
+  %% Create source file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  #include "%<fctInfo.FileName>.h"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>  
+
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %assign fcnReturns = "real32_T"
+  %assign fcnParams = ["const real32_T *xVals, const int_T numX, ", ...
+                       "const real32_T *yVals, const int_T numY, ", ...
+                       "const real32_T *zVals, ", ...
+                       "const real32_T x, const real32_T y"]
+  %assign fcnAbstract = "2D normal lookup routine for data type of real32_T."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "utility"; GeneratedBy "genrtlookup.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName> (%<fcnParams[0]>
+                                  %<fcnParams[1]>
+                                  %<fcnParams[2]>
+                                  %<fcnParams[3]>)
+   {
+     int_T xIdx, yIdx;
+     real32_T ylo, yhi;
+     real32_T Zx0yhi, Zx0ylo, xlo, xhi;
+     real32_T corner1, corner2;
+     
+     xIdx = rt_GetLookupIndex32(xVals,numX,x);
+     xlo = xVals[xIdx];
+     xhi = xVals[xIdx+1];
+     
+     yIdx = rt_GetLookupIndex32(yVals,numY,y);
+     ylo = yVals[yIdx];
+     yhi = yVals[yIdx+1];
+     
+     corner1 = *(zVals +  xIdx    + (numX * yIdx));
+     corner2 = *(zVals + (xIdx+1) + (numX * yIdx));
+     Zx0ylo = INTERP(x, xlo, xhi, corner1, corner2);
+     corner1 = *(zVals +  xIdx    + (numX * (yIdx+1)));
+     corner2 = *(zVals + (xIdx+1) + (numX * (yIdx+1)));
+     Zx0yhi = INTERP(x, xlo, xhi, corner1, corner2);
+
+     return (INTERP(y,ylo,yhi,Zx0ylo,Zx0yhi));
+   }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+
+%endfunction
+
+%% Function: local_rt_getlookupindex ======================================
+%% Abstract:
+%%      GENERATE rt_GetLookupIndex() utility function needed by rt_Lookup(), 
+%% rt_Lookup2D_Normal() and rt_Lookup2D_general().
+%%
+%function local_rt_getlookupindex() void
+%if ISEMPTY(FEVAL("strfind", ::CalledTflTlcCallbacks,"rt_look,"))
+      %assign ::CalledTflTlcCallbacks = ::CalledTflTlcCallbacks + "rt_look,"
+%assign fullPath = FEVAL("fullfile", GenUtilsPath, "rt_look")
+%assign headerExists = FEVAL("exist","%<fullPath>.h")
+%assign sourceExists = FEVAL("exist","%<fullPath>.%<LangFileExt>")
+%if !(headerExists && sourceExists)
+  %% Create header and source file handles
+  %assign fileH = SLibGetFileRecForUtilCode("util_hdr", "rt_look")
+  %<LibSetSourceFileOutputDirectory(fileH,GenUtilsPath)>
+  %assign fileC = SLibGetFileRecForUtilCode("util_src", "rt_look")
+  %<LibSetSourceFileOutputDirectory(fileC,GenUtilsPath)>
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * rt_look.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+  
+  
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  
+  #ifdef DOINTERPSEARCH
+  #include <float.h>
+  #endif
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)> 
+
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %assign fcnName = "rt_GetLookupIndex"
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %<local_common_defs()>
+
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>int_T rt_GetLookupIndex(const real_T *x, int_T xlen, real_T u) ;
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+
+  
+  
+  %% Create source file contents
+  %openfile buf
+  /*
+  * rt_look.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  #include "rt_look.h"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>  
+
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %assign fcnReturns = "int_T"
+  %assign fcnParams = "const real_T *x, int_T xlen, real_T u"
+  %openfile fcnAbstract
+Routine to get the index of the input from a table using binary or
+interpolation search.
+
+Inputs:
+  *x   : Pointer to table, x[0] ....x[xlen-1]
+  xlen : Number of values in xtable
+  u    : input value to look up
+
+Output:
+  idx  : the index into the table such that:
+        if u is negative
+           x[idx] <= u < x[idx+1]
+        else
+           x[idx] < u <= x[idx+1]
+
+Interpolation Search: If the table contains a large number of nearly
+uniformly spaced entries, i.e., x[n] vs n is linear then the index
+corresponding to the input can be found in one shot using the linear
+interpolation formula. Therefore if you have a look-up table block with
+many data points, using interpolation search might speed up the code.
+Compile the generated code with the following flag:
+
+           make_rtw OPTS=-DDOINTERPSEARCH
+
+to enable interpolation search.
+  %closefile fcnAbstract
+  
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "utility"; GeneratedBy "genrtlookup.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    int_T idx = 0;
+    int_T bottom = 0;
+    int_T top = xlen-1;
+    int_T retValue = 0;
+    boolean_T returnStatus = 0U;
+#ifdef DOINTERPSEARCH
+    real_T offset = 0;
+#endif
+
+    /*
+     * Deal with the extreme cases first:
+     *   if u <= x[bottom] then return idx = bottom
+     *   if u >= x[top]    then return idx = top-1
+     */
+     if (u <= x[bottom]) {
+       retValue = bottom;
+       returnStatus = 1U;
+       
+     } else if (u >= x[top]) {
+       retValue = top-1;
+       returnStatus = 1U;
+     } else {
+       /* else required to ensure safe programming, even *
+       * if it's expected that it will never be reached */
+     }
+     
+     if (returnStatus == 0U) {
+       
+       if (u < 0) {
+         /* For negative input find index such that: x[idx] <= u < x[idx+1] */
+         for (;;) {
+
+  #ifdef DOINTERPSEARCH
+             offset = (u-x[bottom])/(x[top]-x[bottom]);
+             idx = bottom + (int_T)((top-bottom)*(offset-DBL_EPSILON));
+  #else
+             idx = (bottom + top)/2;
+  #endif
+             if (u < x[idx]) {
+               top = idx - 1;
+             } else if (u >= x[idx+1]) {
+               bottom = idx + 1;
+             } else {
+               /* we have x[idx] <= u < x[idx+1], return idx */
+               retValue = idx;
+               break;
+             }
+           }
+         } else {
+           /* For non-negative input find index such that: x[idx] < u <= x[idx+1] */
+           for (;;) {
+  #ifdef DOINTERPSEARCH
+                offset = (u-x[bottom])/(x[top]-x[bottom]);
+                idx = bottom + (int_T)((top-bottom)*(offset-DBL_EPSILON));
+  #else
+                idx = (bottom + top)/2;
+  #endif
+                if (u <= x[idx]) {
+                  top = idx - 1;
+                } else if (u > x[idx+1]) {
+                  bottom = idx + 1;
+                } else {
+                  /* we have x[idx] < u <= x[idx+1], return idx */
+                  retValue = idx;
+                  break;
+                }
+           }
+      }
+    }
+    return retValue;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %<FcnGenCloseExternCForCPP()>  
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+%else
+  %<SLibAddGeneratedFileToList("rt_look.h", "utility", "header","")>
+  %<SLibAddGeneratedFileToList("rt_look." + LangFileExt, "utility", "source","")>
+%endif
+%endif
+%endfunction
+
+%% Function: local_rt_getlookupindex32 ======================================
+%% Abstract:
+%%      GENERATE rt_GetLookupIndex32() utility function needed by rt_Lookup(), 
+%% rt_Lookup2D_Normal() and rt_Lookup2D_general().
+%%
+%function local_rt_getlookupindex32() void
+%if ISEMPTY(FEVAL("strfind", ::CalledTflTlcCallbacks,"rt_look32,"))
+      %assign ::CalledTflTlcCallbacks = ::CalledTflTlcCallbacks + "rt_look32,"
+%assign fullPath = FEVAL("fullfile", GenUtilsPath, "rt_look32")
+%assign headerExists = FEVAL("exist","%<fullPath>.h")
+%assign sourceExists = FEVAL("exist","%<fullPath>.%<LangFileExt>")
+
+%if !(headerExists && sourceExists)
+  %% Create header and source file handles
+  %assign fileH = LibCreateSourceFile("Header","TFL callback","rt_look32")
+  %<SLibSetModelFileAttribute(fileH, "Group", "utility")>
+  %<LibSetSourceFileOutputDirectory(fileH,GenUtilsPath)>
+  %assign fileC = LibCreateSourceFile("Source","TFL callback","rt_look32")
+  %<SLibSetModelFileAttribute(fileC, "Group", "utility")>
+  %<LibSetSourceFileOutputDirectory(fileC,GenUtilsPath)>
+  %if !SLibGetModelFileIsEmpty(fileH) || !SLibGetModelFileIsEmpty(fileH)
+    %% Don't generate file buffers again when more the one TFL function uses them
+    %return
+  %endif
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * rt_look32.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+  
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  
+  #ifdef DOINTERPSEARCH
+  #include <float.h>
+  #endif
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>     
+
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %assign fcnName = "rt_GetLookupIndex32"
+  %openfile buf
+
+  %<FcnGenOpenExternCForCPP()>
+  %<local_common_defs()>
+
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>int_T rt_GetLookupIndex32(const real32_T *x, int_T xlen, real32_T u) ;
+  %<SLibGetFcnMemSecPragmaOnDecl(fcnName, msFcn, "Post")>\
+                                         
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+    
+  
+  %% Create source file contents
+  %openfile buf
+  /*
+  * rt_look.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  #include "rt_look32.h"
+ 
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>  
+
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %assign fcnReturns = "int_T"
+  %assign fcnParams = "const real32_T *x, int_T xlen, real32_T u"
+  %openfile fcnAbstract
+Routine to get the index of the input from a table using binary or
+interpolation search.
+
+Inputs:
+  *x   : Pointer to table, x[0] ....x[xlen-1]
+  xlen : Number of values in xtable
+  u    : input value to look up
+
+Output:
+  idx  : the index into the table such that:
+        if u is negative
+           x[idx] <= u < x[idx+1]
+        else
+           x[idx] < u <= x[idx+1]
+
+Interpolation Search: If the table contains a large number of nearly
+uniformly spaced entries, i.e., x[n] vs n is linear then the index
+corresponding to the input can be found in one shot using the linear
+interpolation formula. Therefore if you have a look-up table block with
+many data points, using interpolation search might speed up the code.
+Compile the generated code with the following flag:
+
+           make_rtw OPTS=-DDOINTERPSEARCH
+
+to enable interpolation search.
+   %closefile fcnAbstract
+   %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+         Category "utility"; GeneratedBy "genrtlookup.tlc"}
+   %<SLibDumpFunctionBanner(fcnRec)>
+   %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+   %<fcnReturns> %<fcnName>(%<fcnParams>)
+   {
+     int_T idx = 0;
+     int_T bottom = 0;
+     int_T top = xlen-1;
+     int_T retValue = 0;
+     boolean_T returnStatus = 0U;
+#ifdef DOINTERPSEARCH     
+     real32_T offset = 0;
+#endif
+
+    /*
+     * Deal with the extreme cases first:
+     *   if u <= x[bottom] then return idx = bottom
+     *   if u >= x[top]    then return idx = top-1
+     */
+     if (u <= x[bottom]) {
+       retValue = (bottom);
+       returnStatus = 1U;
+     } else if (u >= x[top]) {
+       retValue = (top-1);
+       returnStatus = 1U;
+     } else {
+       /* else required to ensure safe programming, even *
+       * if it's expected that it will never be reached */
+     }
+     
+     if (returnStatus == 0U) {
+       
+       if (u < 0) {
+         /* For negative input find index such that: x[idx] <= u < x[idx+1] */
+         for (;;) {
+  #ifdef DOINTERPSEARCH
+           offset = (u-x[bottom])/(x[top]-x[bottom]);
+           idx = bottom + (int_T)((top-bottom)*(offset-DBL_EPSILON));
+  #else
+           idx = (bottom + top)/2;
+  #endif
+           if (u < x[idx]) {
+             top = idx - 1;
+           } else if (u >= x[idx+1]) {
+             bottom = idx + 1;
+           } else {
+             /* we have x[idx] <= u < x[idx+1], return idx */
+             retValue = (idx);
+             break;
+           }
+         }
+       } else {
+         /* For non-negative input find index such that: x[idx] < u <= x[idx+1] */
+         for (;;) {
+  #ifdef DOINTERPSEARCH
+           offset = (u-x[bottom])/(x[top]-x[bottom]);
+           idx = bottom + (int_T)((top-bottom)*(offset-DBL_EPSILON));
+  #else
+           idx = (bottom + top)/2;
+  #endif
+           if (u <= x[idx]) {
+             top = idx - 1;
+           } else if (u > x[idx+1]) {
+             bottom = idx + 1;
+           } else {
+             /* we have x[idx] < u <= x[idx+1], return idx */
+             retValue = (idx);
+             break;
+           }
+         }
+       }
+     }
+     return retValue;
+   }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+%else
+  %<SLibAddGeneratedFileToList("rt_look32.h", "utility", "header","")>
+  %<SLibAddGeneratedFileToList("rt_look32." + LangFileExt, "utility", "source","")>
+%endif
+%endif
+%endfunction
+
+%% Function: local_common_defs=============================================
+%% Abstract:
+%%      Local function to output common defines needed by header files.
+%%
+%function local_common_defs() Output
+  
+  #ifndef INTERP
+  # define INTERP(x,x1,x2,y1,y2) ( (y1)+(((y2) - (y1))/((x2) - (x1)))*((x)-(x1)) )
+  #endif
+
+  #ifndef ZEROTECHNIQUE
+  #define ZEROTECHNIQUE
+  typedef enum {
+    NORMAL_INTERP,
+    AVERAGE_VALUE,
+    MIDDLE_VALUE
+  } ZeroTechnique;
+  #endif
+
+%endfunction

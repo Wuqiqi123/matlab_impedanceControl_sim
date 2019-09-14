@@ -1,0 +1,290 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%   Generate headers files related to the rtModel.
+%%
+%% Copyright 1994-2016 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%if EXISTS("_FORMATRTM_") == 0
+%assign _FORMATRTM_ = 1
+
+%%Function: SLibGenRTMCompatibleMacros ========================================
+%%Abstract:
+%% In some cases, such as RSim for C_API support
+%% and for uniformity across targets, rtm macros
+%% are created even though no rtModel is involved
+%%
+
+%%RSIM top level executable uses Simstruct, so the CAPImacros have to
+%%be defined separately
+%function SLibGenRTMCompatibleMacros() void
+%openfile tmpBuf
+%if isRSim && !IsModelReferenceTarget()
+  %if RTWCAPI
+    #ifndef rtmGetDataMapInfo
+    # define rtmGetDataMapInfo(rtm) (*%<RSimRTWCAPIVarPtr>)
+    #endif
+
+    #ifndef rtmSetDataMapInfo
+    # define rtmSetDataMapInfo(rtm, val) (%<RSimRTWCAPIVarPtr> = &val)
+    #endif
+  %else
+    #ifndef rtmGetDataMapInfo
+    # define rtmGetDataMapInfo(rtm) %<SLibGetNullDefinitionFromTfl()>
+    #endif
+
+    #ifndef rtmSetDataMapInfo
+    # define rtmSetDataMapInfo(rtm, val)
+    #endif
+  %endif
+%endif
+%closefile tmpBuf
+%return tmpBuf
+%endfunction  %%SLibGenRTMCompatibleMacros
+
+%% Function: SLibGenRTMTypedefAndMacros ========================================
+%% Abstract:
+%%   Generate the typedef and macros and related declarations for the rtModel
+%%
+%function SLibGenRTMTypedefAndMacros() void
+  %assign ret = ["", "", ""]  %% types, macros, declarations
+
+  %openfile bufTypes
+  %openfile bufMacros
+  %openfile bufDecls
+  %if GenRTModel
+    %selectfile bufTypes
+
+    %% Real-time Model Data Structure
+    %<RTMGenRtMdlTypedef()>\
+    %assign ::CompiledModel.EmptyRealTimeObject = ...
+      ::CompiledModel.EmptyRealTimeObject || SLibSuppressRTMDeclaration()
+    %if !::CompiledModel.EmptyRealTimeObject
+      
+      %if SLibIsERTCodeFormat() 
+        
+        %if !MultiInstanceERTCode  && !IsModelReferenceTarget()
+          
+          %selectfile bufDecls
+          
+          /* Real-time Model object */
+          
+          %if ::GenCPP 
+            #ifdef __cplusplus
+            %<::ExternCPrefix> {
+            #endif
+          %endif
+          %openfile decls
+          %if SLibAutosarCompilerAbstractionRequired()
+            %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tSimStructType, TLC_TRUE, TLC_TRUE,RTMGetModelSS(), "DataGlobal")>;
+          %else
+            %<::tSimStructType> *const %<RTMGetModelSS()>;
+          %endif
+          %closefile decls
+          %<SLibApplyMemSecToDataDecl(decls, "MemSecDataConstants", RTMGetModelSS())>
+          %if ::GenCPP 
+            #ifdef __cplusplus
+            }
+            #endif
+          %endif
+          
+        %endif
+      %else
+        %assign rtModelObjType = ::tSimStructType
+        %selectfile bufDecls
+
+	/* Simulation structure */
+	extern %<rtModelObjType> *const %<RTMGetModelSS()>;
+
+      %endif
+    %endif
+    %selectfile bufMacros
+
+    /* Macros for accessing real-time model data structure */
+    %assign macroLocation = (SLibIsERTCodeFormat()) ? "PUBLIC" : ""
+    %<RTMGenMacroDefines(macroLocation)>\
+    %if ::CompiledModel.RTWStatesLogging==1 && MatFileLogging
+      #define UseMMIDataLogging
+    %endif
+   
+    %% If using static main, additional macros need to be defined 
+    %if (!GenerateGRTWrapper && !GenerateSampleERTMain && !EmptyRealTimeObject) 
+    
+      %if !UsingMalloc
+        %% #define RTM variable. Users can directly use RTM variable in main.c. 
+        %if ("%<::CompiledModel.Name>_M" != "%<::tSimStruct>")
+          #define %<::CompiledModel.Name>_M (%<::tSimStruct>)
+        %endif
+      %else
+        %% #define RTM type. Users will use this type to malloc a variable of this
+        %% type.
+        %if ("%<::CompiledModel.Name>_M_TYPE" != "%<::tSimStructType>")
+          #define %<::CompiledModel.Name>_M_TYPE %<::tSimStructType>
+        %endif
+      %endif
+    %endif
+    
+    %if (xPC == 1)
+      %if ("rtModel_%<::CompiledModel.Name>" != "%<::tSimStructType>")
+        #define rtModel_%<::CompiledModel.Name> %<::tSimStructType>
+      %endif
+    %endif
+      
+    %if (!SLibIsERTCodeFormat() || GenerateGRTWrapper) && GenRTModel
+      /* Definition for use in the target main file */
+      #define %<::CompiledModel.Name>_rtModel %<::tSimStructType>
+    %endif
+  %else %%For targets that don't use rtModel yet
+    %assign rootSystem = System[NumSystems-1]
+    %assign reqInsts   = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+
+    %%Get RTM macro definitions needed for compatible interface
+    %selectfile  bufMacros
+    %if (::CompiledModel.RTWStatesLogging==1) && MatFileLogging
+      #define UseMMIDataLogging    
+    %endif
+    %<SLibGenRTMCompatibleMacros()>
+
+    %if reqInsts.SimStructInst
+      %selectfile bufDecls
+      
+      %if ::GenCPP 
+        #ifdef __cplusplus
+        %<::ExternCPrefix> {
+        #endif
+      %endif
+      /* Simulation Structure */
+      extern %<rtModelObjType> *const %<RTMGetModelSS()>;
+      %if ::GenCPP 
+        #ifdef __cplusplus
+        }
+        #endif
+      %endif
+
+    %endif
+  %endif
+  %closefile bufDecls
+  %closefile bufMacros
+  %closefile bufTypes
+
+  %assign ret[0] = bufTypes
+  %assign ret[1] = bufMacros
+  %assign ret[2] = bufDecls
+  %return ret
+%endfunction %% SLibGenRTMTypdefAndMacros
+
+
+%% Function: SLibGenRTModelHFile =========================================
+%% Abstract:
+%%   Generate the rtmodel.h file.
+%%
+%function SLibGenRTModelHFile() void
+  %% Generate rtmodel.h if its a non-ERT target or any target (including 
+  %% ERT target) if classic call interface + static main. Note that for
+  %% ERT target + simplified call interface + static main, rtmodel.h is 
+  %% generated via another mechanism (AutoBuildProcedure). 
+  %if (!SLibIsERTCodeFormat() || ...
+    (GRTInterface && !GenerateSampleERTMain) || ...
+    !SLibIsERTTarget()) && ...
+    !IsModelReferenceTarget()
+    %if GenRTModel ||  isRSim
+      %openfile tmpBuf
+      /*
+      *  rtmodel.h:
+      *
+      %<SLibCommonHeaderInfo()>\
+      */
+      %closefile tmpBuf
+      %<SLibCacheCodeToFile("rtmodel_hdr_ban", tmpBuf)>
+      
+      %openfile tmpBuf
+      /*
+      *  Includes the appropriate headers when we are using rtModel
+      */
+      #include "%<Name>.h"
+      
+      #define GRTINTERFACE %<::GRTInterface>
+     
+      %if SLibFcnProtoCtrlActive()
+        #define MODEL_STEP_FCN_CONTROL_USED  1
+      %endif
+
+      %if MultiInstanceERTCode && !::GRTInterface
+        %if SLibIsERTTarget()
+          %if ::CompiledModel.RootIOFormat == "Individual arguments" 
+            %assign rootLevelIO = 0
+          %elseif ::CompiledModel.RootIOFormat == "Structure reference"
+            %assign rootLevelIO = 1
+          %else
+            %assign rootLevelIO = 2
+          %endif
+        %else
+          %assign rootLevelIO = 2
+        %endif
+        /*
+         * ROOT_IO_FORMAT: 0 (Individual arguments)
+         * ROOT_IO_FORMAT: 1 (Structure reference)
+         * ROOT_IO_FORMAT: 2 (Part of model data structure)
+         */
+        # define ROOT_IO_FORMAT %<rootLevelIO>
+      %endif
+           
+      %assign macroComment = "/* Macros generated for backwards compatibility  */"
+      %if !RTMMdlStopReqIsReqFcn()
+        %assign macros = ""
+  
+        %assign macName = "rtmGetStopRequested"
+        %assign macros  = macros + "#ifndef %<macName>\n"
+        %assign macros  = macros + "# define %<macName>(rtm) "
+        %assign macros  = macros + "((void*) 0)\n"
+        %assign macros  = macros + "#endif\n\n"
+        
+        %<macroComment>
+        %<macros>
+        
+      %endif
+      
+      %closefile tmpBuf
+      %<SLibCacheCodeToFile("rtmodel_hdr_incl", tmpBuf)>
+    %endif
+  %endif
+  
+%endfunction %% SLibGenRTModelHFile
+
+%% Function: SLibGenRTModelSrcFile =========================================
+%% Abstract:
+%%   Generate the rtmodel.c(.cpp) file.
+%%
+%function SLibGenRTModelSrcFile() void
+  %% Generate rtmodel.c(.cpp) if its a non-ERT target or any target (including 
+  %% ERT target) if classic call interface + static main. Note that for
+  %% ERT target + simplified call interface + static main, rtmodel.h is 
+  %% generated via another mechanism (AutoBuildProcedure). Additionally, the 
+  %% model must generate rate-grouped step functions.
+  
+  %if !SLibIsERTTarget() && SLibNeedWrapperStepFcn()==2 
+    %openfile tmpBuf
+    /*
+     *  rtmodel.%<::LangFileExt>:
+     *
+     %<SLibCommonHeaderInfo()>\
+     */
+    %closefile tmpBuf
+    %<SLibCacheCodeToFile("rtmodel_src_ban", tmpBuf)>
+    
+    %openfile tmpBuf
+    #include "rtmodel.h"
+    %closefile tmpBuf
+    %<SLibCacheCodeToFile("rtmodel_src_incl", tmpBuf)>
+  %endif
+  
+%endfunction %% SLibGenRTModelHFile 
+
+%endif  %% _FORMATRTM_
+
+%% [EOF] formatrtm.tlc

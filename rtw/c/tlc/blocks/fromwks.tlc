@@ -1,0 +1,1052 @@
+%% From Workspace block TLC
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+
+%implements FromWorkspace "C"
+
+%% Function: BlockTypeSetup ===============================================
+%%   Define the #Interpolate macro.
+%function BlockTypeSetup(block, system) void
+  %openfile headerBuffer
+  
+  /* Used by %<Type> Block: '%<Name>' */
+  #ifndef rtInterpolate
+  # define rtInterpolate(v1,v2,f1,f2) \
+  (((v1)==(v2))?((double)(v1)):\
+  (((f1)*((double)(v1)))+((f2)*((double)(v2)))))
+  #endif
+  
+  #ifndef rtRound
+  # define rtRound(v) ( ((v) >= 0) ? \
+  %<LibGenMathFcnCall("floor", tSS_DOUBLE, "(v) + 0.5","")> : \
+  %<LibGenMathFcnCall("ceil" , tSS_DOUBLE, "(v) - 0.5","")> )
+  #endif
+  
+  %closefile headerBuffer
+  %<LibCacheDefine(headerBuffer)>
+%endfunction
+
+%% Function: BlockInstanceSetup ===========================================
+%%   Set expression folding compliance
+%function BlockInstanceSetup(block, system) void
+  %<LibBlockSetIsExpressionCompliant(block)>
+%endfunction
+
+%% Function: FcnDeclareTUData =============================================
+%%   Declare the TU data vector and place in the model registration routine
+%function FcnDeclareTUData(block, system) Output
+
+  %assign numSignals = FrmWksGetNumSignals(block, system)
+  %foreach idx = numSignals
+    %if numSignals > 1
+      {
+    %endif
+    %<FcnDeclareTUDataElement(block, system, idx)> 
+    %if numSignals > 1
+      }
+    %endif
+  %endforeach
+  
+%endfunction
+
+%% Function: FcnDeclareTUDataElement ======================================
+%%   Declare data, time and dimensions for a given element. For non-buses,
+%%   this is called once. For buses, this is called once for each bus leaf.
+%function FcnDeclareTUDataElement(block, system, elIdx) Output
+  
+  %% If there are no points (partial bus specification), do nothing
+  %if ParamSettings.NumPoints[elIdx] < 1
+    %return
+  %endif
+  
+  %assign portType  = LibBlockOutputSignalDataTypeId(0)
+  %if LibDataTypeIsBus(portType)
+    %assign dTypeId   = DataValues.DataTypes[elIdx]
+    %assign isComplex = DataValues.Complexities[elIdx]
+    %if isComplex
+      %assign dType = LibGetDataTypeComplexNameFromId(dTypeId)
+    %else
+      %assign dType = LibGetDataTypeNameFromId(dTypeId)    
+    %endif
+    %assign sigWidth  = DataValues.BusElementWidths[elIdx]
+    %assign isVarDims = TLC_FALSE
+  %else
+    %assign dTypeId   = LibBlockOutputSignalDataTypeId(0)
+    %assign isComplex = LibBlockOutputSignalIsComplex(0)
+    %assign sigWidth  = LibBlockOutputSignalWidth(0)
+    %assign dType     = LibBlockOutputSignalDataTypeName(0, "")
+    %assign isVarDims = LibGetIsOutputPortVarDims(0)
+  %endif
+  
+  %% RSIM Targets ---------------------------------------------------------
+  %if isRSim
+    %assign varName   = STRING(ParamSettings.VariableName)
+    %assign numPoints = ParamSettings.NumPoints[elIdx]
+    %assign dataParamName = "Data" + "%<elIdx>"
+    %assign timeParamName = "Time" + "%<elIdx>"
+    %assign dimsParamName = "ValDims" + "%<elIdx>"
+    %assign dataParamAddr = LibBlockParameterAddr(%<dataParamName>, "", "", 0)
+    %assign timeParamAddr = LibBlockParameterAddr(%<timeParamName>, "", "", 0)
+   
+    FWksInfo *fromwksInfo;
+    
+    if ((fromwksInfo = (FWksInfo *) calloc(1, sizeof(FWksInfo))) == %<SLibGetNullDefinitionFromTfl()>) {
+      %<RTMSetErrStat("\"from workspace STRING(Name) memory allocation error\"")>;
+    } else {
+      fromwksInfo->origWorkspaceVarName = "%<varName>";
+      fromwksInfo->origDataTypeId = %<dTypeId>;
+      fromwksInfo->origIsComplex  = %<isComplex>;
+      fromwksInfo->origWidth      = %<sigWidth>;
+      fromwksInfo->origElSize     = sizeof(%<dType>);
+      fromwksInfo->data           = (void *)%<dataParamAddr>;
+      fromwksInfo->nDataPoints    = %<numPoints>;
+      %assign time = LibBlockParameterSize(%<timeParamName>)
+      %if time[1] == 0
+        fromwksInfo->time = %<SLibGetNullDefinitionFromTfl()>;
+      %else
+        fromwksInfo->time = (double *)%<timeParamAddr>;
+      %endif
+      
+      %if isVarDims
+        %assign dimsParamAddr = LibBlockParameterAddr(%<dimsParamName>, "", "", 0)
+        fromwksInfo->valDims = (double *)%<dimsParamAddr>;
+      %endif 
+      
+      %<LibBlockPWork(TimePtr, "", "", elIdx)> = fromwksInfo->time;
+      %<LibBlockPWork(DataPtr, "", "", elIdx)> = fromwksInfo->data;
+      %if isVarDims
+        %<LibBlockPWork(ValDimsPtr, "", "", elIdx)> = fromwksInfo->valDims;
+      %endif
+      %<LibBlockPWork(RSimInfoPtr, "", "", elIdx)> = fromwksInfo;
+    }
+    
+  %% NON-RSIM Targets (except accelerator) --------------------------------
+  %else
+    
+    %assign timeValParam = "TimeValues.Val" + "%<elIdx>"
+    %assign dataValParam = "DataValues.Val" + "%<elIdx>"
+    %assign dataRefName  = "DataValues.Ref" + "%<elIdx>"
+    
+    %if SIZE(%<timeValParam>, 1) > 0
+      %assign nRows = SIZE(%<timeValParam>, 0)
+      %assign nCols = SIZE(%<timeValParam>, 1)
+      %openfile genBuffer
+      %assign tvecName = ""
+      %assign tvecVal  = %<timeValParam>
+      %if SLibIsNdIndexingFeatureOn()
+        %assign tvecNonFiniteIndices = GENERATE_FORMATTED_VALUE(tvecVal, tvecName, 0, 1)
+      %else
+        %assign tvecNonFiniteIndices = GENERATE_FORMATTED_VALUE(tvecVal, tvecName)
+      %endif
+      %closefile genBuffer
+      %if tvecNonFiniteIndices[0][0] >= 0
+        %%START_ASSERT
+        %<LibBlockReportError(block, "Only finite values allowed in time (T) array")>
+        %%END_ASSERT
+      %endif
+      %assign timePtr = "pTimeValues" + "%<elIdx>"
+      static real_T %<timePtr>[] = %<genBuffer>;
+    %else
+      %assign timePtr = "0"
+    %endif
+    
+    %if EXISTS("%<dataRefName>")
+      %% Data will not be stored here if this is a bus
+      %openfile valString
+      %assign prmVal = %<dataRefName>
+      %if SLibIsNdIndexingFeatureOn()
+        %assign prmNonFiniteIndices = GENERATE_FORMATTED_VALUE(prmVal, "", 0, 1)
+      %else
+        %assign prmNonFiniteIndices = GENERATE_FORMATTED_VALUE(prmVal, "")
+      %endif
+      %closefile valString
+      %assign dataPtr = "pDataValues" + "%<elIdx>"
+      static %<dType> %<dataPtr>[] = %<valString>;
+    %else
+      %if SIZE(%<dataValParam>, 0) > 0
+        %assign nRows = SIZE(%<dataValParam>, 0)
+        %assign nCols = SIZE(%<dataValParam>, 1)
+        %assign width = nRows * nCols
+        %if isComplex
+          %assign complexSig = 1
+        %else
+          %assign complexSig = 0
+        %endif
+        %assign wksVecComment = ""
+        %assign tmpVar = wksVecTemp { ...
+          Name "From Workspace Data"; ...
+          Value %<dataValParam>; ...
+          DataTypeIdx dTypeId; ...
+          Width width; ...
+          ComplexSignal complexSig ...
+        }
+        %assign wksVecVal = SLibGetFormattedPrmValue(wksVecTemp, wksVecComment)
+        %assign dataPtr = "pDataValues" + "%<elIdx>"
+        %if width == 1
+          %% preserve vector-ness
+          static %<dType> %<dataPtr>[] = { %<wksVecVal> };
+        %else
+          static %<dType> %<dataPtr>[] = %<wksVecVal>;
+        %endif
+      %else
+        %assign dataPtr = "0"
+      %endif
+    %endif
+
+    %if isVarDims
+      %assign nRows = SIZE(ParamSettings.ValDims, 0)
+      %assign nCols = SIZE(ParamSettings.ValDims, 1)
+      %openfile genBuffer
+      %assign valDimsVecName = ""
+      %assign valDimsVecVal  = ParamSettings.ValDims
+      %if SLibIsNdIndexingFeatureOn()
+        %assign valDimsVecNonFiniteIndices = GENERATE_FORMATTED_VALUE(valDimsVecVal, valDimsVecName, 0, 1)
+      %else
+        %assign valDimsVecNonFiniteIndices = GENERATE_FORMATTED_VALUE(valDimsVecVal, valDimsVecName)
+      %endif
+      %closefile genBuffer
+      static real_T pCurrDimsValues[] = %<genBuffer>;
+      %assign valDimsPtr = "pCurrDimsValues"
+    %endif
+    
+    %<LibBlockPWork(TimePtr, "", "", elIdx)> = (void *) %<timePtr>;
+    %<LibBlockPWork(DataPtr, "", "", elIdx)> = (void *) %<dataPtr>;
+    %if isVarDims
+      %<LibBlockPWork(ValDimsPtr, "", "", elIdx)> = (double *) %<valDimsPtr>;
+    %endif
+  %endif
+  
+%endfunction
+
+%% Function: Start ========================================================
+%%   Declare data and initialize work vectors
+%function Start(block, system) Output
+  {
+    %if Accelerator
+      /* Call into Simulink for From Workspace */
+      %<SLibCallBlockInSimulink(system, block, "SS_CALL_MDL_START")>
+    %else
+      %<FcnDeclareTUData(block, system)>
+     
+      %assign noTime = FrmWksIsWithoutTime(block, system)      
+      %assign numSignals = FrmWksGetNumSignals(block, system)
+      %assign rollVars = [...
+        "<iwork>/PrevIndex", ...
+        "<pwork>/TimePtr"]
+      %assign rollRegion = [0:%<numSignals-1>]
+      %roll sigIdx=rollRegion, lcv=RollThreshold, block, "Roller", rollVars
+        %if noTime
+          %<LibBlockIWork(PrevIndex, "", lcv, sigIdx)> = -1;
+        %else
+          %<LibBlockIWork(PrevIndex, "", lcv, sigIdx)> = 0;
+        %endif
+      
+        %if NumNonsampledZCs > 0 
+          {
+            %assign nTimePoints = %<ParamSettings.NumPoints[sigIdx]>
+            %assign numDups = LibBlockDWorkWidth(ZCTimeIndices) / numSignals
+        
+            %% Get the pointer to the ZC indices
+            %if sigIdx > 0
+              %assign offset = sigIdx * numDups
+              int_T* zcTimeIndices = %<LibBlockDWorkAddr(ZCTimeIndices, "", "", 0)> + %<offset>;
+            %else
+              int_T* zcTimeIndices = %<LibBlockDWorkAddr(ZCTimeIndices, "", "", 0)>;
+            %endif
+            
+            %% Get the time vector
+            const double* timePoints = (double*) %<LibBlockPWork(TimePtr, "", lcv, sigIdx)>;
+            boolean_T justHadZcTime = %<GET_TYPE_ID_REPLACEMENT("false")>;
+            int_T zcIdx = 0;	
+            int_T i;
+            
+            %% Find all duplicate times
+            for(i = 0; i < %<nTimePoints>-1; i++) {
+              if(!justHadZcTime && timePoints[i] == timePoints[i+1]) {
+                zcTimeIndices[zcIdx++] = i;                
+                justHadZcTime = %<GET_TYPE_ID_REPLACEMENT("true")>;
+              } else {
+                justHadZcTime = %<GET_TYPE_ID_REPLACEMENT("false")>;
+              }
+            }	
+            
+            %% Add the last point if we are settings to zero
+            %if ISEQUAL(ParamSettings.OutputAfterFinalValue, "Setting to zero")
+              if ( justHadZcTime == %<GET_TYPE_ID_REPLACEMENT("false")> ) {
+                zcTimeIndices[zcIdx++] = %<nTimePoints>-1;
+              }  
+            %endif
+            
+            %% For buses, we need to initialize remaining buffer
+            %if numSignals > 1
+              for(i = zcIdx; i < %<numDups>; i++) {
+                zcTimeIndices[i] = -1;
+              }
+            %endif
+            
+            %% Initialize current ZC index to the start
+            %<LibBlockDWork(CurZCTimeIndIdx, "", lcv, sigIdx)> = 0; 
+        }
+      %endif
+      
+      %endroll
+    %endif
+  }
+%endfunction
+
+%% Function: Output =======================================================
+%%   Output data from matrix in Workspace
+%function Outputs(block, system) Output
+
+  %if Accelerator
+    /* Call into Simulink for From Workspace */
+    %<SLibCallBlockInSimulink(system, block, "SS_CALL_MDL_OUTPUTS")>
+  %else
+    %assign numSignals = FrmWksGetNumSignals(block, system)
+    %foreach idx = numSignals
+      {
+        %<FrmWksOutputElement(block, system, idx)>
+      }
+    %endforeach
+  %endif
+  
+%endfunction
+
+%% Function: FrmWksOutputElement ==========================================
+%%   Output data for a single element
+%function FrmWksOutputElement(block, system, elIdx) Output
+  
+  %% Get settings for this element ----------------------------------------
+  %assign timeValParam = "TimeValues.Val" + "%<elIdx>"
+  %assign dataValParam = "DataValues.Val" + "%<elIdx>"
+  %assign portType     = LibBlockOutputSignalDataTypeId(0)
+  %assign dtRec        = FixPt_GetOutputDataType(0)
+  %assign numSignals   = FrmWksGetNumSignals(block, system)
+  
+  %% BUSES
+  %if LibDataTypeIsBus(portType)
+    %assign dTypeId   = DataValues.DataTypes[elIdx]
+    %assign isComplex = DataValues.Complexities[elIdx]
+    %assign sigWidth  = DataValues.BusElementWidths[elIdx]
+    %assign isVarDims = TLC_FALSE
+    %if sigWidth == 1
+      %assign outputSig = LibBlockOutputSignal(0, "", "", 0) + ...
+        DataValues.BusElementsNames[elIdx]
+    %else
+      %assign outputSig = LibBlockOutputSignal(0, "", "", 0) + ...
+        DataValues.BusElementsNames[elIdx] + "[0]"
+    %endif
+
+    %% Zero for buses includes dimension and complexity
+    %assign zero = FixPt_GetGroundValueOrNameFromDataTypeRec(dtRec, TLC_FALSE) + ...
+      DataValues.BusElementsNames[elIdx]
+    %if sigWidth > 1
+      %assign zero = zero + "[0]"
+    %endif
+
+    %if isComplex
+      %assign dTypeName = LibGetDataTypeComplexNameFromId(dTypeId)
+    %else
+      %assign dTypeName = LibGetDataTypeNameFromId(dTypeId)    
+    %endif
+  
+  %% NON-BUSES
+  %else
+    %assign dTypeId   = LibBlockOutputSignalDataTypeId(0)
+    %assign isComplex = LibBlockOutputSignalIsComplex(0)
+    %assign sigWidth  = LibBlockOutputSignalWidth(0)
+    %assign dTypeName = LibBlockOutputSignalDataTypeName(0, "")
+    %assign outputSig = LibBlockOutputSignal(0, "", "", 0)
+    %assign isVarDims = LibGetIsOutputPortVarDims(0)
+
+    %% Zero for non-buses does complexity but NOT dimensions
+    %assign zero = FixPt_GetGroundValueOrNameFromDataTypeRec(dtRec, isComplex)
+  %endif
+  
+  %assign dTypeIdThru  = LibGetDataTypeIdAliasedThruToFromId(dTypeId)
+  %if isRSim  %% For RSim targets
+    %assign lastPoint = "lastPoint"
+  %else %% For all non-RSim targets
+    %assign lastPoint  = ParamSettings.NumPoints[elIdx] -1
+  %endif
+  %assign timePtr    = LibBlockPWork(TimePtr, "", "", elIdx)
+  %assign dataPtr    = LibBlockPWork(DataPtr, "", "", elIdx)
+  %if isVarDims
+    %assign valDimsPtr = LibBlockPWork(ValDimsPtr, "", "", elIdx)
+  %endif
+  
+  %% Partial Specification (use grounds) ----------------------------------
+  %if ParamSettings.NumPoints[elIdx] == 0
+    %<FrmWksWriteValue(outputSig, zero, sigWidth, 0, 0)>
+    
+  %% Interpolation OFF ----------------------------------------------------
+  %elseif ParamSettings.Interpolate == "off"
+    
+    %assign noTime = FrmWksIsWithoutTime(block,system)
+    
+    %% Interpolation OFF + No Time ----------------------------------------
+    %if noTime
+      %assign numDims = LibBlockOutputSignalNumDimensions(0)
+      int_T currIndex = %<LibBlockIWork(PrevIndex,"","",elIdx)>+1;
+      %<dTypeName> *pDataValues = (%<dTypeName> *) %<dataPtr>;
+      %if isVarDims
+        real_T *pCurrDimsValues = (real_T *) %<valDimsPtr>;
+      %endif
+      
+      %if isRSim
+        int numPoints, lastPoint;
+        FWksInfo  *fromwksInfo = (FWksInfo *) %<LibBlockPWork(RSimInfoPtr, "", "", elIdx)>;
+        numPoints = fromwksInfo->nDataPoints;
+        lastPoint = numPoints-1;
+        %assign numPoints = "numPoints"
+      %else
+        %assign numPoints = ParamSettings.NumPoints[elIdx]
+      %endif
+      
+      %if ParamSettings.OutputAfterFinalValue == "Cyclic repetition"
+        if (currIndex >= %<numPoints>) {
+          currIndex = 0;
+        }
+      %endif
+      
+      if (currIndex < %<numPoints>) {
+        %% Within range of data
+        pDataValues += currIndex;
+        
+        %if isRSim  %% Only for RSim usage
+          %<FrmWksWriteValue(outputSig, "*pDataValues", sigWidth, "pDataValues", "numPoints")>
+        %else  %% For all non-RSim targets
+          %<FrmWksWriteValue(outputSig, "*pDataValues", sigWidth, "pDataValues", ParamSettings.NumPoints[elIdx])>
+        %endif
+        
+        %if isVarDims
+          /* For the variable-size signal, also update valueDimensions. */
+          pCurrDimsValues += currIndex;
+          %foreach dimsIdx = numDims
+            %<SLibGetCurrentOutputPortDimensions(0, dimsIdx)> = (int_T) *pCurrDimsValues;
+            %if isRSim  %% Only for RSim usage
+              pCurrDimsValues += numPoints;
+            %else  %% For all non-RSim targets
+              pCurrDimsValues += %<ParamSettings.NumPoints[elIdx]>;
+            %endif
+          %endforeach
+        %endif
+        
+      } else {
+        
+        %% Interpolation OFF + No Time + End of Data + set to zero -------
+        %if ParamSettings.OutputAfterFinalValue == "Setting to zero"
+          %<FrmWksWriteValue(outputSig, zero, sigWidth, 0, 0)>
+          
+          %if isVarDims
+            /* For the variable-size signal, if "Setting to zero" is checked, set 
+            * valueDimensions to the maximum dimensions after the last point.
+            */
+            %foreach dimsIdx = numDims
+              %assign oDims = LibBlockOutputSignalDimensions(0)
+              %<SLibGetCurrentOutputPortDimensions(0, dimsIdx)> = %<oDims[dimsIdx]>;
+              %if isRSim  %% Only for RSim usage
+                pCurrDimsValues += numPoints;
+              %else  %% For all non-RSim targets
+                pCurrDimsValues += %<ParamSettings.NumPoints[elIdx]>;
+              %endif
+            %endforeach
+          %endif
+        
+        %% Interpolation OFF + No Time + End of Data + hold or repeat -----
+        %else
+          %if isRSim %% Only for RSim usage
+            pDataValues += (numPoints-1);
+            %<FrmWksWriteValue(outputSig, "*pDataValues", sigWidth, "pDataValues", "numPoints")>
+          %else %% For all non-RSim targets
+            pDataValues += (%<ParamSettings.NumPoints[elIdx]-1>);
+            %<FrmWksWriteValue(outputSig, "*pDataValues", sigWidth, "pDataValues", ParamSettings.NumPoints[elIdx])>
+          %endif
+          
+          %if isVarDims
+            /* For the variable-size signal, also update valueDimensions. */
+            %if isRSim  %% Only for RSim usage
+              pCurrDimsValues += (numPoints-1);
+            %else  %% For all non-RSim targets
+              pCurrDimsValues += (%<ParamSettings.NumPoints[elIdx]-1>);
+            %endif
+            %foreach dimsIdx = numDims
+              %<SLibGetCurrentOutputPortDimensions(0, dimsIdx)> = (int_T) *pCurrDimsValues;
+              %if isRSim %% Only for RSim usage
+                pCurrDimsValues += numPoints;
+              %else %% For all non-RSim targets
+                pCurrDimsValues += %<ParamSettings.NumPoints[elIdx]>;
+              %endif  
+            %endforeach
+          %endif
+          
+        %endif
+      }
+      %<LibBlockIWork(PrevIndex,"","",elIdx)> = currIndex;
+      
+    %% Interpolation OFF + Time -------------------------------------------
+    %else
+      %assign numDims = LibBlockOutputSignalNumDimensions(0)
+      real_T t = %<LibGetTaskTimeFromTID(block)>;
+      real_T *pTimeValues = (real_T *) %<timePtr>;
+      %<dTypeName> *pDataValues = (%<dTypeName> *) %<dataPtr>;
+      %if isVarDims
+        real_T *pCurrDimsValues = (real_T *) %<valDimsPtr>;
+      %endif
+      %if isRSim   %% Only for RSim usage
+        int numPoints, lastPoint;
+        FWksInfo *fromwksInfo = (FWksInfo *) %<LibBlockPWork(RSimInfoPtr, "", "", elIdx)>;
+        numPoints = fromwksInfo->nDataPoints;
+        lastPoint = numPoints - 1;
+      %endif
+      
+      %% Before first time
+      if (t < pTimeValues[0]) {
+        %<FrmWksWriteValue(outputSig, zero, sigWidth, 0, 0)>
+        
+        %if isVarDims
+          /* For the variable-size signal, initialize valueDimensions to 0 */
+          %% Although it is ill-defined for var-dims signal in this case,
+          %% we set the pre-simulation value to 0 here (g1298913).
+          %foreach dimsIdx = numDims
+            %<SLibGetCurrentOutputPortDimensions(0, dimsIdx)> = 0;
+          %endforeach
+        %endif
+        
+        %% Interpolation OFF + Time + Set to zero -------------------------
+        %if ParamSettings.OutputAfterFinalValue == "Setting to zero"
+        } else if (t == pTimeValues[%<lastPoint>]) {
+          %if isRSim  %% Only for RSim usage
+            %<FrmWksWriteValue(outputSig, "pDataValues[%<lastPoint>]", sigWidth, "pDataValues", "numPoints")>
+          %else  %% For all non-RSim targets
+            %<FrmWksWriteValue(outputSig, "pDataValues[%<lastPoint>]", sigWidth, "pDataValues", ParamSettings.NumPoints[elIdx])>
+          %endif
+          
+          %if isVarDims
+            /* For the variable-size signal, set valueDimensions to the last point values */
+            %foreach dimsIdx = numDims
+              %<SLibGetCurrentOutputPortDimensions(0, dimsIdx)> = (int_T) pCurrDimsValues[%<lastPoint>];
+              %if isRSim  %% Only for RSim usage
+                pCurrDimsValues += numPoints;
+              %else  %% For all non-RSim targets
+                pCurrDimsValues += %<ParamSettings.NumPoints[elIdx]>;
+              %endif
+            %endforeach
+          %endif
+          
+        } else if (t > pTimeValues[%<lastPoint>]) {
+          %<FrmWksWriteValue(outputSig, zero, sigWidth, 0, 0)>
+          
+          %if isVarDims
+            /* For the variable-size signal, if "Setting to zero" is checked, set
+             * valueDimensions to the maximum dimensions after the last point.
+             */
+            %foreach dimsIdx = numDims
+              %assign oDims = LibBlockOutputSignalDimensions(0)
+              %<SLibGetCurrentOutputPortDimensions(0, dimsIdx)> = %<oDims[dimsIdx]>;
+              %if isRSim  %% Only for RSim usage
+                pCurrDimsValues += numPoints;
+              %else  %% For all non-RSim targets
+                pCurrDimsValues += %<ParamSettings.NumPoints[elIdx]>;
+              %endif
+            %endforeach
+          %endif
+          
+        %% Interpolation OFF + Time + Hold final value --------------------
+        %else %% "holding the final value"
+        } else if (t >= pTimeValues[%<lastPoint>]) {
+          %if isRSim  %% Only for RSim usage
+            %<FrmWksWriteValue(outputSig, "pDataValues[%<lastPoint>]", sigWidth, "pDataValues", "numPoints")>
+          %else  %% For all non-RSim targets
+            %<FrmWksWriteValue(outputSig, "pDataValues[%<lastPoint>]", sigWidth, "pDataValues", ParamSettings.NumPoints[elIdx])>
+          %endif
+            
+          %if isVarDims
+            /* For the variable-size signal, also update valueDimensions. */
+            %foreach dimsIdx = numDims
+              %<SLibGetCurrentOutputPortDimensions(0, dimsIdx)> = (int_T) pCurrDimsValues[%<lastPoint>];
+              %if isRSim  %% Only for RSim usage
+                pCurrDimsValues += numPoints;
+              %else  %% For all non-RSim targets
+                pCurrDimsValues += %<ParamSettings.NumPoints[elIdx]>;
+              %endif
+            %endforeach
+          %endif              
+            
+        %endif
+        
+      %% Interpolation OFF + Time + within time range ---------------------
+      } else {
+        int_T  currTimeIndex = %<LibBlockIWork(PrevIndex,"","",elIdx)>;
+        if (t < pTimeValues[currTimeIndex]) {
+          while (t < pTimeValues[currTimeIndex]) {
+            currTimeIndex--;
+          }
+        } else {
+          while (t >= pTimeValues[currTimeIndex + 1]) {
+            currTimeIndex++;
+          }
+        }
+        %if isRSim  %% Only for RSim usage
+          %<FrmWksWriteValue(outputSig, "pDataValues[currTimeIndex]", sigWidth, "pDataValues", "numPoints")>
+        %else  %% For all non-RSim targets
+          %<FrmWksWriteValue(outputSig, "pDataValues[currTimeIndex]", sigWidth, "pDataValues", ParamSettings.NumPoints[elIdx])>
+        %endif
+        
+        %if isVarDims
+          /* For the variable-size signal, also update valueDimensions. */
+          %foreach dimsIdx = numDims
+            %<SLibGetCurrentOutputPortDimensions(0, dimsIdx)> = (int_T) pCurrDimsValues[currTimeIndex];
+            %if isRSim  %% Only for RSim usage
+              pCurrDimsValues += numPoints;
+            %else  %% For all non-RSim targets
+              pCurrDimsValues += %<ParamSettings.NumPoints[elIdx]>;
+            %endif
+          %endforeach
+        %endif              
+        
+        %<LibBlockIWork(PrevIndex,"","",elIdx)> = currTimeIndex;
+      }
+      
+    %endif
+    
+  %% Interpolation ON -----------------------------------------------------
+  %%   When Interpolate is ON, no variable-size signal is allowed.
+  %else
+    %assign noTime = FrmWksIsWithoutTime(block,system)
+    %if noTime
+      %%START_ASSERT
+      %assign errTxt = "Invalid empty TimeName"
+      %<LibBlockReportError(block, errTxt)>
+      %%END_ASSERT
+    %endif
+    
+    %<dTypeName> *pDataValues = (%<dTypeName> *) %<dataPtr>;
+    
+    %if ParamSettings.NumPoints[elIdx] == 1
+      %<FrmWksWriteValue(outputSig, "pDataValues[0]", sigWidth, "pDataValues", "1")>
+    %else
+      real_T *pTimeValues = (real_T *) %<timePtr>;
+      int_T currTimeIndex = %<LibBlockIWork(PrevIndex,"","",elIdx)>;
+      real_T t = %<LibGetTaskTimeFromTID(block)>;
+      %assign finalIndex = ParamSettings.NumPoints[elIdx]
+      
+      %% Interpolation ON + set to zero -----------------------------------
+      %if ParamSettings.OutputAfterFinalValue == "Setting to zero"
+        if (t > pTimeValues[%<finalIndex-1>]) {
+          %<FrmWksWriteValue(outputSig, zero, sigWidth, 0, 0)>
+        } else {
+      
+      %% Interpolation ON + hold final value ------------------------------
+      %elseif ParamSettings.OutputAfterFinalValue == "Holding final value"
+        if (t >= pTimeValues[%<finalIndex-1>]) {
+          %<FrmWksWriteValue(outputSig, "pDataValues[%<finalIndex-1>]", sigWidth, "pDataValues", finalIndex)>
+        } else {
+      %endif
+        
+      %% Interpolation ON + within or before range ------------------------
+      %if isRSim  %% Only for RSim usage
+        int numPoints, lastPoint;
+        FWksInfo *fromwksInfo = (FWksInfo *) %<LibBlockPWork(RSimInfoPtr, "", "", elIdx)>;
+        numPoints = fromwksInfo->nDataPoints;
+        lastPoint = numPoints - 1;
+        %assign lastPointMinus1 = "lastPoint-1"
+      %else
+        %assign lastPointMinus1 = %<lastPoint-1>
+      %endif
+      
+      /* Get index */
+      if (t <= pTimeValues[0]) {
+        currTimeIndex = 0;
+      } else if (t >= pTimeValues[%<lastPoint>]) {
+        currTimeIndex = %<lastPointMinus1>;
+      } else {
+        if (t < pTimeValues[currTimeIndex]) {
+          while (t < pTimeValues[currTimeIndex]) {
+            currTimeIndex--;
+          }
+        } else {
+          while (t >= pTimeValues[currTimeIndex + 1]) {
+            currTimeIndex++;
+          }
+        }
+      }
+      %<LibBlockIWork(PrevIndex,"","",elIdx)> = currTimeIndex;
+          
+      /* Post output */
+      {
+        real_T t1 = pTimeValues[currTimeIndex];
+        real_T t2 = pTimeValues[currTimeIndex + 1];
+        
+        if (t1 == t2) {
+          if (t < t1) {
+            %if isRSim  %% Only for RSim usage
+              %<FrmWksWriteValue(outputSig, "pDataValues[currTimeIndex]", sigWidth, "pDataValues", "numPoints")>
+            %else  %% For all non-RSim targets
+              %<FrmWksWriteValue(outputSig, "pDataValues[currTimeIndex]", sigWidth, "pDataValues", ParamSettings.NumPoints[elIdx])>
+            %endif
+          } else {
+            %if isRSim  %% Only for RSim usage
+              %<FrmWksWriteValue(outputSig, "pDataValues[currTimeIndex + 1]", sigWidth, "pDataValues", "numPoints")>
+            %else  %% For all non-RSim targets
+              %<FrmWksWriteValue(outputSig, "pDataValues[currTimeIndex + 1]", sigWidth, "pDataValues", ParamSettings.NumPoints[elIdx])>
+            %endif
+          }
+        } else {
+          %if dTypeIdThru != tSS_BOOLEAN
+            real_T f1 = (t2 - t) / (t2 - t1);
+            real_T f2 = 1.0 - f1;
+          %endif
+          %<dTypeName> d1;
+          %<dTypeName> d2;
+          
+          %switch dTypeIdThru
+            %case tSS_DOUBLE
+            %case tSS_SINGLE
+              int_T TimeIndex= currTimeIndex;
+              %if (NumNonsampledZCs > 0)   
+                
+                %% Get the pointer to the ZC indices
+                %assign numDups = LibBlockDWorkWidth(ZCTimeIndices) / numSignals
+                %if elIdx > 0
+                  %assign offset = elIdx * numDups
+                  int_T* zcTimeIndices = %<LibBlockDWorkAddr(ZCTimeIndices, "", "", 0)> + %<offset>;
+                %else
+                  int_T* zcTimeIndices = %<LibBlockDWorkAddr(ZCTimeIndices, "", "", 0)>;
+                %endif
+            
+                %% Get the pointer to the current ZC index
+                int_T *zcTimeIndicesIdx     =&%<LibBlockDWork(CurZCTimeIndIdx,"","",elIdx)>;
+                int_T zcIdx                 = zcTimeIndices[*zcTimeIndicesIdx];  
+                int_T numZcTimes            = %<numDups>;
+                    
+                if ( *zcTimeIndicesIdx < numZcTimes) {   
+                  if ( %<RTMIs("MajorTimeStep")> ) {
+                    if (t > pTimeValues[zcIdx]) {
+                      while( *zcTimeIndicesIdx < (numZcTimes-1) && 
+                      (t > pTimeValues[zcIdx]) ){
+                        (*zcTimeIndicesIdx)++;
+                        zcIdx = zcTimeIndices[*zcTimeIndicesIdx];  
+                      }
+                    }
+                  } else {
+                    if ( t >= pTimeValues[zcIdx] && (%<RTMGet("TimeOfLastOutput")> < pTimeValues[zcIdx])){
+                      t2 = pTimeValues[zcIdx];      
+                      if (zcIdx == 0) {
+                        TimeIndex = 0; 
+                        t1 = t2 - 1; 
+                      } else {
+                        t1 = pTimeValues[zcIdx-1];
+                        TimeIndex = zcIdx - 1 ;
+                      }
+                      
+                      f1 = (t2 - t) / (t2 - t1);
+                      f2 = 1.0 - f1;    
+                    }
+                  }
+                }
+            %endif
+                    
+            %assign dType = LibGetDataTypeNameFromId(dTypeId)
+            %<FrmWksWriteElLoopBegin(sigWidth)>
+            %assign yRe = FrmWksGetInputElementVar(outputSig, isComplex, sigWidth, TLC_FALSE)
+            %assign yIm = FrmWksGetInputElementVar(outputSig, isComplex, sigWidth, TLC_TRUE)
+            
+            d1 = pDataValues[TimeIndex];
+            d2 = pDataValues[TimeIndex + 1];
+            %if (NumNonsampledZCs > 0)
+              if (zcIdx == 0) {
+                d2 = d1;
+              }
+            %endif                		                        
+            
+            %if isComplex
+              %assign d1re = "d1.%<tRealPart>"
+              %assign d2re = "d2.%<tRealPart>"
+              %<yRe> = (%<dType>) rtInterpolate(%<d1re>, %<d2re>, f1, f2);
+              %assign d1im = "d1.%<tImagPart>"
+              %assign d2im = "d2.%<tImagPart>"
+              %<yIm> = (%<dType>) rtInterpolate(%<d1im>, %<d2im>, f1, f2);
+            %else
+              %<yRe> = (%<dType>) rtInterpolate(d1, d2, f1, f2);
+            %endif
+            
+            %if isRSim  %% Only for RSim usage
+              pDataValues += numPoints;
+            %else %% for all non-RSim targets
+              pDataValues += %<ParamSettings.NumPoints[elIdx]>;
+            %endif
+            
+            %<FrmWksWriteElLoopEnd(sigWidth)>
+            %break
+          
+          %case tSS_INT8
+          %case tSS_INT16
+          %case tSS_INT32
+          %case tSS_UINT8
+          %case tSS_UINT16
+          %case tSS_UINT32
+            real_T  tempOut;
+            
+            %assign dType = LibGetDataTypeNameFromId(dTypeId)
+            %assign dTypeThru = LibGetDataTypeNameFromId(dTypeIdThru)
+            %assign dTypeThruMaxId = "%<GET_TYPE_ID_REPLACEMENT("MAX_%<dTypeThru>")>"
+            %assign dTypeThruMinId = "%<GET_TYPE_ID_REPLACEMENT("MIN_%<dTypeThru>")>"
+            %if SIZE(dTypeThru, 1) >= 4
+              %assign dTypeThruPrefix = dTypeThru[0] + dTypeThru[1] + dTypeThru[2] + dTypeThru[3]
+              %if dTypeThru == "uint64_T"
+                %assign dTypeThruMinId = "((uint64_T)(0UL))"
+              %elseif dTypeThruPrefix == "uint"
+                %assign dTypeThruMinId = "((%<dTypeThru>)(0U))"
+              %endif
+            %endif
+            %<FrmWksWriteElLoopBegin(sigWidth)>
+            %assign yRe = FrmWksGetInputElementVar(outputSig, isComplex, sigWidth, TLC_FALSE)
+            %assign yIm = FrmWksGetInputElementVar(outputSig, isComplex, sigWidth, TLC_TRUE)
+              
+            d1 = pDataValues[currTimeIndex];
+            d2 = pDataValues[currTimeIndex + 1];
+            %if isComplex
+              %assign d1re = "d1.%<tRealPart>"
+              %assign d2re = "d2.%<tRealPart>"
+              tempOut = rtInterpolate(%<d1re>, %<d2re>, f1, f2);
+              if (tempOut >= %<dTypeThruMaxId>) {
+                %<yRe> = %<dTypeThruMaxId>;
+              } else if (tempOut <= %<dTypeThruMinId>) {
+                %<yRe> = %<dTypeThruMinId>;
+              } else {
+                %<yRe> = (%<dType>) rtRound(tempOut);
+              }
+              %assign d1im = "d1.%<tImagPart>"
+              %assign d2im = "d2.%<tImagPart>"
+              tempOut = rtInterpolate(%<d1im>, %<d2im>, f1, f2);
+              if (tempOut >= %<dTypeThruMaxId>) {
+                %<yIm> = %<dTypeThruMaxId>;
+              } else if (tempOut <= %<dTypeThruMinId>) {
+                %<yIm> = %<dTypeThruMinId>;
+              } else {
+                %<yIm> = (%<dType>) rtRound(tempOut);
+              }
+            %else
+              tempOut = rtInterpolate(d1, d2, f1, f2);
+              if (tempOut >= %<dTypeThruMaxId>) {
+                %<yRe> = %<dTypeThruMaxId>;
+              } else if (tempOut <= %<dTypeThruMinId>) {
+                %<yRe> = %<dTypeThruMinId>;
+              } else {
+                %<yRe> = (%<dType>) rtRound(tempOut);
+              }
+            %endif
+            
+            %if isRSim  %% Only for RSim usage
+              pDataValues += numPoints;
+            %else %% for all non-RSim targets
+              pDataValues += %<ParamSettings.NumPoints[elIdx]>;
+            %endif
+            
+            %<FrmWksWriteElLoopEnd(sigWidth)>
+            %break
+            
+          %case tSS_BOOLEAN
+            %<FrmWksWriteElLoopBegin(sigWidth)>
+            %assign y = FrmWksGetInputElementVar(outputSig, isComplex, sigWidth, TLC_FALSE)
+            
+            d1 = pDataValues[currTimeIndex];
+            d2 = pDataValues[currTimeIndex + 1];
+            
+            %% Write:  %<y> = (fabs(t-t1) < fabs(t-t2)) ? d1 : d2;
+            %assign t_t1 = LibGenMathFcnCall("abs", tSS_DOUBLE, "t-t1", "")
+            %assign t_t2 = LibGenMathFcnCall("abs", tSS_DOUBLE, "t-t2", "")
+            %<y> = (%<t_t1> < %<t_t2>) ? d1 : d2;
+            
+            %if isRSim  %% Only for RSim usage
+              pDataValues += numPoints;
+            %else %% for all non-RSim targets
+              pDataValues += %<ParamSettings.NumPoints[elIdx]>;
+            %endif
+            
+            %<FrmWksWriteElLoopEnd(sigWidth)>
+            %break
+            
+          %default
+            %%START_ASSERT
+            %assign errTxt = "Invalid data type id %<dTypeId>"
+            %<LibBlockReportError(block, errTxt)>
+            %%END_ASSERT
+        %endswitch
+        }
+      }
+      
+      %if ParamSettings.OutputAfterFinalValue == "Holding final value" || ...
+        ParamSettings.OutputAfterFinalValue == "Setting to zero"
+        }
+      %endif
+    
+    %endif %% Interpolation ON + more than 1 point
+  %endif %% Interpolation ON
+  
+%endfunction
+  
+%% Function: Terminate ====================================================
+%%   Free PWorks used with RSim target
+%function Terminate(block, system) Output
+  %if isRSim
+    
+    %assign numSignals = FrmWksGetNumSignals(block, system)
+    %assign rollVars = ["<pwork>/RSimInfoPtr"]
+    %assign rollRegion = [0:%<numSignals-1>]
+    %roll sigIdx=rollRegion, lcv=RollThreshold, block, "Roller", rollVars
+      rt_FREE(%<LibBlockPWork(RSimInfoPtr, "", lcv, sigIdx)>);
+    %endroll
+  %endif
+%endfunction
+
+%% Function: ZeroCrossings ================================================
+%%   NSZC[i] = time - timeptr[ZcTimesIndices[CurZCTimeIndIdx]];
+%function ZeroCrossings(block, system) Output
+    %if Accelerator
+      /* Call into Simulink */
+      %<SLibCallBlockInSimulink(system, block, "SS_CALL_MDL_ZERO_CROSSINGS")>
+    %else
+      %assign time = LibGetT()
+      %assign numSignals = FrmWksGetNumSignals(block, system)
+      %assign rollVars = [...
+        "<pwork>/TimePtr", ...
+        "<dwork>/ZCTimeIndices", ...
+        "<dwork>/CurZCTimeIndIdx", ...
+        "zcsv0"]
+      %assign rollRegion = [0:%<numSignals-1>]
+      %roll sigIdx=rollRegion, lcv=RollThreshold, block, "Roller", rollVars
+        {
+          const double* timePtr  = (double *)%<LibBlockPWork(TimePtr, "", lcv, sigIdx)>;          
+        
+          %% Get the pointer to the ZC indices
+          %if sigIdx > 0
+            %assign numDups = LibBlockDWorkWidth(ZCTimeIndices) / numSignals
+            %assign offset = sigIdx * numDups
+            int_T* zcTimeIndices = %<LibBlockDWorkAddr(ZCTimeIndices, "", "", 0)> + %<offset>;
+          %else
+            int_T* zcTimeIndices = %<LibBlockDWorkAddr(ZCTimeIndices, "", "", 0)>;
+          %endif            
+          int_T zcTimeIndicesIdx = %<LibBlockDWork(CurZCTimeIndIdx,"",lcv,sigIdx)>;
+          
+          %<LibBlockZCSignalValue("", lcv, 0, sigIdx)> = %<time> - timePtr[zcTimeIndices[zcTimeIndicesIdx]];  
+        }
+      %endroll
+    %endif
+%endfunction
+
+%% Function: FrmWksWriteValue =============================================
+%%   Utility method to write a single data point to the output data
+%function FrmWksWriteValue(dstVar, srcVar, width, ptrToInc, incVal) Output
+
+  %if width > 1
+    {
+      int_T elIdx;
+      for(elIdx = 0; elIdx < %<width>; ++elIdx) {
+        (&%<dstVar>)[elIdx] = %<srcVar>;
+        %if !ISEQUAL(ptrToInc,0)
+          %<ptrToInc> += %<incVal>;
+        %endif
+      }
+    }
+  %else
+    %<dstVar> = %<srcVar>;
+  %endif
+  
+%endfunction
+
+%% Function: FrmWksWriteValue =============================================
+%%   Get the name of the input element based on whether the element is a
+%%   vector.  For example,
+%%
+%%     srcVar  = rtb_FrmWks1.sub_bus.a
+%%   isComplex = 1
+%%     width   = 2
+%%     complex = TLC_TRUE
+%%   OUTPUT:  rtb_FrmWks1.sub_bus.a[elIdx].im
+%%
+%%     srcVar  = rtb_FrmWks1.sub_bus.a
+%%   isComplex = 1
+%%     width   = 1
+%%     complex = TLC_TRUE
+%%   OUTPUT:  rtb_FrmWks1.sub_bus.a.im
+%function FrmWksGetInputElementVar(srcVar, isComplex, width, complex)
+
+  %if complex
+    %assign cmpPart = tImagPart
+  %else
+    %assign cmpPart = tRealPart
+  %endif
+    
+  %% Wide, Complex
+  %if width > 1 && isComplex
+    %return "((&%<srcVar>)[elIdx]).%<cmpPart>"
+    
+  %% Wide, Non-Complex
+  %elseif width > 1 && !isComplex
+      %return "(&%<srcVar>)[elIdx]"
+    
+  %% Scalar, Complex
+  %elseif isComplex
+      %return "%<srcVar>.%<cmpPart>"
+    
+  %% Scalar, Non-Complex
+  %else
+    %return srcVar
+  %endif
+  
+%endfunction
+
+%% Function: FrmWksWriteElLoopBegin =======================================
+%%   If the signal is wide, add a loop start
+%function FrmWksWriteElLoopBegin(width) Output
+  %if width > 1
+    {
+      int_T elIdx;
+      for(elIdx = 0; elIdx < %<width>; ++elIdx) {
+  %endif
+%endfunction
+
+%% Function: FrmWksWriteElLoopEnd =========================================
+%%   If the signal is wide, add a loop start
+%function FrmWksWriteElLoopEnd(width) Output
+  %if width > 1
+      }
+    }
+  %endif
+%endfunction
+
+%% Function: FrmWksGetNumSignals ==========================================
+%%   If the signal is wide, add a loop start
+%function FrmWksGetNumSignals(block, system)
+  %assign portType = LibBlockOutputSignalDataTypeId(0)
+  %if LibDataTypeIsBus(portType)
+    %return DataValues.NumElements
+  %else
+    %return 1
+  %endif
+%endfunction
+
+%% Function: FrmWksIsWithoutTime ==========================================
+%%   Determine if a From Workspace block is loading data without time
+%function FrmWksIsWithoutTime(block, system)
+  
+  %% Buses always have time
+  %assign portType  = LibBlockOutputSignalDataTypeId(0)
+  %if LibDataTypeIsBus(portType)
+    %return TLC_FALSE
+    
+  %% For RSIM, check the RTP for time
+  %elseif isRSim
+    %assign time = LibBlockParameterSize(Time0)
+    %return (time[1] == 0)
+    
+  %% For non-RSIM, check the TLC time vector
+  %else
+    %return (SIZE(TimeValues.Val0, 1) == 0)
+  %endif
+      
+%endfunction
+
+%% [EOF] fromwks.tlc

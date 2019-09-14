@@ -1,0 +1,95 @@
+%% 
+%%  
+%% 
+%%
+%% Copyright 1994-2009 The MathWorks, Inc.
+%%
+%% Abstract: Void target file
+
+%implements "ResetIntegrator" "C"
+
+%% Function: InitializeConditions =============================================
+%% Abstract:
+%%      InitialConditions
+%%
+%function InitializeConditions(block, system) Output
+  %assign rollVars = ["P","Xc"]
+  %roll sigIdx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+    %<LibBlockContinuousState("", lcv, sigIdx)> \
+      = %<LibBlockParameter(InitialCondition, "", lcv, sigIdx)>;
+  %endroll
+
+%endfunction %% InitializeConditions
+
+
+%% Function: Outputs ==========================================================
+%% Abstract:
+%%      Y = X
+%%
+%function Outputs(block, system) Output
+  %assign rollVars = ["Y","Xc"]
+  %roll sigIdx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+    %<LibBlockOutputSignal(0, "", lcv, sigIdx)> \
+      = %<LibBlockContinuousState("", lcv, sigIdx)>;
+  %endroll
+ 
+%endfunction
+
+%% Function: Derivatives ======================================================
+%% Abstract:
+%%      Derivatives
+%%
+%function Derivatives(block, system) Output
+  {
+  %assign rollVars = ["u0","xdot"]
+  %roll sigIdx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+    %<LibBlockContinuousStateDerivative("",lcv,sigIdx)>
+      = %<LibBlockInputSignal(0, "", lcv, sigIdx)>;
+  %endroll
+  }
+
+%endfunction
+
+%% ForcingFunction ============================================================
+%% Abstract:
+%%      ForcingFunction
+%%
+%function ForcingFunction(block, system) Output
+  %if ::CompiledModel.ModelIsLinearlyImplicit == "yes" 
+    %<Derivatives(block,system)>
+  %endif
+%endfunction
+
+%% Function: Update ===========================================================
+%% Abstract:
+%%      Update
+%%
+%function Update(block, system) Output
+  %assign resetPortWidth = LibGetRecordWidth(DataInputPort[1])
+  %if resetPortWidth == 1
+    %assign resetSignal = LibBlockInputSignal(1, "", "", 0)
+    if (%<resetSignal> != 0.0) {
+      %assign rollVars = ["u2","Xc"]
+      %roll sigIdx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+	%<LibBlockContinuousState("", lcv, sigIdx)> \
+	= %<LibBlockInputSignal(2, "", lcv, sigIdx)>;
+      %endroll      
+      %<RTMSetContTimeOutputInconsistentWithStateAtMajorStep()>;
+      %<RTMSetBlockStateForSolverChangedAtMajorStep()>;
+    }
+  %else
+    %assign rollVars = ["u1","u2","Xc"]
+    %roll sigIdx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+      %assign resetSignal = LibBlockInputSignal(1, "", lcv, sigIdx)
+      if (%<resetSignal> != 0.0) {
+        %<LibBlockContinuousState("", lcv, sigIdx)> \
+          = %<LibBlockInputSignal(2, "", lcv, sigIdx)>;	
+          %<RTMSetContTimeOutputInconsistentWithStateAtMajorStep()>;
+          %<RTMSetBlockStateForSolverChangedAtMajorStep()>;
+          
+        }
+    %endroll
+  %endif
+ 
+%endfunction
+

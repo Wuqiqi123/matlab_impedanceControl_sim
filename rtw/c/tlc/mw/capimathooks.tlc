@@ -1,0 +1,29 @@
+%% ============================================================================
+%%
+%% Abstract:
+%%      C-API MAT-File Hook File Implementation
+%%
+%% Copyright 2010-2013 The MathWorks, Inc.
+%%
+
+%implements "CAPIHook" "C"
+
+%% ============================================================================
+%% Function FcnCAPIHook
+%% Abstract: 
+%%    Save the CAPIHookData to a MAT-file in the build directory.
+%function FcnCAPIHook(CAPIHookData) void
+   %assign CodeGenModel = ::CompiledModel.Name
+   %assign IsModelReference = IsModelReferenceRTWTarget()
+   %% write the MAT-file
+   %assign output = FEVAL("coder.internal.writeCAPIMATFile", ...
+                          CAPIHookData, ...
+                          CodeGenModel, ...
+                          IsModelReference)   
+   %if ISEMPTY(output) || (TYPE(output) != "Scope")
+      %exit Failed to call writeCAPIMATFile function
+   %endif
+   %if output.success != 1
+     %exit Failed during call to writeCAPIMATFile: %<output.message>
+   %endif
+%endfunction

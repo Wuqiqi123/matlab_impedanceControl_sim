@@ -1,0 +1,74 @@
+%%
+%%  
+%%
+%% Abstract:
+%%   TLC file for generating utAssert macros accessed via
+%%   Target Function Library (TFL).
+%%
+%% Copyright 2008-2009 The MathWorks, Inc.
+
+%implements "genutassert" "C"
+
+%% Function: utAssert ====================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header for utAssert.h.
+%%
+%function utAssert(fctInfo,fileH,fileC) void
+  
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+  
+  %openfile buf
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+  %openfile buf
+
+  /*=========*
+   * Asserts *
+   *=========*/
+
+  #ifndef utAssert 
+  # if defined(DOASSERTS)
+  #  if !defined(PRINT_ASSERTS)
+  #    include <assert.h>
+  #    define utAssert(exp)  assert(exp)
+  #  else
+  #    include <stdio.h>
+       %assign fcnName = "_assert"
+       %assign fcnReturns = "static void"
+       %assign fcnParams = "char *statement, char *file, int line"
+       %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+         Category "utility"; GeneratedBy "genutassert.tlc"}
+       %<SLibDumpFunctionBanner(fcnRec)>
+       %undef fcnRec
+       %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+       %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+       %<fcnReturns> %<fcnName>(%<fcnParams>)
+       {
+          printf("%s in %s on line %d\n", statement, file, line);
+       }
+       %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  #   define utAssert(_EX) ((_EX) ? (void)0 : _assert(#_EX, __FILE__, __LINE__))
+  #  endif
+  # else
+  #  define utAssert(exp) /* do nothing */
+  # endif
+  #endif
+
+
+  %closefile buf
+  
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+  
+  %% No source file, only a header
+  %<SLibFilterUtilSourceFile(fileC)>
+%endfunction

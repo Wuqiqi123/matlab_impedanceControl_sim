@@ -1,0 +1,504 @@
+%% SYSTLC: Rapid Acceleration Target 
+%% TMF: raccel_default_tmf MAKE: make_rtw EXTMODE: ext_comm
+%%
+%%  raccel.tlc
+%%   Abstract
+%%	System target file for the Rapid Acceleration Target (raccel).
+%%
+%% 
+%%
+%% Copyright 2007-2016 The MathWorks, Inc.
+%% Abstract: Rapid Acceleration Target -- system target file.
+
+
+%assign TargetType = "NRT"
+%assign Language   = "C"
+%assign tMdlRefSfcnS = "rtS"
+%assign tMdlRefSfcnSType = "SimStruct *const"
+%assign rsimIsNotModelReferenceTarget = ::CompiledModel.ModelReferenceTargetType == "NONE"
+%assign rsimHasModelReferenceBlocks   = ::CompiledModel.NumModelReferenceBlocksInModel > 0
+
+%% Global variable "GenCPP" not computed yet.  Duplicate code here.
+%assign rsimGenCPP = ISFIELD(::CompiledModel.ConfigSet, "TargetLang") && ...
+  (::CompiledModel.ConfigSet.TargetLang == "C++")
+
+%% When generating model reference code, or when 
+%% a model contains model blocks, then we must use
+%% the Simulink solvers because of the global timing engine.
+%assign mrGlobalTiming = (!rsimIsNotModelReferenceTarget || rsimHasModelReferenceBlocks)
+
+%if EXISTS("CompiledModel")
+  %assign _RSIM_FULL_=1
+%endif
+
+%selectfile NULL_FILE
+%assign _RSIM_            =  1
+%assign _RACCEL_          =  1
+%assign GBLFrFStartIdx    = -1
+%assign GBLFrFOutputIdx   = -1
+%assign GBLFrFTermIdx     = -1
+%assign GBLFrWksStartIdx  = -1
+%assign GBLFrWksOutputIdx = -1
+%assign DataTypeTransInfo =  1
+
+%assign MatFileLogging = 1
+
+%include "genmap.tlc"
+%include "hookslib.tlc"
+%include "funclib.tlc"
+
+%% Prior to parsing name replacements strings for "to file" and
+%% "from file" blocks, we malloc memory for these strings.
+%% In typical code generation targets, BlockTypeSetup will initialize
+%% numbers of blocks of a certain type, etc. However, since rsim_main
+%% parses before model start, and we need to know the
+%% number of "to file" and "from file" blocks, when the number of
+%% these blocks is zero, we cannot rely on BlockTypeSetup for
+%% this information.
+%%
+%% Whether a "from file" or "to file" block is used in model or not,
+%% rsim.tlc can determine the number of instances -- including zero if
+%% that is the case. Then, the parser can use this info to determine
+%% whether or not to malloc and whether a user is trying to rename a
+%% such a block type when none may exist in a model.
+
+
+%openfile initGlobalParamBuffer
+
+%assign numFrFiles = 0
+%assign numToFiles = 0
+%assign numFrFBlocks = 0
+%assign numToFBlocks = 0
+%assign numFromWksBlocks = 0
+%foreach idx = ::CompiledModel.NumBlockTypeCounts
+  %if ::CompiledModel.BlockTypeCount[idx].Type == "FromFile"
+    %assign numFrFBlocks = %<::CompiledModel.BlockTypeCount[idx].Count>
+  %endif
+  %if ::CompiledModel.BlockTypeCount[idx].Type == "ToFile"
+    %assign numToFBlocks = %<::CompiledModel.BlockTypeCount[idx].Count>
+  %endif
+  %if ::CompiledModel.BlockTypeCount[idx].Type == "FromWorkspace"
+    %assign numFromWksBlocks = %<::CompiledModel.BlockTypeCount[idx].Count>
+  %endif
+%endforeach
+
+%if ISFIELD(::CompiledModel, "UniqueFromFiles")
+  %assign numFrFiles = SIZE(::CompiledModel.UniqueFromFiles,1)
+%endif
+
+%if ISFIELD(::CompiledModel, "UniqueToFiles")
+  %assign numToFiles= SIZE(::CompiledModel.UniqueToFiles,1)
+%endif
+
+%assign USERTWCAPI = TLC_FALSE
+
+%assign USERTWCAPI = ...
+  ( (EXISTS("RTWCAPISignals") && RTWCAPISignals == TLC_TRUE) || ...
+    (EXISTS("RTWCAPIParams") && RTWCAPIParams == TLC_TRUE) )
+
+%%
+%% Sub models may need the RTWCAPi even though the user has not specified it so
+%% This code is replicated from setuplib.tlc 
+%%
+
+%if !USERTWCAPI && rsimIsNotModelReferenceTarget && rsimHasModelReferenceBlocks 
+  %assign dlo = ::CompiledModel.DataLoggingOpts
+  %if ((dlo.StateSaveName != "" || dlo.FinalStateName != "") && ...
+    (MatFileLogging == 1))
+    %assign USERTWCAPI = TLC_TRUE
+  %endif
+%endif
+
+%%
+%%Top Level RSim executable does not use the rtModel
+%%so the RTWCAPI data structure is created as a global
+%%variable. To be uniform  across targets, get and set
+%%macros are defined 
+%%
+
+%if(USERTWCAPI)
+  %assign ::RSimRTWCAPIType = "DataMapInfo"  
+  %assign ::RSimRTWCAPIVar  = "rt_dataMapInfo" 
+  %assign ::RSimRTWCAPIVarPtr  = "%<RSimRTWCAPIVar>Ptr"  
+  %assign ::RSimRTWCAPIMMIType = "rtwCAPI_ModelMappingInfo" 
+  %assign ::RSimRTWCAPIMMIVarPtr = "rt_modelMapInfoPtr" 
+%endif
+%if ::rsimGenCPP
+extern "C" {
+%endif
+
+extern void* CreateDiagnosticAsVoidPtr_wrapper(const char* id, int nargs, ...);
+RTWExtModeInfo* gblRTWExtModeInfo = NULL;
+extern boolean_T gblExtModeStartPktReceived;
+
+void raccelForceExtModeShutdown()
+{
+     if (!gblExtModeStartPktReceived) 
+     { 
+         boolean_T stopRequested = false;
+         rtExtModeWaitForStartPkt(gblRTWExtModeInfo, %<::CompiledModel.NumRuntimeExportedRates>, &stopRequested); 
+     } 
+    
+     rtExtModeShutdown(%<::CompiledModel.NumRuntimeExportedRates>); 
+}
+
+%if rsimIsNotModelReferenceTarget
+  #include "slsv_diagnostic_codegen_c_api.h"
+  const int_T gblNumToFiles = %<numToFiles>;
+  const int_T gblNumFrFiles = %<numFrFiles>;
+  const int_T gblNumFrWksBlocks = %<numFromWksBlocks>;
+
+#ifdef RSIM_WITH_SOLVER_MULTITASKING
+  boolean_T gbl_raccel_isMultitasking = 1;
+#else
+  boolean_T gbl_raccel_isMultitasking = 0;
+#endif
+
+  %assign tid01Eq = ( ISEQUAL(::CompiledModel.SolverType, "FixedStep") && ...
+                      ::CompiledModel.FixedStepOpts.TID01EQ )
+  boolean_T gbl_raccel_tid01eq = %<tid01Eq>;
+  int_T gbl_raccel_NumST = %<::CompiledModel.NumSampleTimes>;
+  const char_T *gbl_raccel_Version = "%<::CompiledModel.Version>";
+  
+void raccel_setup_MMIStateLog(SimStruct* S){
+#ifdef UseMMIDataLogging
+  rt_FillStateSigInfoFromMMI(ssGetRTWLogInfo(S),&ssGetErrorStatus(S));
+#else
+  UNUSED_PARAMETER(S);
+#endif
+}
+  
+  %if USERTWCAPI   
+    static %<RSimRTWCAPIType>  %<RSimRTWCAPIVar>;
+    %<RSimRTWCAPIType>* %<RSimRTWCAPIVarPtr> = &%<RSimRTWCAPIVar>;
+    %<RSimRTWCAPIMMIType>* %<RSimRTWCAPIMMIVarPtr> = ...
+      &(%<RSimRTWCAPIVar>.mmi);
+  %endif  
+      
+  %assign buildDir       = FEVAL("Simulink.filegen.internal.BuildFolderCache.getRelativeBuildDirFor", "%<::CompiledModel.Name>")
+
+  %assign modelName       = ::CompiledModel.Name
+  %assign fileNameSuffix  = "_Jpattern.mat"
+  %assign filesep         = FEVAL("filesep")
+  %assign fullpath        = "%<buildDir>%<filesep>%<modelName>%<fileNameSuffix>"
+  %assign FULLPATH        = LibChangeSlashToDoubleSlash(fullpath)
+  const char *gblSlvrJacPatternFileName = "%<FULLPATH>";
+  
+  %% Add Information for -i option
+  %with ::CompiledModel
+    %assign numRootInportBlks = ExternalInputs.NumExternalInputs 
+    %assign numModelInputs    = NumModelInputs
+    %assign numUnconstrainedPartitions = ExternalInputs.NumUnconstrainedPartitions
+
+    /* Root inports information  */
+    const int_T gblNumRootInportBlks = %<numRootInportBlks>;
+    const int_T gblNumModelInputs    = %<numModelInputs>;
+    
+    extern rtInportTUtable *gblInportTUtables; 
+    extern const char *gblInportFileName;
+    
+    %assign comma = ""
+    
+    %if NumModelInputs > 0 
+      %assign temp =""            
+    %else   
+      %assign temp ="-1"
+    %endif
+    
+    %assign dimsStr        = temp           
+    %assign dataTypeIdxStr = temp
+    %assign isComplexStr   = temp 
+    %assign isInterpolStr  = temp  
+    %assign inportContinuousStr = temp
+    
+    %foreach idx = numRootInportBlks  
+      %assign extInp         = ExternalInputs.ExternalInput[idx]
+      %assign cgTypeIdx      = LibGetRecordCGTypeIdx(extInp)
+      %assign numDims        = LibCGTypeNumDimensions(cgTypeIdx)
+      %assign dims           = LibCGTypeDimensions(cgTypeIdx)
+    
+      %assign dimsStr        = dimsStr        + comma + "%<dims[0]>"                
+      
+      %assign dataTypeIdxStr = dataTypeIdxStr + comma \
+      + "%<LibCGTypeToSLType(cgTypeIdx)>"
+    
+      %assign isComplexStr   = isComplexStr   + comma \
+      + "%<LibCGTypeIsComplex(cgTypeIdx)>"
+      
+      %assign isInterpolStr   = isInterpolStr + comma \
+      + "%<extInp.Interpolation>"
+    
+      %assign inportContinuousStr   = inportContinuousStr + comma \
+      + "%<LibIsContinuous(extInp.TID)>"
+      
+      %if numDims > 1    
+        %assign dimsStr     = dimsStr + ", " + "%<dims[1]>"
+      %else 
+        %assign dimsStr     = dimsStr + ", " + "1" 
+      %endif
+      
+      %assign comma    = ", "       
+      
+    %endforeach 
+    const int_T gblInportDataTypeIdx[]   = {%<dataTypeIdxStr>};
+    const int_T gblInportDims[]          = {%<dimsStr>} ;                   
+    const int_T gblInportComplex[]       = {%<isComplexStr>};
+    const int_T gblInportInterpoFlag[]   = {%<isInterpolStr>};    
+    const int_T gblInportContinuous[]    = {%<inportContinuousStr>};
+
+    %assign enableFcnCallStr  = ""
+    %assign comma = ""
+    %foreach idx = %<::CompiledModel.NumSampleTimes>
+      %assign enableFcnCallStr = enableFcnCallStr + comma + "1"
+      %assign comma    = ", "       
+    %endforeach
+    int_T enableFcnCallFlag[]   = {%<enableFcnCallStr>};
+    
+    %if numUnconstrainedPartitions > 0
+      %assign unconstrainedPartitionSignalIdsStr = ""
+      %assign unconstrainedPartitionNumHitsStr = ""
+      %assign comma = ""
+      %foreach idx = numUnconstrainedPartitions
+        %assign unconstrainedPartitionSignalIdsStr = unconstrainedPartitionSignalIdsStr + comma + "-1"
+        %assign unconstrainedPartitionNumHitsStr = unconstrainedPartitionNumHitsStr + comma + "0"
+        %assign comma  = ", "       
+      %endforeach
+      int_T gblUnconstrainedPartitionSignalIds[]   = {%<unconstrainedPartitionSignalIdsStr>};
+      uint_T gblUconstrainedPartitionNumHits[]   = {%<unconstrainedPartitionNumHitsStr>};
+      %endif %% numUnconstrainedPartitions > 0
+
+  %endwith
+  
+%endif
+%if numFrFBlocks != 0
+    FrFInfo %<::CompiledModel.Name>_gblFrFInfo[%<numFrFBlocks>];
+%endif
+%if ::rsimGenCPP
+}
+%endif
+
+%closefile initGlobalParamBuffer
+%<LibPrmFileCustomCode(initGlobalParamBuffer,"header")>
+
+
+%if rsimIsNotModelReferenceTarget
+%openfile externGlobalParamBuffer
+%if ::rsimGenCPP
+#ifdef __cplusplus
+extern "C" {
+#endif
+%endif
+extern const int_T gblNumToFiles;
+extern const int_T gblNumFrFiles;
+extern const int_T gblNumFrWksBlocks;
+extern rtInportTUtable *gblInportTUtables; 
+extern const char *gblInportFileName;
+extern const int_T gblNumRootInportBlks;
+extern const int_T gblNumModelInputs;
+extern const int_T gblInportDataTypeIdx[];
+extern const int_T gblInportDims[];         
+extern const int_T gblInportComplex[];       
+extern const int_T gblInportInterpoFlag[];   
+extern const int_T gblInportContinuous[];
+extern const int_T gblParameterTuningTid;
+
+%%
+%%Top Level RSim executable does not use the rtModel
+%%so the RTWCAPI data structure is created as a global
+%%variable. To be uniform  across targets, get and set
+%%macros are defined 
+%%
+%if USERTWCAPI
+  extern %<RSimRTWCAPIType>* %<RSimRTWCAPIVarPtr>; 
+  extern %<RSimRTWCAPIMMIType>* %<RSimRTWCAPIMMIVarPtr>;
+%endif
+
+%%
+%% S-Function API function prototypes to avoid warnings, especially 
+%% relating to CPP code generation where otherwise the compiler 
+%% might assume a non extern "C" linkage.
+%%
+void MdlOutputs(int_T tid);
+void MdlOutputsParameterSampleTime(int_T tid);
+void MdlUpdate(int_T tid);
+void MdlTerminate(void);
+void MdlInitializeSizes(void);
+void MdlInitializeSampleTimes(void);
+SimStruct * raccel_register_model(void);
+
+%if ::rsimGenCPP
+#ifdef __cplusplus
+}
+#endif
+%endif
+
+%closefile externGlobalParamBuffer
+%<LibHeaderFileCustomCode(externGlobalParamBuffer,"trailer")>
+%endif
+
+%include "codegenentry.tlc"
+
+%% The contents between 'BEGIN_RTW_OPTIONS' and 'END_RTW_OPTIONS' in this file
+%% are used to maintain backward compatibility to R13 and preR13 custom target 
+%% file only.  If you want to use this file as a template to develop your
+%% own system target file, you need to remove the 'CONFIGSET_TARGET_COMPONENT'
+%% section at the end of this file.
+%%
+/%
+  BEGIN_RTW_OPTIONS
+
+  rtwoptions(1).prompt        = 'RACCEL code generation options';
+  rtwoptions(1).type          = 'Category';
+  rtwoptions(1).enable        = 'on';
+  rtwoptions(1).default       = 2;   % number of items under this
+                                     % category excluding this one.
+  rtwoptions(1).popupstrings  = '';
+  rtwoptions(1).tooltip       = '';
+  rtwoptions(1).callback      = '';
+  rtwoptions(1).opencallback  = '';
+  rtwoptions(1).closecallback = '';
+  rtwoptions(1).tlcvariable   = '';
+  rtwoptions(1).makevariable  = '';
+
+  rtwoptions(2).prompt        = 'Solver selection';
+  rtwoptions(2).type          = 'Popup';
+  rtwoptions(2).default       = 'auto';
+  rtwoptions(2).value         = 2;
+  rtwoptions(2).popupstrings  = ['auto|', ...
+                                 'Use Simulink solver module|', ...
+			         'Use fixed-step solvers'];
+  rtwoptions(2).tlcvariable   = 'RSIM_SOLVER_SELECTION';
+  rtwoptions(2).makevariable  = 'RSIM_SOLVER_SELECTION';
+  rtwoptions(2).tooltip       = ...
+    ['Selects the solver to use with RSIM. The ''auto'' ',sprintf('\n'), ...
+    'setting uses Simulink solver module if the model ',sprintf('\n'), ...
+    'uses a variable-step solver, and uses fixed-step ',sprintf('\n'), ...
+    'solvers, otherwise.'];
+
+  rtwoptions(3).prompt       = 'PC MATLAB ROOT';
+  rtwoptions(3).type         = 'NonUI';
+  rtwoptions(3).default      = strrep(matlabroot,'\','\\');
+  rtwoptions(3).tlcvariable  = '';
+  rtwoptions(3).makevariable = 'PCMATLABROOT';
+  rtwoptions(3).tooltip      = '';
+
+  rtwoptions(4).prompt         = 'External Mode code generation options';
+  rtwoptions(4).type           = 'Category';
+  rtwoptions(4).enable         = 'on';
+  rtwoptions(4).default        = 5;   % number of items under this category
+                                      % excluding this one.
+  rtwoptions(4).popupstrings  = '';
+  rtwoptions(4).tlcvariable   = '';
+  rtwoptions(4).tooltip       = '';
+  rtwoptions(4).callback      = '';
+  rtwoptions(4).opencallback  = '';
+  rtwoptions(4).closecallback = '';
+  rtwoptions(4).makevariable  = '';
+
+  rtwoptions(5).prompt         = 'External mode';
+  rtwoptions(5).type           = 'Checkbox';
+  rtwoptions(5).default        = 'off';
+  rtwoptions(5).tlcvariable    = 'ExtMode';
+  rtwoptions(5).makevariable   = 'EXT_MODE';
+  rtwoptions(5).tooltip        = ...
+    ['Adds communication support',sprintf('\n'), ...
+    'for use with Simulink external mode'];
+
+  % Enable/disable other external mode controls.
+  rtwoptions(5).callback       = [ ...
+    'DialogFig = get(gcbo,''Parent'');',...
+    'sl(''extmodecallback'', ''extmode_checkbox_callback'', DialogFig);', ...
+    ];
+
+  rtwoptions(6).prompt         = 'Transport';
+  rtwoptions(6).type           = 'Popup';
+  rtwoptions(6).default        = 'tcpip';
+  rtwoptions(6).popupstrings   = ['tcpip|', ...
+                                  'serial'];
+  rtwoptions(6).tlcvariable    = 'ExtModeTransport';
+  rtwoptions(6).makevariable   = 'EXTMODE_TRANSPORT';
+  rtwoptions(6).tooltip        = ...
+    ['Chooses transport mechanism for external mode'];
+
+  % Synchronize with "External mode" checkbox option
+  rtwoptions(6).opencallback   = [ ...
+    'ExtModeTable = {''tcpip''         ''ext_comm'';', ...
+                     '''serial'' ''ext_serial_win32_comm''};', ...
+    'ud = DialogUserData;', ...
+    'ud = extmodecallback(''transport_popup_opencallback'',model,DialogFig,ud,ExtModeTable);', ...
+    'DialogUserData = ud;', ...
+    ];
+
+  % Set extmode mex-file according to extmode transport mechanism.
+  rtwoptions(6).closecallback  = [ ...
+    'ExtModeTable = {''tcpip''         ''ext_comm'';', ...
+                     '''serial'' ''ext_serial_win32_comm''};', ...
+    'ud = DialogUserData;', ...
+    'ud = extmodecallback(''transport_popup_closecallback'',model,DialogFig,ud,ExtModeTable);', ...
+    'DialogUserData = ud;', ...
+    ];
+
+  rtwoptions(7).prompt         = 'Static memory allocation';
+  rtwoptions(7).type           = 'Checkbox';
+  rtwoptions(7).default        = 'off';
+  rtwoptions(7).tlcvariable    = 'ExtModeStaticAlloc';
+  rtwoptions(7).makevariable   = 'EXTMODE_STATIC_ALLOC';
+  rtwoptions(7).tooltip        = ...
+    ['Forces external mode to use static',sprintf('\n'), ...
+    'instead of dynamic memory allocation'];
+
+  % Enable/disable external mode static allocation size selection.
+  rtwoptions(7).callback       = [ ...
+    'DialogFig = get(gcbo,''Parent'');',...
+    'sl(''extmodecallback'', ''staticmem_checkbox_callback'', DialogFig);', ...
+    ];
+
+  % Synchronize with "External mode" checkbox option
+  rtwoptions(7).opencallback   = [ ...
+    'extmodecallback(''staticmem_checkbox_opencallback'',DialogFig);', ...
+    ];
+
+  rtwoptions(8).prompt         = 'Static memory buffer size';
+  rtwoptions(8).type           = 'Edit';
+  rtwoptions(8).default        = '1000000';
+  rtwoptions(8).tlcvariable    = 'ExtModeStaticAllocSize';
+  rtwoptions(8).makevariable   = 'EXTMODE_STATIC_ALLOC_SIZE';
+  rtwoptions(8).tooltip        = ...
+    ['Size of external mode static allocation buffer'];
+
+  % Synchronize with "External mode static allocation" option
+  rtwoptions(8).opencallback   = [ ...
+    'extmodecallback(''staticmemsize_edit_opencallback'',DialogFig);', ...
+    ];
+
+  rtwoptions(9).prompt       = 'External mode testing';
+  rtwoptions(9).type         = 'NonUI';
+  rtwoptions(9).default      = '0';
+  rtwoptions(9).tlcvariable  = 'ExtModeTesting';
+  rtwoptions(9).makevariable = 'TMW_EXTMODE_TESTING';
+  rtwoptions(9).tooltip      = ...
+    ['Internal testing flag for Simulink external mode'];
+
+  %----------------------------------------%
+  % Configure code generation settings %
+  %----------------------------------------%
+
+  rtwgensettings.IsRSim = 'yes';
+  rtwgensettings.BuildDirSuffix = '';
+  rtwgensettings.DisableBuildDirOverride = 'yes';
+
+  END_RTW_OPTIONS
+ %/
+
+%% The content between 'BEGIN_CONFIGSET_TARGET_COMPONENT' and 
+%% 'END_CONFIGSET_TARGET_COMPONENT' is for the MathWorks internal use
+%% only.  You must remove this section if you intend to use this file
+%% as a template for your own system target development.
+%%
+/%
+  BEGIN_CONFIGSET_TARGET_COMPONENT
+
+  targetComponentClass = 'Simulink.RaccelTargetCC';
+
+  END_CONFIGSET_TARGET_COMPONENT
+ %/

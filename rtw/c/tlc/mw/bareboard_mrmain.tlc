@@ -1,0 +1,210 @@
+%% ==============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   Example main for bare board target (multirate model)
+%%
+%% Copyright 1994-2013 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%function FcnMultiTaskingMain() void
+
+  %<SetCurrentUtilsIncludesIdx("main_util_incl")>
+  
+  %if GenerateSampleERTMain
+    %assign ::CompiledModel.GenerateSampleERTMain = TLC_FALSE
+    %warning Overriding example ert_main.c!
+  %endif
+
+  %openfile tmpBuf
+  %<LibERTMainDeclareVariables(TLC_TRUE,TLC_TRUE)>
+  %<LibWriteModelData()>\
+  %closefile tmpBuf
+  
+  %<SLibCacheCodeToFile("mainSrc_data_defn", tmpBuf)>
+  
+  %openfile tmpBuf
+  #include "%<LibGetMdlPubHdrBaseName()>.h"
+  %closefile tmpBuf
+  
+  %<SLibCacheCodeToFile("mainSrc_incl", tmpBuf)>
+  
+  %openfile tmpBuf
+
+  %assign tid01Eq = LibGetTID01EQ()
+  %assign fcnReturns = "void"
+  %assign fcnName = "rt_OneStep"
+  %assign fcnParams = "void"
+  %assign fcnCategory = "main"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract ""; Category fcnCategory; GeneratedBy "bareboard_mrmain.tlc"; ...
+    Type "Utility"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    %<LibERTMainDeclareVariables(TLC_FALSE,TLC_TRUE)>
+    
+    /* Disable interrupts here */
+    
+    /* Check base rate for overrun */
+    if (OverrunFlags[0]) {
+      %<LibSetRTModelErrorStatus("\"Overrun\"")>;
+      return;
+    }
+    OverrunFlags[0] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+    
+    /* Save FPU context here (if necessary) */
+    /* Re-enable timer or interrupt here */
+    %assign varbuf = LibWriteModelInput(0,RollThreshold)
+    %if !WHITE_SPACE(varbuf)
+      /* Remove conditional, and set model inputs associated with base rate here */
+      #if 0
+      %<varbuf>\
+      #endif
+    %endif
+    
+    /* Check subrate overrun, set rates that need to run this time step*/ 
+    %<LibCallSetEventForThisBaseStep("eventFlags")>\
+
+    /* Step the model for base rate */
+    %<LibCallModelStep(0)>\
+
+    %assign varbuf = LibWriteModelOutput(0,RollThreshold)
+    %if !WHITE_SPACE(varbuf)
+      /* Remove conditional, and get model outputs associated with base rate here */
+      #if 0
+      %<varbuf>\
+      #endif
+    %endif
+    
+    OverrunFlags[0] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+    
+    %if LibGetNumSyncPeriodicTasks() > 2
+      /* Step the model for any subrate */
+      for (i = %<1+tid01Eq>; i < %<LibNumSynchronousSampleTimes()>; i++) {
+       %if InlineSetEventsForThisBaseRateFcn
+         /* If task "i" is running, don't run any lower priority task */
+         if (OverrunFlags[i]) return; 
+       %endif
+      if (eventFlags[i]) {
+         %if !InlineSetEventsForThisBaseRateFcn
+           if (OverrunFlags[i]) {
+             %<LibSetRTModelErrorStatus("\"Overrun\"")>;
+             return;
+           }
+         %endif
+           OverrunFlags[i] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+
+         %foreach idx = LibNumSynchronousSampleTimes()
+           %assign varbuf = LibWriteModelInput(idx+1,RollThreshold)
+	    %if !WHITE_SPACE(varbuf)
+	      /* Remove conditional and set model inputs associated with subrates here */
+	    #if 0
+	    if (i == %<idx+1>) {
+	      %<varbuf>\
+	     }
+	    #endif
+	   %endif
+	  %endforeach
+
+      switch(i) {
+        %foreach idx = LibGetNumSyncPeriodicTasks() - 1
+          %assign tid = idx + 1 + tid01Eq
+		case %<tid> :
+		   %<LibCallModelStep(tid)>\
+		break;
+	    %endforeach
+	      default : 
+	      break;
+	    }
+
+ 	  %foreach idx = LibNumSynchronousSampleTimes()
+	   %assign varbuf = LibWriteModelOutput(idx+1,RollThreshold)
+	   %if !WHITE_SPACE(varbuf)
+	     /* Remove conditional and set model outputs associated with subrates here */
+	    #if 0
+	    if (i == %<idx+1>) {
+	      %<varbuf>\
+	    }
+	    #endif
+	   %endif
+	  %endforeach
+
+	  OverrunFlags[i] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+          %if InlineSetEventsForThisBaseRateFcn
+            eventFlags[i] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+          %endif
+          
+     }
+    }
+   %else
+     %assign tid = LibNumSynchronousSampleTimes()-1
+     %if InlineSetEventsForThisBaseRateFcn
+       /* If task "1" is running, don't run any lower priority task */
+       if (OverrunFlags[1]) return; 
+     %endif
+     /* Step the model for subrate */
+     if (eventFlags[%<tid>]) {
+        %if !InlineSetEventsForThisBaseRateFcn
+          if (OverrunFlags[%<tid>]) {
+            %<RTMSetErrStat("\"Overrun\"")>;
+            return;
+          }
+        %endif
+        OverrunFlags[%<tid>] = %<GET_TYPE_ID_REPLACEMENT("true")>;
+
+        /* Set model inputs associated with subrates here */
+        
+        /* Step the model for subrate %<tid> */
+        %<LibCallModelStep(tid)>\
+
+        /* Get model outputs associated with subrates here */
+        
+        /* Indicate task complete for subrate */
+        OverrunFlags[%<tid>] = %<GET_TYPE_ID_REPLACEMENT("false")>; 
+        %if InlineSetEventsForThisBaseRateFcn
+          eventFlags[%<tid>] = %<GET_TYPE_ID_REPLACEMENT("false")>;
+        %endif
+      }    
+   %endif
+
+    /* Disable interrupts here */
+    /* Restore FPU context here (if necessary) */
+    /* Enable interrupts here */
+  }
+  
+  %assign fcnReturns = "int_T"
+  %assign fcnName = "main"
+  %assign fcnParams = "int_T argc, const char *argv[]"
+  %assign fcnCategory = "main"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract ""; Category fcnCategory; GeneratedBy "bareboard_mrmain.tlc"; ...
+    Type "Main"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    /* Unused arguments */
+    (void)(argc);
+    (void)(argv);
+    
+    /* Initialize model */
+    %<LibCallModelInitialize()>\
+    
+    /* Associate rt_OneStep() with a timer that executes at the base rate of the model */
+
+    %<LibCallModelTerminate()>\
+    return 0;
+  }   %%end void function
+
+  %closefile tmpBuf
+  
+  %<SLibCacheCodeToFile("mainSrc_fcn_defn", tmpBuf)>
+
+  %<SetCurrentUtilsIncludesIdx("")>
+
+%endfunction

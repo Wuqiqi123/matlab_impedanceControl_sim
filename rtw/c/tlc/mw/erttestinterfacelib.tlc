@@ -1,0 +1,1344 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%   This file contains functions to generate interface functions for 
+%%   subsystems. These functions provide a graphical I/O to function I/O 
+%%   mapping for a subsystem. The functions are generated using API created by 
+%%   SLibCreateSubsystemGraphicalAPI() defined in ertsystemgraphmaplib.tlc
+%%
+%%   This is an example file
+%% 
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+
+%if !EXISTS("_ERT_TEST_INTERFACE_LIB")
+%assign _ERT_TEST_INTERFACE_LIB = 1
+
+%% Function: SLibWriteSubsystemTestInterfaces
+%% Abstract: 
+%%
+%function SLibWriteSubsystemTestInterfaces() void
+  
+  %assign skipSysCode       = ""
+  %assign numSkippedSystems = 0
+  
+  %% For each subsystem function in the generated code, use subsystem graphical
+  %% API and generate drivers 
+  %foreach subsysIdx = SLibGetNumSubsystemInterfaces()
+    %% Get SubsystemInterface
+    %assign ssInterface  = SLibGetSubsystemInterface(subsysIdx)
+    
+    %% Ignore subsystems where Canonical input arguments are different from
+    %% function inputs. This is mostly because of virtual blocks like Mux
+    %% DeMux, Selector connected directly yo the inport of the subsystem.
+    %assign numFInputs   = ssInterface.NumFunctionInputs
+    %assign system       = System[ssInterface.SystemIdx]
+    %if (LibSystemIsReusedFcn(system) && ...
+      (system.Interface.NumCanonicalInputArgDefs != numFInputs)) || ...
+      ISFIELD(system,"RTWSystemCodeOptIntf") || ...
+      ISFIELD(system, "RTWSystemWithReturnValue")
+      %assign skipSysCode = skipSysCode + "*   -   '%<ssInterface.BlockPath>'\n"
+      %assign numSkippedSystems = numSkippedSystems + 1
+      %continue
+    %endif
+    
+    %% Get FunctionInfo Record of the driver functions
+    %assign fcnInfo = FcnGetInterfaceFcnInfoForSubsystem(ssInterface, 0)
+    
+    %% Add driver functions to driver source file
+    %openfile fcnCode
+    /* =========================================================
+       Test Interface for Subsystem: '%<ssInterface.BlockPath>'
+       '%<ssInterface.BlockPath>' <==> %<LibMangledPathName(ssInterface.BlockPath)>
+       ========================================================= 
+       %<fcnInfo.FunctionComments>
+     */
+    %assign fcnAbstracts = "Test interface initialize for Subsystem: '%<ssInterface.BlockPath>'"
+    %assign fcnName = "%<ssInterface.Name>_Initialize_TestInterface"
+    %assign fcnParams = fcnInfo.InitFunctionArgs
+    %assign fcnReturns = "void"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "test"; GeneratedBy "erttestinterfacelib.tlc"; ...
+      GeneratedFor ssInterface.BlockPath; Type "Test interface for Initialize"}
+    %%<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      %<fcnInfo.InitFunctionBody>
+    }
+    
+    %assign fcnAbstracts = "Test interface for output and update of Subsystem: '%<ssInterface.BlockPath>'"
+    %assign fcnName = "%<ssInterface.Name>_Output_TestInterface"
+    %assign fcnParams = fcnInfo.StepFunctionArgs
+    %assign fcnReturns = "void"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "test"; GeneratedBy "erttestinterfacelib.tlc"; ...
+      GeneratedFor ssInterface.BlockPath; Type "Test interface for Output and update"}
+    %%<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      %<fcnInfo.StepFunctionBody>
+    }
+    
+    %closefile fcnCode
+    
+    %<SLibCacheCodeToFile("testif_fcn_defn", fcnCode)>
+    
+    %% Add Driver function prototypes to driver header file
+    %openfile fcnDeclCode
+    /* extern declarations for test interfaces of Subsystem: '%<ssInterface.BlockPath>' */
+    %<LibExternInFcnDecls()>void %<ssInterface.Name>_Initialize_TestInterface(%<fcnInfo.InitFunctionArgs>);
+    %<LibExternInFcnDecls()>void %<ssInterface.Name>_Output_TestInterface(%<fcnInfo.StepFunctionArgs>);
+  
+    %closefile fcnDeclCode
+    %<SLibCacheCodeToFile("testif_fcn_decl", fcnDeclCode)>
+    
+    %% Cache necessary #include's to driver header file
+    %<FcnCacheHeaderInInterfaceFile(ssInterface.HeaderFile)>
+    
+    %% Add Virtual IO Typedefs 
+    %<SLibCacheCodeToFile("testif_data_typedef", fcnInfo.VirtualIOTypedefs)>
+        
+  %endforeach  %%  subsysIdx = SLibGetNumSubsystemInterfaces()
+  
+  %if (ConfigSet.MultiInstanceERTCode) && ...
+    (numSkippedSystems < SLibGetNumSubsystemInterfaces())
+    %% Add Static definitions in case of MultiInstance model
+    /* Declare model data statically */
+    %openfile staticCode
+    %<SLibDeclareStaticDatainDriverFile()>
+    %closefile staticCode
+    %<SLibCacheCodeToFile("testif_data_defn", staticCode)>
+  %endif
+  
+  %if !ISEMPTY(skipSysCode)
+    %openfile skipSysTxt
+    
+    /*
+     * Cannot generate interface function for following non-inlined subsystems
+     %<skipSysCode> 
+     * because of one or more of the following reasons
+     *  o The subsystem has a function-call signal on its outport
+     *  o The subsystem's parameter function packaging is
+     *    set as 'Reusable Function' and either
+     *     - Inside the subsystem, the input port is connected to either a
+     *       Selector block or a Demux block, or to a subsystem whose inport
+     *       is directly connected to the above blocks. To generate test 
+     *       interface, consider moving Selector/Demux outside the subsystem or
+     *       inserting a Signal Conversion block between the subsystem input
+     *       port and the Demux/Selector block.
+     * 
+     *       or
+     *     - The signal driving the input port is a Ground block. To generate
+     *       test interface, replace the Ground block with a Constant Block 
+     *       with a value of zero.
+     */
+       
+    %closefile skipSysTxt
+    %<SLibCacheCodeToFile("testif_src_doc", skipSysTxt)>
+  %endif
+  
+%endfunction
+
+%% Function: SLibWriteRootModelTestInterface
+%% Abstract: 
+%%
+%function SLibWriteRootModelTestInterface() void
+  
+  %if !(ConfigSet.MultiInstanceERTCode) && (ExportFunctionsMode == 0)
+    %% Write Test Drivers when the model code is not multi-instanced
+    
+    %% Get Root Interface from the SystemGraphicalMap
+    %assign rootInterface  = SLibGetRootInterface()
+    
+    %% Get FunctionInfo of the driver function
+    %assign fcnInfo = FcnGetInterfaceFcnInfoForSubsystem(rootInterface, 0)
+    
+    %% Add driver functions to driver source file
+    %openfile fcnCode
+    /* =========================================================
+       Test Interface for Root Model: '%<rootInterface.BlockPath>'
+       =========================================================
+       %<fcnInfo.FunctionComments>
+     */
+    %assign fcnAbstracts = "Test interface initialize function for model"
+    %assign fcnName = "%<rootInterface.ModelName>_Initialize_TestInterface"
+    %assign fcnParams = fcnInfo.InitFunctionArgs
+    %assign fcnReturns = "void"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "test"; GeneratedBy "erttestinterfacelib.tlc"; ...
+      GeneratedFor rootInterface.BlockPath; Type "Test interface for Initialize"}
+    %%<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>) 
+    {
+      %<fcnInfo.InitFunctionBody>
+    }
+    
+    %assign fcnAbstracts = "Test interface for model step function"
+    %assign fcnName = "%<rootInterface.ModelName>_Step_TestInterface"
+    %assign fcnParams = fcnInfo.StepFunctionArgs
+    %assign fcnReturns = "void"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "test"; GeneratedBy "erttestinterfacelib.tlc"; ...
+      GeneratedFor rootInterface.BlockPath; Type "Test interface for Step"}
+    %%<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      %if  NumRuntimeExportedRates == 1  %% Single Rate
+        %<fcnInfo.StepFunctionBody>
+      %elseif SLibSingleTasking()  %% Multi Rate Single Tasking
+        %<fcnInfo.StepFunctionBody>
+      %else                        %% Multi Rate Multi Tasking
+        /* Model has %<FcnNumST()> rates and the Tasking Mode is Multi-Tasking *
+         * Cannot generate a test interface for this case                        */
+        %if TLC_FALSE
+          %assign tid01Eq = FixedStepOpts.TID01EQ
+          %if LibGetNumSyncPeriodicTasks() > 2
+            int_T rt_tid;
+          %endif
+          
+          %<fcnInfo.StepFunctionBody>
+          
+          %if LibGetNumSyncPeriodicTasks() > 2
+            for (rt_tid = %<1+tid01Eq>; rt_tid < %<FcnNumST()>; rt_tid++) {
+              if (rtmStepTask(%<::tSimStruct>, rt_tid)) {
+                switch(rt_tid) {
+                  %foreach idx = LibGetNumSyncPeriodicTasks() - 1
+                    %assign tid = idx + 1 + tid01Eq
+                    case %<tid> : 
+                    %assign System[NumSystems-1].CurrentTID = tid
+                    %assign fcnInfo = ...
+                      FcnGetInterfaceFcnInfoForSubsystem(rootInterface, tid)
+                    %<fcnInfo.StepFunctionBody>               
+                    break;
+                  %endforeach
+                  default : 
+                  break;
+                }  
+              }
+            }
+          %else
+            %assign tid = FcnNumST()-1
+            if (rtmStepTask(%<::tSimStruct>, %<tid>)) {
+              %assign fcnInfo =FcnGetInterfaceFcnInfoForSubsystem(rootInterface,tid)
+              %<fcnInfo.StepFunctionBody> 
+            }    
+          %endif
+        %endif  %% TLC_FALSE
+      %endif
+    }
+    
+    %closefile fcnCode
+    %<SLibCacheCodeToFile("testif_fcn_defn", fcnCode)>
+    
+    %% Add Driver function prototypes to driver header file
+    %openfile fcnDeclCode
+    /* Extern Declarations for test interfaces of model */
+    %<LibExternInFcnDecls()>void %<rootInterface.ModelName>_Initialize_TestInterface(%<fcnInfo.InitFunctionArgs>);
+    %<LibExternInFcnDecls()>void %<rootInterface.ModelName>_Step_TestInterface(%<fcnInfo.StepFunctionArgs>);
+    
+    %closefile fcnDeclCode
+    %<SLibCacheCodeToFile("testif_fcn_decl", fcnDeclCode)>
+    
+    %% Cache necessary #include's to driver header file
+    %<FcnCacheHeaderInInterfaceFile(rootInterface.HeaderFile)>
+  
+    %% Add Virtual IO Typedefs 
+    %<SLibCacheCodeToFile("testif_data_typedef", fcnInfo.VirtualIOTypedefs)>
+  %endif
+%endfunction
+
+%% Function: SLibWriteExpFcnsTestInterfaces
+%% Abstract: 
+%%
+%function SLibWriteExpFcnsTestInterface() void
+  
+  %if (ExportFunctionsMode == 0)
+    %return
+  %endif
+  
+  %assign root = System[NumSystems-1]
+  %assign origERTInitFcnArg = SLibModelFcnArgs("Initialize",TLC_TRUE, root.CurrentTID)
+  %assign modelInitFcn      = GenerateModelInitFcnName()
+  
+  %% For each exported function in the generated code, use system graphical
+  %% API and generate test interfaces
+  %foreach fcnIdx = SLibGetNumExportedFunctions()
+    %% Get Exported Function
+    %assign expFcn    = SLibGetExportedFunction(fcnIdx)
+    %assign expSystem = System[expFcn.SystemIdx]
+    %% Define Temp variables
+    %assign args      = ""
+    %assign argSep    = ""
+    %assign inputMap  = ""
+    %assign outputMap = ""
+        
+    %% For each functional input 
+    %%   - Map functional input to graphical input
+    %assign numInputs = expFcn.NumFunctionInputs
+    %foreach fInIdx = numInputs
+      
+      %assign fIn     = expFcn.FunctionInput[fInIdx]
+      %assign fInDType   = fIn.DataType
+      %assign fInWidth   = SLibGetFunctionIOWidth(fIn)
+      %assign optArray   = (fInWidth > 1) ? "[%<fInWidth>]" : ""
+      %assign optStar    = ((fInWidth ==  1) && (fIn.DataIsBus)) ? "*": ""
+      
+      %% To use memcpy, we need to reference the address of the input
+      %assign ref = ((fInWidth > 1) || (fIn.DataIsBus)) ? " " : " &"
+      %assign len = (fInWidth > 1) ? " %<fInWidth>*" : " "
+      %assign inputMap = inputMap + ...
+        "memcpy(%<fIn.Address>,%<ref>%<fIn.SLName>,%<len>sizeof(%<fInDType>));"
+      %assign inputMap = inputMap + "\n"
+      
+      %% Add inport to the list of arguments of wrapper function
+      %assign inputArg = "%<fInDType> %<optStar>%<fIn.SLName>%<optArray>"
+      %assign args = args + argSep + inputArg
+      %assign argSep = ", "
+    %endforeach
+    
+    %% For each functional output 
+    %%   - Map functional output to graphical output
+    %assign numOuts = expFcn.NumFunctionOutputs
+    %foreach fOutIdx = numOuts
+      %assign fOut = expFcn.FunctionOutput[fOutIdx]
+      %assign fOutDType = fOut.DataType
+      %assign fOutWidth = SLibGetFunctionIOWidth(fOut)
+      
+      %% Map functional out with graphical out
+      %assign len = (fOutWidth > 1) ? " %<fOutWidth>*" : " "
+      %assign outputMap = outputMap + ...
+        "memcpy(%<fOut.SLName>, %<fOut.Address>,%<len>sizeof(%<fOutDType>));"
+      %assign outputMap = outputMap + "\n"
+
+      %assign outputArg = "%<fOutDType> *%<fOut.SLName>" 
+      %assign args = args + argSep + outputArg
+      %assign argSep = ", "
+    %endforeach
+    %% END MAPPING OUTPUTS
+    
+    %if ISEMPTY(args)
+      %assign args = "void"
+    %endif
+    
+    %if !LibSystemFcnIsEmpty(expSystem,"OutputUpdate")
+      %openfile outfcnCode
+      %assign fcnAbstracts = "Test interface for output and update of Function: '%<expFcn.Name>'"
+      %assign fcnName = "%<expFcn.Name>_Output_TestInterface"
+      %assign fcnParams = args
+      %assign fcnReturns = "void"
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "test"; GeneratedBy "erttestinterfacelib.tlc"; ...
+        GeneratedFor FcnGeneratedFor(expSystem); Type "Test interface for Output and update"}
+      %%<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<fcnReturns> %<fcnName>(%<fcnParams>)
+      {
+        %<inputMap>
+      
+        /* Output-update function for system '%<LibGetRecordIdentifier(expSystem)>'. */
+        %<expSystem.OutputUpdateFcn>();
+            
+        %<outputMap>
+      }
+      
+      %closefile outfcnCode
+      %<SLibCacheCodeToFile("testif_fcn_defn", outfcnCode)>
+      %% Add interface prototypes to header file
+      %openfile fcnDeclCode
+      /* Extern declarations for test interfaces of function: '%<expFcn.Name>' */
+      %<LibExternInFcnDecls()>void %<expFcn.Name>_Output_TestInterface(%<args>);
+        
+      %closefile fcnDeclCode
+      %<SLibCacheCodeToFile("testif_fcn_decl", fcnDeclCode)>
+    %endif
+    
+    %if !LibSystemFcnIsEmpty(expSystem,"Enable")
+      %openfile enablefcnCode
+      %assign fcnAbstracts = "Test interface for Enable of Function: '%<expFcn.Name>'"      
+      %assign fcnName = "%<expFcn.Name>_Enable_TestInterface"
+      %assign fcnParams = ""
+      %assign fcnReturns = "void"
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "test"; GeneratedBy "erttestinterfacelib.tlc"; ...
+        GeneratedFor FcnGeneratedFor(expSystem); Type "Test interface for Enable"}
+      %%<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<fcnReturns> %<fcnName>(%<fcnParams>)
+      {
+        /* Enable function for system '%<LibGetRecordIdentifier(expSystem)>'. */
+        %<expSystem.EnableFcn>();
+        
+      }
+      
+      %closefile enablefcnCode
+      %<SLibCacheCodeToFile("testif_fcn_defn", enablefcnCode)>
+      %% Add interface prototypes to header file
+      %openfile fcnDeclCode
+      %<LibExternInFcnDecls()>void %<expFcn.Name>_Enable_TestInterface();
+  
+      %closefile fcnDeclCode
+      %<SLibCacheCodeToFile("testif_fcn_decl", fcnDeclCode)>
+    %endif
+    
+    %if !LibSystemFcnIsEmpty(expSystem,"Disable")
+      %openfile disablefcnCode
+      %assign fcnAbstracts = "Test interface for Disable of Function: '%<expFcn.Name>'"
+      %assign fcnName = "%<expFcn.Name>_Disable_TestInterface"
+      %assign fcnParams = args
+      %assign fcnReturns = "void"
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "test"; GeneratedBy "erttestinterfacelib.tlc"; ...
+        GeneratedFor FcnGeneratedFor(expSystem); Type "Test interface for Disable"}
+      %%<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<fcnReturns> %<fcnName>(%<fcnParams>)      
+      {
+        %<inputMap>
+      
+        /* Disable function for system '%<LibGetRecordIdentifier(expSystem)>'. */
+        %<expSystem.DisableFcn>();
+            
+        %<outputMap>
+      }
+      
+      %closefile disablefcnCode
+      %<SLibCacheCodeToFile("testif_fcn_defn", disablefcnCode)>      
+      %% Add interface prototypes to header file
+      %openfile fcnDeclCode
+      %<LibExternInFcnDecls()>void %<expFcn.Name>_Disable_TestInterface(%<args>);
+  
+      %closefile fcnDeclCode
+      %<SLibCacheCodeToFile("testif_fcn_decl", fcnDeclCode)>
+    %endif
+    
+    %% Cache necessary #include's to driver header file
+    %<FcnCacheHeaderInInterfaceFile(expFcn.HeaderFile)>
+    
+  %endforeach  %%  fcnIdx = SLibGetNumExportedFunctions()
+  
+%endfunction
+
+%% Function: FcnGetInterfaceFcnInfoForSubsystem
+%% Abstract: 
+%%
+%function FcnGetInterfaceFcnInfoForSubsystem(interface, tid) void
+  
+  %% 
+  %createrecord InterfaceFcnInfo {   \
+    StepFunctionArgs    ""        \
+    StepFunctionBody    ""        \
+    InitFunctionArgs    ""        \
+    InitFunctionBody    ""        \
+    VirtualIOTypedefs   ""        \
+    FunctionComments    ""        \
+  }
+  
+  %if interface.InterfaceType == "RootModel"
+    %assign isRoot = TLC_TRUE
+  %else
+    %assign isRoot = TLC_FALSE
+  %endif
+  
+  %% Define Temp variables
+  %assign args      = ""
+  %assign argSep    = ""
+  %assign inputMap  = ""
+  %assign localMap  = ""
+  %assign dsMap     = ""
+  %assign dsReMap   = ""
+  %assign outputMap = ""
+  %assign typedefCode = ""
+  %assign unusedInputMap  = ""
+  %assign unusedOutputMap = ""
+  %%
+  %% Comments
+  %assign inportComments       = "" 
+  %assign outportComments      = "" 
+  %assign dsComments           = "" 
+  %assign dwComments           = ""
+  %assign inputcommentsHeader  = ...
+    SPRINTF("\t%-25s%-15s%-8s%-20s\t%s\n\t%-25s%-15s%-8s%-20s\t%s", ...
+    "Argument Name", "Data Type", "Width", "Block Path", "Function Input (copied from)", ...
+    "-------------", "---------", "-----", "----------", "---------------------------")
+  
+  %assign outputcommentsHeader  = ...
+    SPRINTF("\t%-25s%-15s%-8s%-20s\t%s\n\t%-25s%-15s%-8s%-20s\t%s", ...
+    "Argument Name", "Data Type", "Width", "Block Path", "Function Output (copied to)", ...
+    "-------------", "---------", "-----", "----------", "---------------------------")
+  
+  %assign dstorecommentsHeader  = ...
+    SPRINTF("\t%-25s%-15s%-8s%-20s\t%s\n\t%-25s%-15s%-8s%-20s\t%s", ...
+    "Argument Name", "Data Type", "Width", "Block Path", "Data Store Memory (copied from/To)", ...
+    "-------------", "---------", "-----", "----------", "----------------------------------")
+    
+  %%
+  %% Input Port Mapping
+  %% For each input port (graphical input)
+  %%    - add graphical input as argument to the wrapper
+  %%    - map graphical input to function input(s) inside the function
+  %foreach inpIdx = SLibGetNumInports(interface)
+    %assign input      = SLibGetInport(interface, inpIdx)
+    %assign inputWidth = SLibGetFunctionIOWidth(input)
+    %assign optArray   = (inputWidth > 1) ? "[%<inputWidth>]" : ""
+    %assign constKeyWd = (inputWidth > 1 || input.IsBus) ? "const " : ""
+    %assign optStar    = ((inputWidth ==  1) && (input.IsBus)) ? "*": ""
+    %assign numFuncInputs = SLibGetNumFunctionInputsInInport(input)
+    %assign inAddrComment   = ""
+    %if (numFuncInputs == 0)
+      %assign unusedInputMap = unusedInputMap + "UNUSED_IO(%<input.Name>);\n"
+      %assign inAddrComment  = "Unused"
+    %endif
+    %% For each functional input 
+    %%   - Map functional input to graphical input
+    %%   - Create Typedef if necessary
+    %foreach fInIdx = numFuncInputs
+      %assign fIn        = SLibGetFunctionInputOfInport(interface,input,fInIdx)
+      %assign fInDType   = fIn.DataType
+      %assign fInWidth   = SLibGetFunctionIOWidth(fIn)
+      %assign ifCond = ""
+      %assign ifEndCond = ""
+      %if (isRoot) 
+        %assign extInp = ::CompiledModel.ExternalInputs.ExternalInput[inpIdx]
+        %if ISFIELD(extInp, "Inactive")
+         %continue
+        %endif
+        %% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/systemtests/tmg1257208_VC1.m
+        %if ISFIELD(extInp, "VariantCondition") && !ISEMPTY(extInp.VariantCondition)
+          %assign ifCond = SLibIfVariantCondition16b(extInp)
+          %assign ifEndCond = SLibEndIfVariantCondition16b(extInp)
+        %endif 
+      %endif
+ 
+      %if (fIn.Access == "Global")
+        %% Unstructured scalar inputs are passed via value 
+        %% To use memcpy, we need to reference the address of the input
+        %assign ref = ((fInWidth > 1)  || fIn.DataIsBus) ? " " : " &"
+        %assign len = (fInWidth > 1) ? " %<fInWidth>*" : " "
+        %assign inputMap = inputMap + ifCond + "\n"...
+           "memcpy(%<fIn.Address>,%<ref>%<fIn.SLName>,%<len>sizeof(%<fInDType>));"
+        %assign inputMap = inputMap + "\n" + ifEndCond + "\n"
+      %elseif (fIn.Access == "ConstGlobal") || (fIn.Access == "ConstInlined")
+        %assign unusedInputMap = unusedInputMap + "UNUSED_IO(%<fIn.SLName>);\n"
+      %endif %% Access = "Global"
+      %assign inAddrComment = ISEMPTY(fIn.Address) ? ...
+        "Local Signal" : fIn.Address
+      %assign inAddrComment = (fIn.Access != "ConstInlined") ? ...
+        inAddrComment : "Constant Value"
+    %endforeach
+    %% Add typedef to the driver file
+    %assign dTypeComment = constKeyWd + input.DataType
+    %if !ISEMPTY(input.VirtualTypeDef)
+      %assign typedefCode  = typedefCode + input.VirtualTypeDef
+      %assign dTypeComment = "Virtual Type"
+      %assign inAddrComment  = "Multiple Signals"
+    %endif
+    %% Add inport to the list of arguments of wrapper function
+    %assign inputArg = "%<constKeyWd>%<input.DataType> %<optStar>%<input.Name>%<optArray>"
+    %assign args = args + argSep + inputArg
+    %assign argSep = ", "
+    %% Add inport comment to the list of comments of wrapper function
+    %assign inportComments = inportComments + ...
+      SPRINTF("%-3s%-22s%-15s%-8d%-20s\t%s\n", ...
+      "%<inpIdx+1>)",input.Name, dTypeComment, inputWidth, input.BlockPath, inAddrComment)
+  %endforeach
+  %% END MAPPING INPORTS
+  %%
+  %% MAPPING OUTPORTS - Graphical Outputs
+  %% For each output port (graphical output)
+  %%    - add graphical output as argument to the wrapper
+  %%    - Re-map function output(s) to graphical outputs after the call to 
+  %%      subsystem function
+  
+  %% Get the table of unique variant conditions for the model.
+  %if ISFIELD(VariantConditions, "CGVCEList")
+    %assign cgvceList = VariantConditions.CGVCEList
+  %else 
+    %assign cgvceList = ""
+  %endif
+  
+  %foreach outIdx = SLibGetNumOutports(interface)
+    %assign output =  SLibGetOutport(interface, outIdx)
+    %assign outputWidth = SLibGetFunctionIOWidth(output)
+    %assign numFuncOuts = SLibGetNumFunctionOutputsInOutport(output)
+    %assign outAddrComment = ""
+    %if (numFuncOuts == 0)
+      %assign unusedOutputMap = unusedOutputMap +"UNUSED_IO(%<output.Name>);\n"
+    %endif
+    %% For each functional output 
+    %%   - Map functional output to graphical output
+    %%   - Create Typedef if necessary
+    %foreach fOutIdx = numFuncOuts
+      %assign fOut = SLibGetFunctionOutputOfOutport(interface, output, fOutIdx)
+      %assign fOutDType = fOut.DataType
+      %assign fOutWidth = SLibGetFunctionIOWidth(fOut)
+      %assign variantCondition = ""
+      %assign ifCond = ""
+      %assign ifEndCond = ""
+      %if (isRoot) 
+        %assign extOut = ::CompiledModel.ExternalOutputs.ExternalOutput[outIdx]
+        %assign sysIdx       = extOut.Block[0]
+        %assign blkIdx       = extOut.Block[1]
+        %assign outportBlock = System[sysIdx].Block[blkIdx]
+        %if ISFIELD(outportBlock, "Inactive") 
+         %continue
+        %endif
+        %% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/systemtests/tmg1257208_VC1.m
+        %if ISFIELD(extOut, "LocalCGVCEIdx") && (extOut.LocalCGVCEIdx != -1) && !ISEMPTY(cgvceList)
+          %assign variantCondition = cgvceList[extOut.LocalCGVCEIdx]
+          %assign ifCond = SLibIfVariantConditionForm16b(variantCondition)
+          %assign ifEndCond = SLibEndIfVariantConditionForm16b(variantCondition)
+        %endif 
+      %endif
+      %if (numFuncOuts == 1) && (fOutWidth > outputWidth)
+        %assign outputWidth = fOutWidth
+      %endif
+      %if (fOut.Access == "Global") || (fOut.Access == "Argument") || ...
+        (fOut.Access == "ConstGlobal")
+        %% Map functional out with graphical out
+        %assign len = (fOutWidth > 1) ? " %<fOutWidth>*" : " "
+        %assign outputMap = outputMap + ifCond + "\n" ...
+          "memcpy(%<fOut.SLName>, %<fOut.Address>,%<len>sizeof(%<fOutDType>));"  
+        %assign outputMap = outputMap + "\n" + ifEndCond + "\n"
+      %elseif (fOut.Access == "ConstInlined")
+        %% Address is actual the constant value. No need to dereference
+        %if (SIZE(fOut.Value, 0) * SIZE(fOut.Value, 1)) > 1
+          %% constant array
+          %foreach idx = SIZE(fOut.Value)[1]
+            %assign outputMap = outputMap + ...
+              "%<fOut.SLName>[%<idx>] = %<fOut.Value[idx]>;" + "\n"
+          %endforeach
+        %elseif ISEMPTY(fOut.Value)
+          %% constant ground
+          %assign outputMap = outputMap + "%<fOut.SLName> = 0;" + "\n"
+        %else
+          %% constant scalar
+          %assign outputMap = outputMap + ...
+            "%<fOut.SLName> = %<fOut.Value[0]>;" + "\n"
+        %endif
+      %endif
+      %assign outAddrComment = ISEMPTY(fOut.Address) ? "Local Signal" : fOut.Address
+      %assign outAddrComment = (fOut.Access != "ConstInlined") ? ...
+        outAddrComment : "Constant Value"
+    %endforeach
+    %assign dTypeComment = output.DataType
+    %if !ISEMPTY(output.VirtualTypeDef)
+      %assign typedefCode = typedefCode + output.VirtualTypeDef
+      %assign dTypeComment = "Virtual Type"
+      %assign outAddrComment  = "Multiple Signals"
+    %endif
+    %assign optPtrStr   = "*"
+    %assign optWidthStr = ""
+    %if outputWidth > 1
+      %assign optPtrStr   = ""
+      %assign optWidthStr = "[%<outputWidth>]"
+    %endif
+    %assign outputArg = "%<output.DataType> %<optPtrStr>%<output.Name>%<optWidthStr>" 
+    %assign args = args + argSep + outputArg
+    %assign argSep = ", "
+    %assign outportComments = outportComments + ...
+       SPRINTF("%-3s%-22s%-15s%-8d%-20s\t%s\n", ...
+       "%<outIdx+1>)", output.Name, dTypeComment, outputWidth, output.BlockPath,outAddrComment)
+  %endforeach
+  %% END MAPPING OUTPUTS
+  %%
+  %% MAPPING DATA STORES
+  %% For each data store
+  %%   - Add a argument to the wrapper function
+  %%   - Map data stores before calling the subsystem function (Read)
+  %%   - Re-Map data stores after calling subsystem function (Write)
+  %foreach dsIdx = SLibGetNumDataStores(interface)
+    %assign ds         = SLibGetDataStore(interface, dsIdx)
+    %assign dsDType    = ds.DataType
+    %assign dsWidth    = SLibGetFunctionIOWidth(ds)
+    %assign optArray   = (dsWidth > 1) ? "[%<dsWidth>]" : ""
+    %assign ptr        = (dsWidth == 1) ? "*" : ""
+    %if (ds.Access == "Global") 
+      %assign len = (dsWidth > 1) ? "%<dsWidth>*" : ""
+      %assign dsMap   = dsMap + ...
+        "memcpy(%<ds.Address>, %<ds.Name>, %<len>sizeof(%<dsDType>));" 
+      %assign dsMap   = dsMap + "\n"
+      %assign dsReMap = dsReMap + ...
+        "memcpy(%<ds.Name>, %<ds.Address>, %<len>sizeof(%<dsDType>));" 
+      %assign dsReMap = dsReMap + "\n"
+    %endif
+    %assign dsArg      = "%<dsDType> %<ptr>%<ds.Name>%<optArray>"
+    %assign args       = args + argSep+ dsArg
+    %assign argSep     = ", "
+    %assign dsComments = dsComments + ...
+       SPRINTF("%-3s%-22s%-15s%-8d%-20s\t%s\n", ...
+       "%<dsIdx+1>)", ds.Name, dsDType, dsWidth, ds.BlockPath, ds.Address)
+  %endforeach
+  %% END MAPPING DATA STORES
+  %%
+  %% MAPPING DISCRETE States
+  %% For each discrete state
+  %%   - Add a comment in the subsystem banner
+  %%   - Map data stores before calling the subsystem function (Read)
+  %%   - Re-Map data stores after calling subsystem function (Write)
+  %foreach dsIdx = SLibGetNumDiscStates(interface)
+    %assign ds         = SLibGetDiscState(interface, dsIdx)
+    %assign dsDType    = ds.DataType
+    %assign dsWidth    = SLibGetFunctionIOWidth(ds)
+    %assign dwComments = dwComments + ...
+       SPRINTF("%-3s%-15s%-8d%s\t%s\n", "%<dsIdx+1>)", dsDType, dsWidth, ds.BlockPath, ds.Address)
+  %endforeach
+  %% END MAPPING DISCRETE States
+  %%
+  %% START WRITING WRAPPER
+  
+  
+  %openfile initBody
+  %assign root = System[NumSystems-1]
+  %if ISFIELD(root, "SystemInitializeFcn") && !ISEMPTY(root.SystemInitializeFcn)
+    %if MultiInstanceERTCode
+      %%<SLibDefineRootIOInLocalScope()>
+      %assign InterfaceFcnInfo.InitFunctionArgs = SLibDefineRootIOInLocalScope()
+    %endif
+      
+    /* Call model initialize function */
+    %<GenerateModelInitFcnName()>(%<SLibModelFcnArgs("Initialize", 2, root.CurrentTID)>);
+          
+  %endif
+  %closefile initBody
+  
+  %openfile outputBody
+  %if !ISEMPTY(inputMap)
+    %if (tid == 0)
+      /* Copy test driver input arguments to actual function inputs */
+    %else
+      /* Copy test driver input arguments associated with subrate: %<tid> */
+    %endif
+    %<inputMap>
+    
+  %endif
+  %if !ISEMPTY(unusedInputMap)
+    /* The following input arguments cannot be copied to the actual function 
+     * inputs of the system. The inputs are either constant values or defined 
+     * with "const" qualifier. Alternatively, the inputs are resolved with a 
+     * custom storage class which generates  non-addressable data (e.g. 
+     * Bit-Fields). The input arguments will be unused.
+     */
+    %<unusedInputMap>
+    
+  %endif
+  %if !ISEMPTY(dsMap)
+    %if (tid == 0)
+      /* Copy test driver data store arguments to  data store */
+    %else
+      /* Copy test driver data stores associated with subrate: %<tid> */
+    %endif
+    %<dsMap>
+    
+  %endif
+  %assign ppIf = ""
+  %assign ppEndif = ""
+  %if isRoot
+    %if (tid == 0)
+      /* Call model step function associated with base rate */
+    %else
+      /* Call model step function associated with subrate: %<tid> */
+    %endif
+    %<FcnCallMdlStep(tid)>
+  %else
+    /* Call subsystem's output code */
+    %% TopTester : test/toolbox/simulink/variants/tVSSWithReusuableSS.m
+    %assign systemIdx = interface.SystemIdx
+    %assign parent = ::CompiledModel.System[systemIdx]
+    %assign netCond = ""
+    %if !ISEMPTY(parent.NetInlineVariantPreprocessorInstanceConditions)
+      %assign netCond = parent.NetInlineVariantPreprocessorInstanceConditions[interface.CallSiteIdx]
+    %elseif !ISEMPTY(parent.NetPreprocessorInstanceConditions)
+      %assign netCond = parent.NetPreprocessorInstanceConditions[interface.CallSiteIdx]
+    %else 
+      %assign netCond = ""
+    %endif
+    %assign ppIf = SLibIfVariantConditionForm16b(netCond)
+    %assign ppEndif = SLibEndIfVariantConditionForm16b(netCond)
+    %<ppIf>
+    %<FcnGenSubsystemOutputFcnCallInInterface(interface)>
+    %if !LibSystemFcnIsEmptyForTID(parent,"Update")
+      %<ppIf>
+    %endif
+    %<FcnGenSubsystemUpdateFcnCallInInterface(interface)>
+    %if !LibSystemFcnIsEmptyForTID(parent,"Update")
+      %<ppEndif>
+    %endif
+    
+  %endif
+  %if !ISEMPTY(outputMap)
+    %if (tid == 0)
+      /* Copy function output values to test driver output arguments */
+    %else
+      /* Copy function output values associated with subrate: %<tid> */
+    %endif
+    %<outputMap>
+    
+  %endif
+  %if !ISEMPTY(unusedOutputMap)
+    /* The following output arguments cannot be copied from the function outputs
+     * of the system. The outputs are ground/unconnected signals or are resolved
+     * with a custom storage class which generates non-addressable data 
+     * (e.g. BitField). The output arguments will be unused.
+     */
+    %<unusedOutputMap>
+    
+  %endif
+  %if !ISEMPTY(dsReMap)
+    %if (tid == 0)
+      /* Copy test driver data store arguments to  data store */
+    %else
+      /* Copy test driver data stores associated with subrate: %<tid> */
+    %endif
+        %<dsReMap>
+  %endif
+  %<ppEndif>
+  %closefile outputBody
+  
+  %openfile commentBody
+  %if !ISEMPTY(inportComments)
+    Inports: (passed as arguments to test interface output function)
+    %<inputcommentsHeader>
+    %<inportComments>
+  %endif
+  %if !ISEMPTY(outportComments)
+    Outports: (passed as arguments to test interface output function)
+    %<outputcommentsHeader>
+    %<outportComments>
+  %endif
+  %if !ISEMPTY(dsComments)
+    Data Stores: (passed as arguments to test interface output function)
+    %<dstorecommentsHeader>
+    %<dsComments>
+  %endif
+  %if !ISEMPTY(dwComments)
+    Discrete States:
+    %<SPRINTF("\t%-18s%-8s%s\n\t%-18s%-8s%s", ...
+      "Data Type", "Width", "Block Path and State Address", ...
+      "---------", "-----", "----------------------------")>
+    %<dwComments>
+  %endif
+  %closefile commentBody
+  
+  %if ISEMPTY(args)
+    %assign args = "void"
+  %endif
+  %if ISEMPTY(InterfaceFcnInfo.InitFunctionArgs)
+    %assign InterfaceFcnInfo.InitFunctionArgs = "void"
+  %endif
+  
+  %assign InterfaceFcnInfo.StepFunctionArgs = args
+  %assign InterfaceFcnInfo.StepFunctionBody = outputBody
+  %assign InterfaceFcnInfo.InitFunctionBody = initBody
+  %assign InterfaceFcnInfo.FunctionComments = commentBody
+  
+  
+  %if !ISEMPTY(typedefCode)
+    %openfile virtualTypedefCode
+    /* Typdefs for virtual signals on Inport and/or Outport of '%<interface.BlockPath>' */
+    %<typedefCode>
+    
+    %closefile virtualTypedefCode
+    %assign InterfaceFcnInfo.VirtualIOTypedefs = virtualTypedefCode
+  %endif
+  
+  %return InterfaceFcnInfo
+%endfunction
+
+%% Local Function: FcnGenSubsystemOutputFcnCallInInterface ====================
+%% Abstract:
+%%
+%function FcnGenSubsystemOutputFcnCallInInterface(ssInterface) Output
+  %assign tmpBlockFcn = ::BlockFcn
+  %assign ::BlockFcn  = "Output"
+  %assign system      = System[ssInterface.SystemIdx]
+  %assign csIdx       = ssInterface.CallSiteIdx
+  %if system.LivesInStandaloneSS[csIdx]
+    %assign parentSystem = System[system.StandaloneParentSysIdx[csIdx]]
+  %else
+    %assign parentSystem = System[NumSystems - 1]
+  %endif
+  %if LibSystemIsReusedFcn(system)
+    %assign currentTID        = system.CurrentTID
+    %assign isPeriodicRateGrouping    = SLibSystemFcnPeriodicRateGrouping(system, "Output")
+    %%
+    %% Add graphical reference to Canonical args, so that the call to the
+    %% reusable "output" function uses graphical inputs.
+    %addtorecord system GenerateReusableWrapper TLC_TRUE
+    %%
+    %% Add graphical inports if the function has Canonical inputs
+    %if ISFIELD(ssInterface, "FunctionInputHash")
+      %foreach argIdx=system.Interface.NumCanonicalInputArgDefs
+        %assign canIn = system.Interface.CanonicalInputArgDef[argIdx]
+        %if FcnArgNeeded(canIn, currentTID, isPeriodicRateGrouping)
+          %if ISFIELD(ssInterface.FunctionInputHash, "FuncIn%<argIdx>")
+            %assign fIn=GETFIELD(ssInterface.FunctionInputHash, "FuncIn%<argIdx>")
+            %addtorecord canIn SSGraphicalAPIReference fIn
+          %endif
+        %endif
+      %endforeach
+    %endif
+    %%
+    %% Add graphical Outports if the function has Canonical Outputs
+    %if ISFIELD(ssInterface, "FunctionOutputHash")
+      %foreach argIdx=system.Interface.NumCanonicalOutputArgDefs
+        %assign canOut = system.Interface.CanonicalOutputArgDef[argIdx]
+        %if FcnArgNeeded(canOut, currentTID, isPeriodicRateGrouping)
+          %if ISFIELD(ssInterface.FunctionOutputHash, "FuncOut%<argIdx>")
+            %assign fOut = ...
+              GETFIELD(ssInterface.FunctionOutputHash, "FuncOut%<argIdx>")
+            %addtorecord canOut SSGraphicalAPIReference fOut
+          %endif
+        %endif
+      %endforeach
+    %endif
+    %%
+    %% Add graphical Data stores if the function has Canonical Dworks (DSM)
+    %assert (ssInterface.NumDataStores == system.Interface.NumCanonicalDWorkArgDefs)
+    %foreach argIdx = system.Interface.NumCanonicalDWorkArgDefs
+      %assign canDW = system.Interface.CanonicalDWorkArgDef[argIdx]
+      %if FcnArgIsNeeded(canDW)
+        %assign ds    = ssInterface.DataStore[argIdx]
+        %addtorecord canDW SSGraphicalAPIReference ds
+      %endif
+    %endforeach
+  %endif
+  %with parentSystem
+    %% Copy over original interface as LibGenCachedSystemFcnCall may overwrite
+    %% some of the accessed flags in the parent
+    %copyrecord parentInterface parentSystem.Interface
+    %%
+    %% Generate System function call
+    %assign argVec = getTestInterfaceArgVector(system, "Output", csIdx)
+    %<SLibGenCachedSystemFcnCallWithArgs(system, "Output", csIdx, argVec)>
+    %%
+    %% Revert to the original interface
+    %assign parentSystem.Interface = parentInterface
+  %endwith  %% parentSystem
+  %if LibSystemIsReusedFcn(system)
+    %% Clean up - Remove fields added while genrating the subsystem call
+    %assign tmp = REMOVEFIELD(system, "GenerateReusableWrapper")
+    %%
+    %% Remove graphical inports reference from Canonical inputs
+    %foreach argIdx=system.Interface.NumCanonicalInputArgDefs
+      %assign canIn = system.Interface.CanonicalInputArgDef[argIdx]
+      %if ISFIELD(canIn, "SSGraphicalAPIReference")
+        %assign tmp = REMOVEFIELD(canIn, "SSGraphicalAPIReference")
+      %endif
+    %endforeach
+    %%
+    %% Remove graphical Outports reference from Canonical outputs
+    %foreach argIdx=system.Interface.NumCanonicalOutputArgDefs
+      %assign canOut = system.Interface.CanonicalOutputArgDef[argIdx]
+      %if ISFIELD(canOut, "SSGraphicalAPIReference")
+        %assign tmp = REMOVEFIELD(canOut, "SSGraphicalAPIReference")
+      %endif
+    %endforeach
+    %%
+    %% Remove graphical DS reference from Canonical DWorks
+    %foreach argIdx = system.Interface.NumCanonicalDWorkArgDefs
+      %assign canDW = system.Interface.CanonicalDWorkArgDef[argIdx]
+       %if ISFIELD(canDW, "SSGraphicalAPIReference")
+        %assign tmp = REMOVEFIELD(canDW, "SSGraphicalAPIReference")
+      %endif
+    %endforeach
+  %endif %% LibSystemIsReusedFcn(system)
+  %assign ::BlockFcn  = tmpBlockFcn
+%endfunction
+
+%% Function: getTestInterfaceArgVector =========================================
+%% Abstract:
+%%   Returns the argument vector for a system function call from a test 
+%%   interface
+%%    
+%function getTestInterfaceArgVector(thisSystem, fcnType, csIdx)
+  %assign argVec = []  
+  %%
+  %% If the context is unknown, we dispach the function call 
+  %% to use global argument references.
+  %%
+  %assign sysIdx = thisSystem.SystemIdx
+  %assign modIdx = ::CompiledModel.RTWCGModules.NumRTWCGModules-1
+  %assign fcnIdx = ::CompiledModel.RTWCGModules.TestInterfaceFcnIdx
+  %assign sysCS  = thisSystem.CallSites[csIdx]
+  %assign parent = ::CompiledModel.System[sysCS[2]]
+  %assign ssBlk  = parent.Block[sysCS[3]]
+  %with parent
+    %with ssBlk
+      %if SLibTLCSystemFcnCallExists(fcnType, sysIdx, csIdx, modIdx, fcnIdx)
+        %assign callInfo = ...
+          SLibTLCSystemFcnCallInfo(fcnType, sysIdx, csIdx, modIdx, fcnIdx)
+        %assign argVec  = callInfo.Args
+        %assign fcnName = callInfo.Name
+        %assign thisModule = ...
+          ::CompiledModel.RTWCGModules.RTWCGModule[thisSystem.CGIRModuleIdx]
+        %assign fcnIdx = GETFIELD(thisModule.SystemFunctions, fcnName)
+        %assert (thisModule.NumSubFunctions <= fcnIdx)
+        %assign thisFcn = thisModule.Function[fcnIdx]
+        %assign thisInterface = thisSystem.Interface
+        %foreach argIdx=thisFcn.NumArgs
+          %assign idNum = SLibSafeIDNUM(thisFcn.ArgSource, argIdx)
+          %assign argSrc = idNum[0]
+          %assign argSrcIdx = idNum[1]
+          %switch argSrc
+            %case "I" %% canonical input
+              %assign canIn = thisInterface.CanonicalInputArgDef[argSrcIdx]
+              %if ISFIELD(canIn, "SSGraphicalAPIReference")
+                %assign grIn = canIn.SSGraphicalAPIReference
+                %if (canIn.DeclareAsPointer == "yes")
+                  %assign actArg = "&(%<grIn.SLName>)"
+                %else
+                  %assign actArg = grIn.SLName
+                %endif
+                %assign argVec[argIdx] = actArg
+              %endif
+              %break
+            %case "O" %% canonical output
+              %assign canOut = thisInterface.CanonicalOutputArgDef[argSrcIdx]
+              %if ISFIELD(canOut, "SSGraphicalAPIReference")
+                %assign grOut = canOut.SSGraphicalAPIReference
+                %assign argVec[argIdx] = grOut.SLName
+              %endif
+              %break
+            %case "D" %% canonical dwork
+              %assign canDWork = thisInterface.CanonicalDWorkArgDef[argSrcIdx]
+              %if  ISFIELD(canDWork, "SSGraphicalAPIReference")
+                %assign grDS = canDWork.SSGraphicalAPIReference
+                %assign argVec[argIdx] = grDS.Name
+              %endif
+              %break
+            %default
+              %break
+          %endswitch
+        %endforeach %% thisFcn.NumArgs
+      %endif
+    %endwith %% ssBlk
+  %endwith %% parent
+  %return argVec
+%endfunction %% getTestInterfaceArgVector
+
+%% Local Function: FcnGenSubsystemUpdateFcnCallInInterface ===================
+%% Abstract:
+%%
+%function FcnGenSubsystemUpdateFcnCallInInterface(ssInterface) Output
+  %assign tmpBlockFcn = ::BlockFcn
+  %assign ::BlockFcn  = "Update"
+  %assign system      = System[ssInterface.SystemIdx]
+  %assign csIdx       = ssInterface.CallSiteIdx
+  %if system.LivesInStandaloneSS[csIdx]
+    %assign parentSystem = System[system.StandaloneParentSysIdx[csIdx]]
+  %else
+    %assign parentSystem = System[NumSystems - 1]
+  %endif
+  %if LibSystemIsReusedFcn(system)
+    %assign currentTID        = system.CurrentTID
+    %assign isPeriodicRateGrouping    = SLibSystemFcnPeriodicRateGrouping(system, "Output")
+    %%
+    %% Add graphical reference to Canonical args, so that the call to the
+    %% reusable "update" function uses graphical inputs.
+    %addtorecord system GenerateReusableWrapper TLC_TRUE
+    %%
+    %% Add graphical inports if the function has Canonical inputs
+    %if ISFIELD(ssInterface, "FunctionInputHash")
+      %foreach argIdx=system.Interface.NumCanonicalInputArgDefs
+        %assign canIn = system.Interface.CanonicalInputArgDef[argIdx]
+        %if FcnArgNeeded(canIn, currentTID, isPeriodicRateGrouping)
+          %if ISFIELD(ssInterface.FunctionInputHash, "FuncIn%<argIdx>")
+            %assign fIn=GETFIELD(ssInterface.FunctionInputHash, "FuncIn%<argIdx>")
+            %addtorecord canIn SSGraphicalAPIReference fIn
+          %endif
+        %endif
+      %endforeach
+    %endif
+    %%
+    %% Add graphical Outports if the function has Canonical Outputs
+    %if ISFIELD(ssInterface, "FunctionOutputHash")
+      %foreach argIdx=system.Interface.NumCanonicalOutputArgDefs
+        %assign canOut = system.Interface.CanonicalOutputArgDef[argIdx]
+        %if FcnArgNeeded(canOut, currentTID, isPeriodicRateGrouping)
+          %if ISFIELD(ssInterface.FunctionOutputHash, "FuncOut%<argIdx>")
+            %assign fOut = ...
+              GETFIELD(ssInterface.FunctionOutputHash, "FuncOut%<argIdx>")
+            %addtorecord canOut SSGraphicalAPIReference fOut
+          %endif
+        %endif
+      %endforeach
+    %endif
+    %%
+    %% Add graphical Data stores if the function has Canonical Dworks (DSM)
+    %assert (ssInterface.NumDataStores == system.Interface.NumCanonicalDWorkArgDefs)
+    %foreach argIdx = system.Interface.NumCanonicalDWorkArgDefs
+      %assign canDW = system.Interface.CanonicalDWorkArgDef[argIdx]
+      %if FcnArgIsNeeded(canDW)
+        %assign ds    = ssInterface.DataStore[argIdx]
+        %addtorecord canDW SSGraphicalAPIReference ds
+      %endif
+    %endforeach
+  %endif  %% LibSystemIsReusedFcn(system)
+  %% 
+  %with parentSystem
+    %if !LibSystemFcnIsEmptyForTID(system,"Update")
+      %% Copy over original interface as LibGenCachedSystemFcnCall may overwrite
+      %% some of the accessed flags
+      %copyrecord parentInterface parentSystem.Interface
+      %%
+      %% Generate System function call
+      /* Call subsystem's update code */
+      %assign argVec = getTestInterfaceArgVector(system, "Update", csIdx)
+      %<SLibGenSystemFcnCallWithArgs(system, "Update", csIdx, argVec)>\
+      %%
+      %% Revert to the original interface
+      %assign parentSystem.Interface = parentInterface
+    %endif
+  %endwith  %% parentSystem
+  %%
+  %if LibSystemIsReusedFcn(system)
+    %% Clean up - Remove fields added while generating the subsystem call
+    %assign tmp = REMOVEFIELD(system, "GenerateReusableWrapper")
+    %%
+    %% Remove graphical inports reference from Canonical inputs
+    %foreach argIdx=system.Interface.NumCanonicalInputArgDefs
+      %assign canIn = system.Interface.CanonicalInputArgDef[argIdx]
+      %if ISFIELD(canIn, "SSGraphicalAPIReference")
+        %assign tmp = REMOVEFIELD(canIn, "SSGraphicalAPIReference")
+      %endif
+    %endforeach
+    %%
+    %% Remove graphical Outports reference from Canonical outputs
+    %foreach argIdx=system.Interface.NumCanonicalOutputArgDefs
+      %assign canOut = system.Interface.CanonicalOutputArgDef[argIdx]
+      %if ISFIELD(canOut, "SSGraphicalAPIReference")
+        %assign tmp = REMOVEFIELD(canOut, "SSGraphicalAPIReference")
+      %endif
+    %endforeach
+    %%
+    %% Remove graphical DS reference from Canonical DWorks
+    %foreach argIdx = system.Interface.NumCanonicalDWorkArgDefs
+      %assign canDW = system.Interface.CanonicalDWorkArgDef[argIdx]
+       %if ISFIELD(canDW, "SSGraphicalAPIReference")
+        %assign tmp = REMOVEFIELD(canDW, "SSGraphicalAPIReference")
+      %endif
+    %endforeach
+  %endif %% LibSystemIsReusedFcn(system)
+  %%  
+  %assign ::BlockFcn  = tmpBlockFcn
+%endfunction
+
+%% Local Function: FcnCacheHeaderInInterfaceFile ================================
+%% Abstract:
+%%   Caches a header file (header.h) to be included in model_testinterface.h
+%%   If the header file is not already included in the model_testinterface.h, 
+%%   then cache the header file  and put a #include "header.h" to the Includes 
+%%   section of the model_testinterface.h file
+%%
+%function FcnCacheHeaderInInterfaceFile(header) void
+
+  %if WHITE_SPACE(header)
+    %assign errTxt = "HeaderFile not specified."
+    %<LibReportFatalError(errTxt)>
+    %return
+  %endif
+  
+  %assign modelHdrFilename = SLibGetFileNameForCode("mdl_hdr")
+  %assign modelPrivHdrFilename = SLibGetFileNameForCode("mdl_priv_hdr")
+  %if header == "%<modelHdrFilename>.h" || ...
+    header == "%<modelPrivHdrFilename>.h"
+    %% Dont add model header files. These are added later
+    %return
+  %endif
+  
+  %assign header = "\"" + header + "\""
+  
+  %% Keep track of when we've already #include'd this file for some
+  %% other data of this class.  #include this file once.
+  %% Note the file should already include delimeter.
+  
+  %assign headerIncluded = TLC_FALSE
+  
+  %with ::CompiledModel
+    %% Create a record for this driver file, if not exists already
+    %if !ISFIELD(SystemGraphicalMap, "HeaderMap")
+      %addtorecord SystemGraphicalMap HeaderMap {}
+      %assign driverHdrMap = SystemGraphicalMap.HeaderMap
+    %else
+      %assign driverHdrMap = SystemGraphicalMap.HeaderMap
+    %endif
+  %endwith
+  
+  %% driverHdrMap contains a map of header files included
+  %% for this driver file. Loop through the contents to check if
+  %% header is included
+  %assign headers    = FIELDNAMES(driverHdrMap)
+  %assign numHeaders = SIZE(headers)[1]
+  
+  %if numHeaders > 0
+    %foreach hdrIdx = numHeaders
+      %if (header == GETFIELD(driverHdrMap, headers[hdrIdx]))
+	%assign headerIncluded = TLC_TRUE
+        %break
+      %endif
+    %endforeach
+  %endif
+  
+  %if !headerIncluded
+    %assign hdrmarker = LibConvertNameToIdentifier(header)
+    %assign tmpBuffer = "#include %<header>\n"
+    %<SLibCacheCodeToFile("testif_hdr_incl", tmpBuffer)>
+    %addtorecord driverHdrMap %<hdrmarker> header
+  %endif
+%endfunction
+
+%function SLibDeclareStaticDatainDriverFile() void
+
+  %if !MultiInstanceERTCode
+    %return ""
+  %endif
+  
+  %assign recArgs    = []
+  %assign rootSystem = System[NumSystems-1]
+
+  %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  %assign static   = "static" 
+  
+  %openfile tmpFcnBuf
+  %if !reqInsts.SimStructInst && !EmptyRealTimeObject
+    /* Real-time model */
+    %<static> %<::tSimStructType> %<::tSimStruct>_;
+    %<static> %<::tSimStructType> *const %<::tSimStruct> = &%<tSimStruct>_; 
+    
+  %endif
+  %if !reqInsts.ParamsInst && ...
+    !SLibPrmBufferIsEmpty("SimulinkGlobal", "Instance")
+    %<static> %<::tParametersType> %<LibGetParametersStruct()>_ = {
+      %<SLibGetPrmBuffer("SimulinkGlobal", "Instance")> 
+    }; /* Modifiable parameters */
+    
+    %<static> %<::tParametersType>* %<LibGetParametersStruct()> = &%<LibGetParametersStruct()>_;
+    
+  %endif
+  %if !reqInsts.BlockIOInst && !LibBlockIOInstanceIsEmpty()
+    /* Observable signals */
+    %<static> %<::tBlockIOType> %<LibGetBlockIOStruct()>_; 
+    %<static> %<::tBlockIOType> *%<LibGetBlockIOStruct()> = &%<LibGetBlockIOStruct()>_; 
+    
+  %endif
+  %if !reqInsts.DworkInst && !LibDWorkInstanceIsEmpty()
+    /* Observable states */
+    %<static> %<::tDWorkType> %<LibGetDWorkStruct()>_; 
+    %<static> %<::tDWorkType> *%<LibGetDWorkStruct()> = &%<LibGetDWorkStruct()>_; 
+    
+  %endif
+  %if !reqInsts.ContStatesInst && !LibContStatesInstanceIsEmpty()
+    /* Observable continuous states */
+    %<static> %<::tContStateType> %<LibGetContinuousStateStruct()>_; 
+    %<static> %<::tContStateType> *%<LibGetContinuousStateStruct()> = &%<LibGetContinuousStateStruct()>_;  
+    
+  %endif
+  %if !reqInsts.PrevZCStatesInst && !LibPrevZCStatesInstanceIsEmpty()
+    /* Triggered events */
+    %<static> %<::tPrevZCStateType> %<LibGetPreviousZCStruct()>_;
+    %<static> %<::tPrevZCStateType> *%<LibGetPreviousZCStruct()> = &%<LibGetPreviousZCStruct()>_;  
+   
+  %endif
+  %closefile tmpFcnBuf
+  
+  %return tmpFcnBuf
+  
+%endfunction
+
+%function SLibDefineRootIOInLocalScope() void
+  
+  %if !(MultiInstanceERTCode)
+    %return ""
+  %endif
+  
+  %assign tmpFcn = ::BlockFcn
+  %assign ::BlockFcn = "Registration"
+  
+  %assign recArgs    = []
+  %assign rootSystem = System[NumSystems-1]
+  %assign reqInsts   = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  %assign isPeriodicRateGrouping    = ...
+    SLibSystemFcnPeriodicRateGrouping(rootSystem, "Initialize")
+  
+  %openfile tmpFcnBuf
+  %if !reqInsts.ExtInpsInst && !LibExternalInputsInstanceIsEmpty()
+    
+    /* Declare model's inputs as local variables */
+    %if RootIOStructures
+      %assign recArgs =  recArgs + "%<::tInputType> *%<SLibGetExternalInputStruct(0,isCallSite,TLC_FALSE)>"
+    %else
+      %foreach idx = ExternalInputs.NumExternalInputs 
+	%assign extInp = ExternalInputs.ExternalInput[idx]
+        %assign id = LibGetRecordIdentifier(extInp)
+	%with extInp
+	  %if extInp.StorageClass != "Auto" 
+	    %continue
+	  %endif
+          %assign dataType  = SLibGetRecordDataTypeName(extInp, "")
+	  %if LibGetRecordWidth(extInp) > 1
+             %assign recArgs =  recArgs + "%<dataType> %<SLibGetExternalInputStruct(0,0,TLC_FALSE)>%<UQualifier>%<id>[%<LibGetRecordWidth(extInp)>]"
+          %else
+            %assign passByRef = MultiInstanceERTCode && !RootIOStructures
+            %assign optStar   = passByRef ? "*" : ""
+            %assign recArgs = recArgs + "%<dataType> %<optStar>%<SLibGetExternalInputStruct(0, 0 ,TLC_FALSE)>%<UQualifier>%<id>"
+            %<dataType> %<optStar>%<LibGetExternalInputStruct()>%<UQualifier>%<id>;
+          %endif
+	%endwith
+      %endforeach
+    %endif
+  %endif
+  %if !reqInsts.ExtOutputsInst && !LibExternalOutputsInstanceIsEmpty()
+    
+    /* Declare model's outputs as local variables */
+    %if RootIOStructures
+      %assign recArgs = recArgs + "%<::tOutputType> *%<SLibGetExternalOutputStruct(0,isCallSite,TLC_FALSE)>"
+      %<::tOutputType> *%<LibGetExternalOutputStruct()>; 
+    %else
+      %foreach idx = ExternalOutputs.NumExternalOutputs
+	%assign extOut       = ExternalOutputs.ExternalOutput[idx]
+	%assign sysIdx       = extOut.Block[0]
+	%assign blkIdx       = extOut.Block[1]
+	%assign outportBlock = System[sysIdx].Block[blkIdx]
+	%if SLibExternalOutputIsVirtual(outportBlock) || ...
+	    !FcnArgNeeded(extOut, rootSystem.CurrentTID, isPeriodicRateGrouping)
+	  %continue
+	%endif
+	%with outportBlock
+	  %assign portWidth = LibBlockInputSignalWidth(0)
+	  %assign dataType  = LibBlockInputSignalDataTypeName(0, "")
+	%endwith
+        %assign id = LibGetRecordIdentifier(outportBlock)
+      	%if portWidth > 1
+          %assign recArgs = recArgs + "%<dataType> %<SLibGetExternalOutputStruct(0, 0 ,TLC_FALSE)>%<YQualifier>%<id>[%<portWidth>]"
+          %<dataType> %<LibGetExternalOutputStruct()>%<YQualifier>%<LibGetRecordIdentifier(outportBlock)>[%<portWidth>];
+        %else
+          %assign recArgs = recArgs + "%<dataType> *%<SLibGetExternalOutputStruct(0, 0,TLC_FALSE)>%<YQualifier>%<id>"
+          %<dataType> *%<LibGetExternalOutputStruct()>%<YQualifier>%<LibGetRecordIdentifier(outportBlock)>; 
+        %endif
+      %endforeach
+    %endif
+  %endif
+  %closefile tmpFcnBuf
+  
+  %assign ::BlockFcn = tmpFcn
+  %%return tmpFcnBuf
+  %foreach idx = SIZE(recArgs,1)
+    %if idx == 0
+      %assign fcnArgs = recArgs[idx]
+    %else
+      %assign fcnArgs = fcnArgs + ", %<recArgs[idx]>"
+    %endif
+  %endforeach
+  %return fcnArgs
+%endfunction
+
+%endif  %% !EXISTS("_ERT_TEST_INTERFACE_LIB")
+
+%% [EOF] erttestinterfacelib.tlc

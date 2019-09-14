@@ -1,0 +1,555 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%   This system file is the entry point for the "RealTimeMalloc" code
+%%   format. The files model.h, model.c, model_private.h, model_data.c
+%%   are produced.
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+%include "cachereusablelibs.tlc"
+%include "sfcnutil.tlc"
+%include "data_cachebuffers.tlc"
+%include "prm_assignbuffers.tlc"
+
+%if EXISTS("_FORMATWIDE_") == 0
+%assign _FORMATWIDE_ = 1
+
+%assign ::BlockFcn = "Unknown"
+
+%if CodeFormat == "S-Function" && !Accelerator
+  %assign sfcnNoAccel = 1
+%else
+  %assign sfcnNoAccel = 0
+%endif
+
+%if SLibIsERTCodeFormat()
+  %<SLibErtWideInit()>
+%endif
+  
+%if SLibFcnProtoCtrlActive() || ...
+  GenerateClassInterface
+  %assign ::RTWStepPrototypeRecord = ""
+  %include "ertfcnprotocontrol.tlc"
+%endif
+
+%if SLibAutosarActive()
+  %include "autosarsup.tlc"
+%endif
+
+%if GenerateClassInterface
+  %assign ::RTWCPPStepPrototypeRecord = ""
+  %include "ertclassgeneration.tlc"
+%endif
+
+
+%% ============================================================================
+%% Cache all the body code for model.c file (minus terminate function since
+%% mallocs occur in registration and instance data code).
+%%
+
+%<SLibGenBodyCache()>
+
+
+%% ============================================================================
+%% Cache S-Function registration code and block instance data prior to
+%% generating the structure definitions/instances (this code may affect the
+%% contents of the parameters structure).  The accessed SimStruct variables
+%% are cached for later use in the registration generation.
+%%
+%% (mdt) Setting blockFcn to Initialize means that the Interface is no
+%% longer completely correct.
+%assign ::BlockFcn = "Registration"
+%if !sfcnNoAccel
+  %if !Accelerator
+    %<LibCacheChildSFunctionRegistration(::tChildSimStruct, Name)>
+  %endif
+  %<LibCacheBlockInstanceData()>
+%endif
+%<SLibCacheBranchedSysCalledByNonInlinedSfcn()>
+%assign ::BlockFcn = "Unknown"
+
+%% ============================================================================
+%% Cache terminate function.
+%%
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Cache terminate function")>
+%<SLibGenTerminateBody()>
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Cache terminate function")>
+
+%if IsModelReferenceSimTarget()
+  %<CreateModelrefSFunctionForTopSystem()>
+%endif
+
+%assign ::BlockFcn = "Registration"
+%<FcnProcessChildCoderGroups()>
+%assign ::BlockFcn = "Unknown"
+
+%% ============================================================================
+%% Cache header files.
+%%
+%<SLibGenHeaderCache()>
+
+%% ============================================================================
+%% Cache structure definitions prior to model registration.  Note that
+%% the instance should be cached prior to the definition to properly
+%% handle non-finites values.  For example, when inlining parameters the
+%% individual parameters are declared "const" unless they are non-finite.
+%% Whether a parameter is non-finite is determined while caching the
+%% parameter structure instance.
+%%
+%assign ::BlockFcn = "Registration"
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Cache structure definitions")>
+%if sfcnNoAccel
+  %<SLibSfcnWideInit()>
+%else
+  %<SLibCacheDataBuffers()>
+%endif
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Cache structure definitions")>
+%assign ::BlockFcn = "Unknown"
+
+%% ===========================================================================
+%% CAPIInterface information to map parameters and signals.
+%%
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Write C-API")>
+%if RTWCAPI
+  %assign ::BlockFcn = "Registration"
+  %include "capi.tlc"
+  %<SLibWriteToCAPIFiles()>
+  %assign ::BlockFcn = "Unknown"
+%endif
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Write C-API")>
+
+%% ===========================================================================
+%% Target Connectivity
+%%
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Write TgtConn File")>
+%if !IsModelReferenceTarget() && %<FEVAL("coder.internal.connectivity.TgtConnMgr.isNeeded")> 
+  %include "tgtconn.tlc"
+  %<SLibWriteTgtConnFile()>
+%endif
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Write TgtConn File")>
+
+%% ==========================================================================
+%% Run TLC based TargetFcnLib callbacks
+%% Invoke the callbacks before ertreg.tlc determines if non-finites
+%% need to be initialized. The callbacks need to be called early since
+%% they may result in a non-finite being used.
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Run TLC based TFL callbacks")>
+%<SLibRunTFLCallbacks()>
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Run TLC based TFL callbacks")>
+
+%% ============================================================================
+%% Dump contents of model.c file.  This must be done before dumping model.h
+%% since the source file may split in the process.  The header file declares
+%% global data "extern" when the file splits.
+%%
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Cache model.c")>
+%include "formatbody.tlc"
+%<SLibFormatBody()>
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Cache model.c")>
+
+%% ============================================================================
+%% model_private.h, model.c, model_data.c
+%% (order not important)
+%%
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Dump model_private.h, model.c, model_data.c")>
+%include "formattypes.tlc"
+%<DumpHdrFileUserCode()>
+%include "formatprivate.tlc"
+%assign ::BlockFcn = "Registration"
+%<SLibCacheRTCallSys()>\
+%assert(!IsModelReferenceTarget() || SLibIsERTCodeFormat())
+
+%switch CodeFormat
+  %case "RealTime"
+    %include "srtreg.tlc"
+    %break
+  %case "Embedded-C"
+    %assign ::BlockFcn = "Registration"
+    %include "ertreg.tlc"
+    %break
+  %case "S-Function"
+    %if Accelerator
+      %include "accelreg.tlc"
+    %else
+      %include "sfcnreg.tlc"
+      %include "sfcnsid.tlc"
+      %include "sfcnmid.tlc"
+    %endif
+    %break
+  %default
+%endswitch
+%assign BlockFcn = "Unknown"
+%if IsModelReferenceRTWTarget() && GenerateClassInterface
+  %%pre-register memset so that we will have proper header file inclusion
+  %openfile dummyBuf
+  %<LibGenMemFcnCall("memset","(void *)%<::tSimStruct>","0",...
+    "sizeof(%<::tSimStructType>)")>
+  %closefile dummyBuf
+  %undef dummyBuf 
+%endif
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Dump model_private.h, model.c, model_data.c")>
+%% ============================================================================
+%% model.h
+%% Done after reg code to ensure all include dependencies are collected.
+%%
+
+%% Write out the main header file
+%if IsModelReferenceTarget() 
+  %assign nonVirtSubsbys = DumpAllSystemHeadersExcludingRootSystem()
+  %assert (WHITE_SPACE(nonVirtSubsbys))
+%else
+  %include "formathdr.tlc"
+  %<SLibFormatHdr()>
+%endif
+
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Write header file comments")>
+%<SLibWriteHeaderFileComments()>
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Write header file comments")>
+%<SLibGenerateVariantStuff()>
+
+%<SLibIncludeRTWGeneratedChildSysExportFile()>
+%<DumpUserCodeAndCustomDataInst()>
+%<DumpExportedDataInstance()>
+%<SLibAssignPrmBuffers()>
+%<DumpExportedDataDefinition()>
+%<DumpExportFileUserCode()>
+%<SLibDumpCustomClassData()>
+%<SLibDumpPublicServerInterfaces()>
+
+
+%% =============================================================================
+%% Optionally generate C++ class interface
+%%
+%% There is no class interface generated for a model reference target
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate C++ class interface")>
+%if GenerateClassInterface
+  %<FcnCPPGenerateDeclarations()>
+%endif
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate C++ class interface")>
+
+%% Cache global params data in the .mat file
+%<GenAndCacheGlobalParamsInMatFile()>
+
+%% Cache reusable library subsystem info, if it's there
+%<CacheReusableLibChecksums()>
+
+%% Cache some general data in the .mat file
+%<CacheGeneralDataIntoMatInfoFile()>
+
+%% create modelInterface data structure containing 
+%% cross-target data that is applicable to model reference and 
+%% standalone code generation targets
+%% for right-click subsystem builds only cache the required data
+%assign modelInterface = SLibCreateModelInterface()
+
+%if IsModelReferenceTarget()
+  %<ModelrefHandleExportFileInfo()>
+  %<ModelrefGenSfcnAndHandleConstPrmAndBIO()>
+  %% add model reference specific data to the modelInterface
+  %<SLibAddModelReferenceModelInterface(modelInterface)>
+  %if IsModelReferenceRTWTarget()
+    %<CacheMdlRefExportedMdlInfoInBinfo()>
+    
+    %openfile externDataBuf
+    %% 
+    %% Add typedefs that support the profiler
+    %%
+    %% Code profiling support
+    %if ISFIELD(::CompiledModel.ConfigSet, "CodeProfilingInstrumentation")
+      %if !ISEQUAL(::CompiledModel.ConfigSet.CodeProfilingInstrumentation, "off")
+        %% Support for CGIR profiling instrumentation
+        %include "prof_tlc.tlc"
+        %<SLibProfilerTypeDefs()>\
+      %endif  
+    %endif
+    %%
+    %% Classic profiling
+    %<SLibGenProfTypeDef()>\
+    %%
+    %% 
+    %% Add extern definitions that support the profiler
+    %%
+    %<SLibGenProfGlbExtData()>
+    %%
+    %closefile externDataBuf
+    %<SLibCacheCodeToFile("mdl_profiler_data_decl", externDataBuf)>
+    %undef externDataBuf
+    
+    %openfile tmpBuf 
+    %<SLibGenProfGlbData()>\
+    %closefile tmpBuf
+
+    %<SLibCacheCodeToFile("mdl_profiler_data_defn", tmpBuf)>
+    
+    %% Undefine global variables
+    %undef tmpBuf
+  %endif
+%endif
+
+%% add common information to model interface
+%<SLibAddCommonModelInterface(modelInterface)>
+
+%% add model settings information to model interface
+%<SLibWriteModelSettings(modelInterface)>
+  
+%% deep copy since aliases are not saved to matfile
+%copyrecord deepCopiedModelInterface modelInterface
+
+%% finally, write to the MAT file
+%<CacheModelrefInterfaceInMatInfoFile(Name, "addInterface", deepCopiedModelInterface)>
+
+%if !IsModelReferenceTarget() 
+  %if !Accelerator
+    %include "formatexport.tlc"
+    %<SLibFormatExport()>
+  %endif
+  %include "formatparam.tlc"
+  %<SLibFormatParam()>
+%else
+  %% The code above (inside "if") only works for non model reference target meaning
+  %% that we don't dump global coder group instances for model reference target
+  %% even though the instance definitions are cached already. This call ensures
+  %% we dump out these instances for model reference target as well.
+  %<LibDumpGlobalCoderGroupInstancesToModelDotC()>
+%endif
+
+%% Dump self typedef if needed - this is done later than usual (SLibGenHeaderCache), because
+%% we need legacy rtm type information in order to fully construct the type of self
+%if SLibGetDoesSelfHasCoderDataGroup()
+  %assign selfCoderGroupIndex = SLibGetSelfCoderDataGroupIndex()
+  %% Subsystem self
+  %foreach sysIdx = NumSystems
+    %if !SLibSystemHasOwnDataScope(System[sysIdx]) || sysIdx >= GetBaseSystemIdx()
+      %continue
+    %endif
+    %openfile subsystemSelfBuf
+    %assign subsysSelfFields = LibCacheSystemCoderDataGroupStructDef_Impl(sysIdx, selfCoderGroupIndex, subsystemSelfBuf, TLC_FALSE)
+    %<subsysSelfFields>
+    %closefile subsystemSelfBuf
+    %if ISFIELD(::CompiledModel, "CoderGroupStructDefinitionsForTesting")
+      %assign subsystemSelfBuf = ::CompiledModel.CoderGroupStructDefinitionsForTesting + subsystemSelfBuf
+    %endif
+    %<LibEmitSystemGroupStructDefsForTesting(subsystemSelfBuf)>
+  %endforeach
+  
+  %% RTM
+  %if !GenerateClassInterface
+  %openfile dataGroupStructDefForTesting
+  %assign selfFields = LibCacheSystemCoderDataGroupStructDef_Impl(GetBaseSystemIdx(), selfCoderGroupIndex, dataGroupStructDefForTesting, TLC_TRUE)    
+  %<selfFields>    
+  %closefile dataGroupStructDefForTesting
+  
+  %% dump the dataGroupStructDefForTesting if needed
+  %if ISFIELD(::CompiledModel, "CoderGroupStructDefinitionsForTesting")
+    %assign dataGroupStructDefForTesting = ::CompiledModel.CoderGroupStructDefinitionsForTesting + dataGroupStructDefForTesting
+  %endif
+  %<LibEmitSystemGroupStructDefsForTesting(dataGroupStructDefForTesting)>      
+%endif
+%endif
+
+%if GenerateClassInterface
+  %<AddRTMToClassWhenNeeded()>
+  %<AddRTMInitWhenNeeded()>
+  %<AddMdlRefTimingInfoWhenNeeded()>
+  %<AddCAPIMethodWhenNeeded()>
+  %<FcnGenerateCPPClassFiles()>
+%endif
+
+%% ============================================================================
+%% Optionally dump integer only warnings
+%%
+%if PurelyIntegerCode
+  %<SLibDumpIntegerOnlyWarning()>
+%endif
+
+%% ============================================================================
+%% Optionally Generate TestInterfaces
+%% Generate test driver file if ERT and 'GenerateTestInterfaces' is true.
+%% Skip for Model reference target or accelerator or ERT with GRT Interface
+%if !LibIsDeploymentDiagram() 
+  %if SLibIsERTTarget() && ...
+    ConfigSet.GenerateTestInterfaces && ...
+    !(IsModelReferenceTarget() || Accelerator || GenerateGRTWrapper)
+    %% Create Global Memory Map
+    %<SLibMapData()>
+    %<LibWriteToStandardOutput("### Generating system graphical API")>
+    %% Create Subsystem Graphical Map
+    %include "ertsystemgraphmaplib.tlc"
+    %assign tmpFcn = ::BlockFcn
+    %assign ::BlockFcn = "TestInterface"
+    
+    
+    %if ConfigSet.GenerateTestInterfaces 
+      %<SLibCreateSystemGraphicalMap("all")>
+      %% Generate example test driver/interface files
+      %if !EXISTS("CustomTestInterfaceFile")
+        %include "ertgentestinterface.tlc"
+      %else
+        %assign customFilePath = FEVAL("which", CustomTestInterfaceFile)
+        %if (TYPE(customFilePath) == "String") && FILE_EXISTS(customFilePath)
+          %include customFilePath
+        %else 
+          %assign errTxt = "\nCould not find the CustomTestInterfaceFile: " ...
+            "'%<CustomTestInterfaceFile>'. This file must be on the MATLAB path."
+          %<LibReportError(errTxt)>
+        %endif
+      %endif
+    %endif
+    
+    %assign ::BlockFcn = tmpFcn
+    %assign tmp = REMOVEFIELD(::CompiledModel, "SystemGraphicalMap")
+  %endif
+%endif
+
+%% ============================================================================
+%% Optionally Generate CodeInfo file for ERT and GRT based targets
+%% Skip for accelerator or top models with classic call interface or simstruct 
+%% based targets
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate CodeInfo")>
+
+%assign unsupportedTarget =  ...
+  (Accelerator || (::GRTInterface && !IsModelReferenceRTWTarget()) || ...
+  IsSimstructBasedTarget())
+
+%assign modelRefPILFeature = (IsModelReferenceSimTarget())
+
+%if (!unsupportedTarget || modelRefPILFeature)
+  %include "codeinfo.tlc"
+  %if (!IsModelReferenceTarget())
+    %assign ::CompiledModel.GenerateCodeInterfaceReport = TLC_TRUE
+  %endif
+%endif
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate CodeInfo")>
+
+%% ============================================================================
+%% Generate ERT S-Function target (if required)
+%%
+%if SLibIsERTCodeFormat() && !IsModelReferenceTarget()
+  %<SLibErtSfunction()>
+%endif
+
+%if IsModelReferenceTarget() 
+  %if GenerateClassInterface
+    %createrecord groupFilter { \
+      Static TLC_TRUE \
+      Dynamic TLC_TRUE \
+      AccessStandalone TLC_TRUE \
+      AccessThroughSelf TLC_FALSE \
+      Exported TLC_TRUE \
+      Imported TLC_FALSE \
+      ModelData TLC_FALSE \
+    }
+    %openfile defnsBuffer
+    %<SLibDeclareCoderDataGroupInstances(::CompiledModel.System[GetBaseSystemIdx()],"",groupFilter)>
+    %closefile defnsBuffer
+    %<SLibCacheCodeToFile("data_DWork_defn", defnsBuffer)>
+  %else
+    %% Generate the dwork for the model reference which can contain the
+    %% models DWork, BlockIO and rtModel.  
+    %<SLibModelReferenceGenerateDWork()>
+  %endif
+
+  %if IsModelReferenceSimTarget() 
+    %<SLibWriteModelrefSFunctionMethods()>
+  %endif
+  
+  %assign rootFileName = GetRootSystemHeaderFileName()
+  %assign opFile = SLibDoesModelFileExist("SystemHeader", rootFileName)
+  %if TYPE(opFile) == "Scope" %% file exists
+    %assert(SLibGetModelFileIsEmpty(opFile))
+    %<SLibSetModelFileAttribute(opFile, "Filter", 1)>
+  %endif
+  %assign opFile = SLibDoesModelFileExist("SystemBody", rootFileName)
+  %if TYPE(opFile) == "Scope" %% file exists
+    %assert(SLibGetModelFileIsEmpty(opFile))
+    %<SLibSetModelFileAttribute(opFile, "Filter", 1)>
+  %endif
+%endif
+
+%% ==========================================================================
+%% Run TLC based TargetFcnLib callbacks a second time. This will catch any
+%% callbacks that need to be invoked due to TLC TFL queries that happen
+%% after the first set of callbacks (specifically initnonfinite)
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Run TLC based TFL callbacks 2nd time")>
+%<SLibRunTFLCallbacks()>
+%<SLibAddTFLTypeIncludes()>
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Run TLC based TFL callbacks 2nd time")>
+
+%% ==========================================================================
+%% Run MATLAB-file based TargetFcnLib callbacks
+%%
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Run MATLAB-file based TFL callbacks")>
+%assign errmsgFromCB = FEVAL("rtwprivate","rtw_run_tfl_mcb", LibGetModelName())
+%if !ISEMPTY(errmsgFromCB)
+  %openfile errTxt
+  %<errmsgFromCB>
+  %closefile errTxt
+  %<LibReportError(errTxt)>
+%endif
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Run MATLAB-file based TFL callbacks")>
+
+%% =============================================================================
+%% Write code according to templates
+%%
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Custom file processing")>
+%<SLibERTCustomFileProcessing()>
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Custom file processing")>
+%<SLibAssignCustomCodeTemplates()>
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Write code according to templates")>
+%if !EXISTS("CodeTemplateFile")
+  %<SLibERTWriteSource()>
+%else
+  %% Backward compatible override of templates
+  %% Will be obsolete in the future.
+  %assign warnTxt = "You are using an obsolete ERT code template, which " ...
+    "does not support all features of Embedded Coder.  " ...
+    "For full compatibility, do not specify a CodeTemplateFile variable, " ...
+    "and use the configuration set 'File customization template' option " ...
+    "ERTCustomFileTemplate instead.  For an example, " ...
+    "see MATLAB/toolbox/rtw/targets/ecoder/example_file_process.tlc.  The " ...
+    "CodeTemplateFile option will be removed in a future release."
+  %<LibWriteToStandardOutput(warnTxt)>
+  %include "%<CodeTemplateFile>"
+%endif
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Write code according to templates")>
+
+%% Free globals as we are finished using them
+%<LibClearModelFileBuffers()>
+
+%% Make sure that the global outputs are mapped to the correct block output
+%% records.
+%assert (SLibVerifyBlockOutputPorts() == TLC_TRUE)
+
+%if sfcnNoAccel
+  %include "sfcnmoduleinc.tlc"
+%endif
+
+%% =============================================================================
+%% Create modelsources.txt, a list of module sources cached by 
+%% LibAddToModelSources
+%% 
+%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Create modelsources.txt")>
+%<SLibCreateBuildSourcesTxtFile()>
+%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Create modelsources.txt")>
+
+%% =============================================================================
+%% Clear Type Limit Identifier Replacement Map.
+%assign clearTlriMapSuccess = CLEAR_TYPE_LIMIT_ID_REPLACEMENT_MAP()
+
+%% =============================================================================
+%% Code generation complete
+%%
+%selectfile STDOUT
+%if RTWVerbose
+### TLC code generation complete.
+%endif
+%selectfile NULL_FILE
+
+%endif  %% _FORMATWIDE_
+
+%% [EOF] formatwide.tlc

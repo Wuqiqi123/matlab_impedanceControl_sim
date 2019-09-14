@@ -1,0 +1,579 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%   This system file puts parameters definitions and defines in model.c
+%%   and model_data.c for code generation's RealTime code format.
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%% 
+%selectfile NULL_FILE
+
+%if EXISTS("_FORMATPARAM_") == 0
+%assign _FORMATPARAM_ = 1
+
+%realformat "CONCISE"
+
+%%*****************************************************************************
+%% NOTE: This file is not used for model reference. If you are updating
+%% this file, please update ModelrefGenSfcnAndHandleConstPrmAndBIO in
+%% formatmodelref.tlc file.
+%%
+%assert (!IsModelReferenceTarget())
+
+
+%% Function: SLibFormatParam ===================================================
+%% Abstract:
+%%   Function to create and cache parameter definitions and defines in model.c
+%%   and model_data.c file sections.
+%%
+%function SLibFormatParam() void
+  %% ============================================================================
+  %% Generate the model_param.h file
+  %% ============================================================================
+  
+  %assign rootSystem = System[NumSystems-1]
+  %assign reqInsts   = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  %if !SLibIsERTCodeFormat()
+    %assign statPrefix = RootPrmHdrInstsStatic ? "static" : ""
+  %else
+    %assign statPrefix = ""
+  %endif
+  %%
+  %% We need to unify the names "tParameters" & "tDefaultParameters"
+  %% and tConstBlockIOStruct & tInvariantSignals. Currently, the new
+  %% names are setup only for RealTime
+  %% 
+  %assign oldStrNames = SLibGetOldStrNames()
+  
+  %% This file is not used for model reference target
+
+  %openfile dataBanBuf
+  /*
+  * %<Name>_data.%<LangFileExt>
+  *
+  %<SLibCommonHeaderInfo()>\
+  */
+  %closefile dataBanBuf
+  %openfile inclBuf
+  %<SLibIncludeModelHeader()>
+  %<SLibIncludePrivateHeader()>
+  %closefile inclBuf
+  
+  %if !SLibIsERTCodeFormat()
+    %openfile tmpBuf
+    %if !GenRTModel
+      #include "simstruc.h"
+      #include "fixedpoint.h"
+    %endif
+    %closefile tmpBuf
+    %<SLibCacheCodeToFile("mdl_src_incl", tmpBuf)>
+  %endif
+  
+  %openfile tmpBuf
+  
+  %%=============================================================================
+  %% Create global variables for profiler objects
+  %<SLibGenProfGlbData()>\
+  
+  %%
+  %%
+  %% ============================================================================
+  %% Define Coder data groups in model.c, if nonreusable top
+  %%
+  %assign generateGroupTypesForTesting = SLibNeedGroupTypesForTesting()
+  %if !LibCoderDataGroupInstanceIsEmpty()
+    %assign mdlRef = IsModelReferenceTarget()
+    %if !mdlRef
+
+      %% redirect CoderDataGroupInstance if we are generating test files
+      %if generateGroupTypesForTesting
+        %openfile stubGroupInst
+        %<LibDumpCoderDataGroupInstance()>\
+        %closefile stubGroupInst
+      %else
+        %<LibDumpCoderDataGroupInstance()>\
+      %endif
+    %endif
+  %endif
+
+  %%
+  %% ============================================================================
+  %% Parameters
+  %%
+  %openfile dataBuf
+  %% If there are any unstructured global parameters dump them here.
+  %% This only can happen for a top model with model blocks.
+  %% Don't check for reqInsts.ParamsInst, if there are any UnstructuredSimulinkGlobal
+  %% parameters to declare, we must declare them since they won't go into the rtP.
+  %if !SLibPrmBufferIsEmpty("UnstructuredSimulinkGlobal", "Instance")
+    %assert (!IsModelReferenceTarget() && HasModelReferenceBlocks())
+
+    /* Model block global parameters (%<::AutoOrDefaultStorageClass> storage) */
+    %<SLibGetPrmBuffer("UnstructuredSimulinkGlobal", "Instance")>
+  %endif
+  %if ( (reqInsts.ParamsInst && !GenerateClassInterface) || ...
+        UsingMalloc || ...
+        (GenerateClassInterface && FcnParamsAreGlobalStruct()) ) && ...
+       !SLibPrmBufferIsEmpty("SimulinkGlobal", "Instance") 
+    %if !SLibIsERTCodeFormat()
+      %assign paramPrefix = statPrefix
+    %else
+      %assign paramPrefix = ""
+    %endif
+    %assign prmsName = SLibGetPrmsName(oldStrNames)
+    %if RootPrmHdrInstsStatic
+      %openfile staticBuf
+    %endif
+    /* Block parameters (%<::AutoOrDefaultStorageClass> storage) */
+    %openfile definition
+    %if SLibAutosarCompilerAbstractionRequired()
+      %<paramPrefix> %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tParametersType, TLC_FALSE, TLC_FALSE, prmsName, "DataGlobal")> = {
+        %<SLibGetPrmBuffer("SimulinkGlobal", "Instance")>
+      };\
+    %else
+      %assign classNamePrefix = ""
+      %if GenerateClassInterface
+        %if !ISEMPTY(::NamespaceName)
+          %assign classNamePrefix = ::NamespaceName + "::" + ::CPPClassName + "::"
+        %else
+          %assign classNamePrefix = ::CPPClassName + "::"
+        %endif
+      %endif      
+      %<paramPrefix> %<::tParametersType> %<classNamePrefix>%<prmsName> = {
+        %<SLibGetPrmBuffer("SimulinkGlobal", "Instance")>
+      };\
+    %endif
+    %closefile definition
+    %<SLibAddPreStructDeclarePragma(prmsName)>\
+    %<SLibApplyMemSecToDataDefn(definition, ...
+      "MemSecDataParameters", "%<prmsName>")>\
+    %<SLibAddPostStructDeclarePragma(prmsName)>\
+    %if RootPrmHdrInstsStatic
+      %closefile staticBuf
+      %<SLibCacheCodeToFile("mdl_data_defn", staticBuf)>
+      %undef staticBuf
+    %endif
+    %undef prmsName
+  %endif
+  %%
+  %% Constant parameters
+  %%
+  %if !SLibPrmBufferIsEmpty("Const", "Instance")
+  
+    /* Constant parameters (%<::AutoOrDefaultStorageClass> storage) */
+    %<SLibGetPrmBuffer("Const", "Instance")>
+  %endif
+  %%
+  %% Constant parameters (with initialization)
+  %%
+  %if !SLibPrmBufferIsEmpty("ConstWithInit", "Instance")
+  
+    /* Constant parameters with dynamic initialization (%<::AutoOrDefaultStorageClass> storage) */
+    %<SLibGetPrmBuffer("ConstWithInit", "Instance")>
+  %endif
+  %if generateGroupTypesForTesting
+    %% get the FC_level .h and .c file names from one of the DataGroups.
+    %% the MDXOwner should be set at the model level and should be the same
+    %% for all the DataGroups
+    %assign groupHeaderFile = []
+    %foreach idx = ::CompiledModel.NumCoderDataGroups
+      %assign group = ::CompiledModel.CoderDataGroup[idx]
+      %assign varGroup = SLibVarGroupForCoderGroup(group)
+      %if !ISEMPTY(varGroup)
+        %assign groupHeaderFile = varGroup.CoderDataGroupHeaderFile
+        %break
+      %endif
+    %endforeach
+    %assert !ISEMPTY(groupHeaderFile)
+    
+    %assign headerLength = SIZE(groupHeaderFile)
+    %assign fileNameNoExt = ""
+    %foreach idx = headerLength[1] -2
+      %assign fileNameNoExt = "%<fileNameNoExt>%<groupHeaderFile[idx]>"
+    %endforeach
+    %assign groupDefFile = fileNameNoExt + ".c"
+
+    %assign file = FEVAL("rtw.connectivity.Utils.createStubFolderAndGetFilePaths", ...
+      ::CompiledModel.Name, IsModelReferenceRTWTarget(), groupDefFile)
+    %openfile testDataAllocBuf = file.RelativePath
+    %<inclBuf>\
+    %if !LibCoderDataGroupInstanceIsEmpty()
+      %<stubGroupInst>\
+    %endif
+  %endif
+ 
+  %%
+  %% Coder data groups
+  %%
+  %if !SLibIsERTCodeFormat()
+    %assign paramPrefix = statPrefix
+  %else
+    %assign paramPrefix = ""
+  %endif
+  %if RootPrmHdrInstsStatic
+    %openfile staticBuf
+  %endif
+  %% Emit definitions of all static initialized, exported coder data groups
+  %createrecord groupFilter { \
+      Static TLC_TRUE \
+      Dynamic TLC_FALSE \
+      AccessStandalone TLC_TRUE \
+      AccessThroughSelf TLC_TRUE \
+      Exported TLC_TRUE \
+      Imported TLC_FALSE \
+      ModelData GenerateClassInterface \
+  }
+  %<SLibDeclareCoderDataGroupInstances(::CompiledModel.System[GetBaseSystemIdx()],paramPrefix,groupFilter)>\
+  %if RootPrmHdrInstsStatic
+    %closefile staticBuf
+    %<SLibCacheCodeToFile("mdl_data_defn", staticBuf)>
+    %undef staticBuf
+  %endif
+
+  %if generateGroupTypesForTesting
+      %% dump the variable initialization in the test buffer
+      %selectfile testDataAllocBuf
+      %% Emit definitions of all static initialized, imported coder data groups
+      %assign groupFilter.Exported = TLC_FALSE
+      %assign groupFilter.Imported = TLC_TRUE
+      %<SLibDeclareCoderDataGroupInstances(::CompiledModel.System[GetBaseSystemIdx()],paramPrefix,groupFilter)>\
+      %closefile testDataAllocBuf
+      %% add to static sources
+      %assign var = SLibAddToStaticSources(file.AbsolutePath)
+      %% indent with c_beautyfier
+      %<SLibIndentFile(file.AbsolutePath, ::CompiledModel.Name)>
+      %% generate the stub header file
+      %<LibEmitTopLevelGroupExternDeclForTesting(fileNameNoExt)> 
+  %endif
+
+  %closefile dataBuf
+  %%
+  
+  %%
+  %% ============================================================================
+  %% Block I/O
+  %%
+  %if reqInsts.BlockIOInst && !LibBlockIOInstanceIsEmpty()
+    
+    /* Block signals (%<::AutoOrDefaultStorageClass> storage) */
+    %<LibDumpBlockIOInstance()>\
+  %endif
+  %%
+  %% ============================================================================
+  %% Const Block I/O
+  %%
+  %openfile cioBuf
+  %if reqInsts.ConstBlockIOInst && !LibConstBlockIOInstanceIsEmpty()
+    %assign cioName = oldStrNames ? ::tInvariantSignals : ::tConstBlockIOStruct
+    %if RootPrmHdrInstsStatic
+      %openfile staticBuf
+    %endif
+    /* Invariant block signals (%<::AutoOrDefaultStorageClass> storage) */
+    %if SLibAutosarCompilerAbstractionRequired()
+      %openfile definition
+      %assign canBeConst = SLibCanConstBlockIOBeConst()
+      %<statPrefix> %<SLibAutosarCompilerAbstractionForDataDecl(canBeConst, ::tConstBlockIOType, TLC_FALSE, TLC_FALSE, cioName, "DataGlobal")> = {
+        %<LibDumpConstBlockIOInstance()>
+      };\
+      %closefile definition
+    %else
+      %assign qualifiers = SLibGetConstBlockIOQualifiers()
+      %openfile definition
+      %<statPrefix> %<qualifiers> %<::tConstBlockIOType> %<cioName> = {
+        %<LibDumpConstBlockIOInstance()>
+      };\
+      %closefile definition
+    %endif
+    %<SLibAddPreStructDeclarePragma(cioName)>\
+    %<SLibApplyMemSecToDataDefn(definition, ...
+      "MemSecDataConstants", "%<cioName>")>\
+    %<SLibAddPostStructDeclarePragma(cioName)>\
+    %if RootPrmHdrInstsStatic
+      %closefile staticBuf
+      %<SLibCacheCodeToFile("mdl_data_defn", staticBuf)>
+      %undef staticBuf
+    %endif
+    %undef cioName
+  %endif
+  %closefile cioBuf
+
+  %openfile standBuf
+  %% Write out any const blockio and rtP from standalone systems
+  %if HasStandaloneSubsystem
+    %foreach idx = ::CompiledModel.NumSystems
+      %assign sys = ::CompiledModel.System[idx]
+      %if sys.StandaloneSubsystem == 1 && ...
+        !ISEMPTY(LibGetSystemField(sys, "StandaloneDataInit"))
+        %assign sysInfo = GetSystemNameForComments(sys)
+
+        /* 
+         * Invariant block signals and block parameters 
+         * for %<sysInfo> 
+         */
+        %<LibGetSystemField(sys, "StandaloneDataInit")>
+      %endif
+    %endforeach
+  %endif
+  %closefile standBuf
+  
+  %%
+  %% ============================================================================
+  %% Zero representation for structure data types
+  %%
+  %openfile defGndBuf
+  
+  %<LibDumpGroundDeclarations(0)>
+  %closefile defGndBuf
+  %% Check if the _data.c file needs to be written.
+  %assign anyBuffersFilled = !(WHITE_SPACE(cioBuf) && ...
+                               WHITE_SPACE(dataBuf) && ...
+                               WHITE_SPACE(standBuf) && ...
+                               WHITE_SPACE(defGndBuf))
+  %% In certain cases the model_data.c file could have already been
+  %% created (e.g., with definitions for data with custom storage class).
+  %% In this case, we still need to add the banner & include sections,
+  %% even if all of the standard data buffers are empty.
+  %assign dataFileName = SLibGetFileNameForCode("mdldata_src")
+  %assign dataFileExists = !ISEMPTY(SLibDoesModelFileExist("SystemBody", dataFileName))
+  %if anyBuffersFilled || dataFileExists
+    %assign dataFile = SLibGetFileRecForCode("mdldata_src")
+    %% Data file not generated for compact file packaging
+    %if !ISEMPTY(dataFile)
+      %<LibSetSourceFileCodeTemplate(dataFile,ERTDataSrcFileTemplate)>
+    %endif
+    %<SLibCacheCodeToFile("mdldata_src_ban", dataBanBuf)>
+    %undef dataBanBuf
+    %<SLibCacheCodeToFile("mdldata_src_incl", inclBuf)>
+    %undef inclBuf
+    %% The rest of the buffers may be empty
+    %<SLibCacheCodeToFile("data_constBIO_defn", cioBuf)>
+    %undef cioBuf
+    %<SLibCacheCodeToFile("mdldata_data_defn", dataBuf)>
+    %undef dataBuf
+    %<SLibCacheCodeToFile("data_constBIO_defn", standBuf)>
+    %undef standBuf
+    %<SLibCacheCodeToFile("data_ground_defn", defGndBuf)>
+    %undef defGndBuf
+  %endif
+  %%
+  %%
+  %% ============================================================================
+  %% States
+  %%
+  %if reqInsts.ContStatesInst && !LibContStatesInstanceIsEmpty()
+    
+    /* Continuous states */
+    %<LibDumpContStatesInstance()>\
+  %endif
+  %if reqInsts.PeriodicContStatesInst && !LibPeriodicContStatesInstanceIsEmpty()
+    
+    /* Periodic continuous states */
+    %<LibDumpPeriodicContStatesInstance()>\
+  %endif
+  %%
+  %%
+  %% ============================================================================
+  %% Mass Matrices
+  %%
+  %if reqInsts.MassMatricesInst && !LibMassMatricesInstanceIsEmpty()
+    
+    /* Mass Matrices */
+    %<LibDumpMassMatricesInstance()>\
+  %endif      
+  %%
+  %%
+  %% ============================================================================
+  %% State Derivatives
+  %%
+  %% State derivatives are statically declared by integration routine.
+  %%   ode1 --> static real_T f[1][NCSTATES];
+  %%   ode2 --> static real_T f[2][NCSTATES]
+  %%   :   :    :
+  %%
+  %%
+  %% ============================================================================
+  %% DWork
+  %%
+  %if reqInsts.DworkInst && !LibDWorkInstanceIsEmpty()
+    
+    %if ::CompiledModel.DWorkAndBlockIOCombined
+      /* Block signals and states (%<::AutoOrDefaultStorageClass> storage) */
+    %else
+      /* Block states (%<::AutoOrDefaultStorageClass> storage) */
+    %endif
+    %<LibDumpDWorkInstance()>\
+  %endif
+  %%
+  %% ============================================================================
+  %% Zero-crossings
+  %%
+  %if reqInsts.PrevZCStatesInst && !LibPrevZCStatesInstanceIsEmpty()
+    
+    /* Previous zero-crossings (trigger) states */
+    %<LibDumpPrevZCStatesInstance()>\
+  %endif
+  %%
+  %% ============================================================================
+  %% Model inputs
+  %%
+  %if reqInsts.ExtInpsInst && (!LibExternalInputsInstanceIsEmpty() || !LibExternalInputSizesStructIsEmpty())
+    
+    %if !LibExternalInputsInstanceIsEmpty()
+      /* External inputs (root inport signals with %<::AutoOrDefaultStorageClass> storage) */
+      %<LibDumpExternalInputsInstance()>\
+    %endif
+
+    %if !LibExternalInputSizesInstanceIsEmpty()
+      /* External input sizes (root inport signals with variable sizes) */
+      %<LibDumpExternalInputSizesInstance()>\
+    %endif
+  %endif
+  %%
+  %% ============================================================================
+  %% Model outputs
+  %%
+  %if reqInsts.ExtOutputsInst && (!LibExternalOutputsInstanceIsEmpty() || !LibExternalOutputSizesInstanceIsEmpty())
+    
+    %if !LibExternalOutputsInstanceIsEmpty()
+      /* External outputs (root outports fed by signals with %<::AutoOrDefaultStorageClass> storage) */
+      %<LibDumpExternalOutputsInstance()>\
+    %endif
+
+    %if !LibExternalOutputSizesInstanceIsEmpty()
+      /* External output sizes (root outports fed by signals with variable sizes) */
+      %<LibDumpExternalOutputSizesInstance()>\
+    %endif
+  %endif
+
+  %%
+  %% ===========================================================================
+  %% Declare the Simstruct
+  %%
+  %assign userDefinedSelfOrLegacyRTMExists = !::CompiledModel.EmptyRealTimeObject || SLibIsSelfUserDefinedAndStructured()
+  %if reqInsts.SimStructInst && userDefinedSelfOrLegacyRTMExists
+  
+    %if !SLibIsERTCodeFormat()
+      /* Parent Simstruct */
+      %if ::GenCPP
+        #ifdef __cplusplus
+        extern "C" {
+          #endif
+      %endif
+      %assign rtModelObjType = ::tSimStructType
+      static %<rtModelObjType> model_S;
+      %<rtModelObjType> *const %<RTMGetModelSS()> = &model_S;
+      %assign mdlRefBlks = ISFIELD(::CompiledModel,"ModelReferenceBlocks") ? ...
+        ::CompiledModel.ModelReferenceBlocks : []
+      %foreach rowIdx = SIZE(mdlRefBlks,0)
+        %assign mdlRefInfo = mdlRefBlks[rowIdx]
+        %assign mSysIdx = mdlRefInfo[0]
+        %assign bIdx    = mdlRefInfo[1]
+        %assign instIdx = mdlRefInfo[2]
+        %with System[mSysIdx].Block[bIdx]
+          %assign blk = System[mSysIdx].Block[bIdx]
+          %assign blockInterface = GetModelrefInterface(blk)
+          %if blockInterface.rtmAllocateInParent
+            %<blockInterface.RTMTypeName> %<blk.Identifier>;
+          %endif
+        %endwith
+      %endforeach
+      %if ::GenCPP
+        #ifdef __cplusplus
+      }
+      #endif
+      %endif
+    %else
+      %if userDefinedSelfOrLegacyRTMExists
+        %assign modelSS = RTMGetModelSS()
+        %if SLibIsSelfUserDefinedAndStructured()
+          %assign selfVarGroupIndex = SLibGetSelfVarGroupIndex()
+          %assert (selfVarGroupIndex >= 0)
+          %assign selfVarGroup = ::CompiledModel.VarGroups.VarGroup[selfVarGroupIndex]
+          %assert (ISFIELD(selfVarGroup, "SelfStructureArgumentName"))
+          %assign modelSS = selfVarGroup.SelfStructureArgumentName
+        %endif
+        /* Real-time model */
+        %if ::CompiledModel.SelfCoderDataGroupVarGroupIndex >= 0 && ::CompiledModel.VarGroups.VarGroup[SLibGetSelfVarGroupIndex()].PackageAsStruct
+          %assign group = ::CompiledModel.CoderDataGroup[::CompiledModel.VarGroups.VarGroup[SelfCoderDataGroupVarGroupIndex].CoderDataGroupIndex]
+          %assign selfVar = SLibCoderDataGroupInstance(group)
+        %else
+          %if SLibAutosarCompilerAbstractionRequired()
+            %assign definition = "%<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tSimStructType, TLC_FALSE, TLC_FALSE, modelSS, "DataGlobal")>_;"
+          %else
+            %assign definition = ...
+              "%<::tSimStructType> %<modelSS>_;"
+          %endif
+          %<SLibApplyMemSecToDataDefn(definition, ...
+            "MemSecDataInternal", ...
+            "%<modelSS>_")>\
+          %assign selfVar = modelSS + "_"
+        %endif
+        %if SLibAutosarCompilerAbstractionRequired()
+          %assign definition = ...
+            "%<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tSimStructType, TLC_TRUE, TLC_TRUE, modelSS, "DataGlobal")> = &%<selfVar>;"
+        %else
+          %assign definition = ...
+            "%<::tSimStructType> *const %<modelSS> = &%<selfVar>;"
+        %endif
+        %<SLibApplyMemSecToDataDefn(definition, ...
+          "MemSecDataConstants", ...
+          "%<modelSS>")>\
+      %endif
+    %endif
+  %endif
+  %closefile tmpBuf
+  
+  %<SLibCacheCodeToFile("mdl_data_defn", tmpBuf)>
+
+    
+%endfunction
+
+
+
+%% Function: LibEmitTopLevelGroupExternDeclForTesting =================================
+%% Abstract:
+%%   Creates the 'test' folder and the FC_model header file containing:
+%%   - #include to the the referenced models
+%%   - extern group variable declarations
+%function LibEmitTopLevelGroupExternDeclForTesting(headerFile) void
+  %if ::CompiledModel.GenerateImportedDataGroupsTypes
+    
+    %assign file = FEVAL("rtw.connectivity.Utils.createStubFolderAndGetFilePaths", ...
+      ::CompiledModel.Name, IsModelReferenceRTWTarget(), headerFile + ".h")
+    %assign tgtType = "NONE"
+    %assign refModelsIncludes = FEVAL("rtw.connectivity.Utils.includeReferencedModelsHeaders", ::CompiledModel.Name, tgtType)
+    %assign headerTag = "RTW_HEADER_" + headerFile + "_h_"
+    %openfile testHeaderBuf = file.RelativePath
+    %if !ISEMPTY(refModelsIncludes)
+%<refModelsIncludes>
+    %endif
+    %% Emit all coder data group declarations except model data
+    %createrecord groupFilter { \
+      Static TLC_TRUE \
+      Dynamic TLC_TRUE \
+      AccessStandalone TLC_TRUE \
+      AccessThroughSelf TLC_TRUE \
+      Exported TLC_TRUE \
+      Imported TLC_TRUE \
+      ModelData TLC_FALSE \
+    }
+#ifndef %<headerTag>
+#define %<headerTag>
+  %<SLibDeclareCoderDataGroupInstances(::CompiledModel.System[GetBaseSystemIdx()],"extern",groupFilter)>
+#endif /* %<headerTag> */
+    %closefile testHeaderBuf
+    %if !FEVAL("rtw.connectivity.Utils.addHeaderFileToBuildInfo",::CompiledModel.Name,file.AbsolutePath)
+      %<SLibReportErrorWithId("RTW:tlc:TestGroupTypesModifyBuildInfo")>
+    %endif
+    %% indent with c_beautifier
+    %<SLibIndentFile(file.AbsolutePath, ::CompiledModel.Name)>
+  %endif
+%endfunction
+
+
+%endif %% _FORMATPARAM_
+
+%% [EOF] formatparam.tlc

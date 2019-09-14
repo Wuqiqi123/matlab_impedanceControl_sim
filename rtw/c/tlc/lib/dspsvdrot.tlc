@@ -1,0 +1,143 @@
+%%
+%% dspsvdrot.tlc - local function to SVD block only
+%%
+%% Copyright 1995-2014 The MathWorks, Inc.
+%%  
+
+%if EXISTS("_DSPSVDROTLIB_") == 0
+%assign _DSPSVDROTLIB_ = 1
+
+%function rot_real(dTypeIdentifier, n, c, s, xptr, yptr) Output
+  %%
+  %if (dTypeIdentifier == "D")
+    %assign utilityName = "rot_real"
+    %assign ptrLabel = "real_T*"
+    %assign valLabel = "real_T"
+  %else 
+    %assign utilityName = "rot_real32"
+    %assign ptrLabel = "real32_T*"
+    %assign valLabel = "real32_T"
+  %endif
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %<utilityName>(%<n>, %<c>, %<s>, %<xptr>, %<yptr>)
+  %%
+  %if !(ISFIELD(dspSvdUtils, utilityName))
+    %%
+    %<LibPushEmptyStackSharedUtils()>\
+    %%
+    %% register utility 
+    %%
+    %assign tmpRet = SETFIELD(dspSvdUtils,utilityName,1)
+    %%
+    %% utility function prototype
+    %%
+    %assign funcDeclarationRoot = "void %<utilityName>(int_T n, %<valLabel> c, %<valLabel> s, %<ptrLabel> x, %<ptrLabel> y)"
+    %openfile funcProto
+      %<funcDeclarationRoot>;
+    %closefile funcProto
+    %%
+    %% utility definition
+    %%
+    %openfile utilityDef
+    %<funcDeclarationRoot>
+    {
+        %<valLabel> t;
+        if (n <= 0) {
+            return;
+        }
+        while (n--) {
+            t  = c * *x + s * *y;
+            *y = c * *y - s * *x;
+            *x++ = t;
+            y++;
+        }
+    }
+    %closefile utilityDef
+    %%
+    %<SLibAddMathIncludeForUtilsSourceCode(utilityDef)>
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+    %% 
+  %endif
+ 
+%endfunction %% rot_real
+
+
+%function rot_cplx(dTypeIdentifier, n, c, s, xptr, yptr) Output
+  %%
+  %if (dTypeIdentifier == "Z")
+    %assign utilityName = "rot_cplx"
+    %assign ptrLabel = "creal_T*"
+    %assign valLabel = "real_T"
+  %else 
+    %assign utilityName = "rot_cplx32"
+    %assign ptrLabel = "creal32_T*"
+    %assign valLabel = "real32_T"
+  %endif
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %<utilityName>(%<n>, %<c>, %<s>, %<xptr>, %<yptr>)
+  %%
+  %if !(ISFIELD(dspSvdUtils, utilityName))
+    %%
+    %<LibPushEmptyStackSharedUtils()>\
+    %%
+    %% register utility 
+    %%
+    %assign tmpRet = SETFIELD(dspSvdUtils,utilityName,1)
+    %%
+    %% utility function prototype
+    %%
+    %assign funcDeclarationRoot = "void %<utilityName>(int_T n, %<valLabel> c, %<valLabel> s, %<ptrLabel> x, %<ptrLabel> y)"
+    %openfile funcProto
+      %<funcDeclarationRoot>;
+    %closefile funcProto
+    %%
+    %% utility definition
+    %%
+    %openfile utilityDef
+    %<funcDeclarationRoot>
+    {
+        c%<valLabel> t;
+        if (n <= 0) {
+            return;
+        }
+        while (n--) {
+            t.re  = c * x->re + s * y->re;
+            t.im  = c * x->im + s * y->im;
+            y->re = c * y->re - s * x->re;
+            y->im = c * y->im - s * x->im;
+            x->re = t.re;
+            x->im = t.im;
+            x++;
+            y++;
+        }
+    }
+    %closefile utilityDef
+    %%
+    %<SLibAddMathIncludeForUtilsSourceCode(utilityDef)>
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+    %% 
+  %endif
+ 
+%endfunction %% rot_cplx
+
+%endif %% _DSPSVDROTLIB_
+ 
+%% [EOF] dspsvdrot.tlc

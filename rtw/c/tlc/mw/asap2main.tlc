@@ -1,0 +1,105 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   Master TLC file for output of Simulink data in ASAP2 format (model.a2l)
+%%
+%% ============================================================================
+%selectfile NULL_FILE
+
+%% Create empty Templates Record and add it to ::CompiledModel
+%assign tmpVar = Templates{ NumTemplates 0 }
+%assign ::CompiledModel = ::CompiledModel + Templates
+
+%% Create empty CompuMethods Record and add it to ::CompiledModel
+%assign tmpVar = CompuMethods{ NumCompuMethods 0 }
+%assign ::CompiledModel = ::CompiledModel + CompuMethods
+
+%% Create empty CompuMethodsHash Record and add it to ::CompiledModel.CompuMethods
+%assign tmpVar = CompuMethodsHash { }
+%assign ::CompiledModel.CompuMethods =  ::CompiledModel.CompuMethods + CompuMethodsHash
+
+%% Create empty ASAP2Groups Record and add it to ::CompiledModel
+%assign tmpVar = ASAP2Groups{ NumASAP2Groups 0 }
+%assign ::CompiledModel = ::CompiledModel + ASAP2Groups
+
+%% Create empty ASAP2RecordLayouts Record and add it to ::CompiledModel
+%assign tmpVar = ASAP2RecordLayouts{ NumRecordLayouts 0; RecordLayouts {} }
+%assign ::CompiledModel = ::CompiledModel + ASAP2RecordLayouts
+
+%% Load TLC functions for generating ASAP2 file
+%include "asap2lib.tlc"
+%include "asap2grouplib.tlc"
+%include "asap2lookuplib.tlc"
+
+%% Load user-defined setup file for generating ASAP2 file
+%assign setupFileName = "asap2setup.tlc"
+%assign setupFile = FEVAL("which", setupFileName)
+%if TYPE(setupFile) == "String"
+  %include setupFile
+%else 
+  %% START_ASSERT
+  %<SLibReportErrorWithIdAndArgs("RTW:tlc:NoASAP2Setup", setupFileName)>
+  %% END_ASSERT
+%endif
+   
+%assign ASAP2EnableTestPointSignals   = ASAP2EnableTestPoints
+%assign ASAP2EnableTestPointStateflow = ASAP2EnableTestPoints
+
+%% Populate modelref code variant block (in BHM) with system block information
+%<FcnUpdateBHMForModelRefCodeVariants()>
+
+%% Add model argument identifier to canonical parameters
+%<FcnAddModelArgIdentifierToCanParams()>
+
+%% Generate canonical dependency list file
+%<FcnGenerateCanonicalDependencyList()>
+
+%selectfile STDOUT
+%if RTWVerbose
+### Creating ASAP2 file: %<ASAP2FileName>
+%endif
+%selectfile NULL_FILE
+
+%% Create groups based on graphical hierarchy of the model
+%% -------------------------------------------------------
+%<LibASAP2CreateGraphicalGroups()>
+
+%assign ASAP2FullFileName = ASAP2FileName
+%openfile ModelASAP2File = ASAP2FullFileName
+%openfile ASAP2List = "asap2.lis"
+%selectfile ModelASAP2File
+%<ASAP2UserFcnWriteFileHead()>
+%assign asap2Version = ASAP2UserFcnASAP2Version()
+%assign VersionNo = asap2Version[0]
+%assign UpgradeNo = asap2Version[1]
+ ASAP2_VERSION  %<VersionNo> %<UpgradeNo>   /* Version %<VersionNo>.%<UpgradeNo> */
+ 
+/begin PROJECT %<ASAP2ProjectName> "%<ASAP2ProjectComment>"
+
+  %<ASAP2UserFcnWriteHeader()>
+  
+  /begin MODULE %<ASAP2ModuleName>  "%<ASAP2ModuleComment>"
+    %<ASAP2UserFcnWriteHardwareInterface()>\
+    %<SLibASAP2WriteDynamicContents()>\
+    %<SLibOutputGroups()>
+  /end MODULE
+  
+
+/end PROJECT
+%<ASAP2UserFcnWriteFileTail()>\
+%closefile ASAP2List
+%closefile ModelASAP2File
+%<SLibAddGeneratedFileToList(ASAP2FileName,"interface","a2l","")>
+
+%assign indentOutput = FEVAL("asap2indent", ASAP2FullFileName)
+%selectfile STDOUT
+%if RTWVerbose
+%<indentOutput>\
+%endif
+%selectfile NULL_FILE
+%% [EOF] asap2main.tlc

@@ -1,0 +1,23 @@
+%% 
+%% 
+%%
+%% Copyright 1994-2009 The MathWorks, Inc.
+%%
+%% Abstract: 
+%%   Matlab scripting block back-end hook
+%%
+
+%implements MATLABScripting "C"
+
+
+%% Function: Outputs ===========================================================
+%% Abstract:
+%%   Run the TLC output script created during the rtwgen process for the
+%%   Matlab scripting block.
+%%
+%function Outputs(block, system) Output
+  %<GENERATE_TYPE(block,"OutputScript",ParamSettings.TLCFile,system)>
+  
+%endfunction
+
+%% [eof] mlscript.tlc

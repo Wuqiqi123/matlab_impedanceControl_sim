@@ -1,0 +1,1687 @@
+%%  
+%% 
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% Abstract: Library of functions for generating ASAP2 lookup records.
+%%
+%selectfile NULL_FILE
+
+
+%% Function: FcnDirectLookup ===================================
+%% Abstract:
+%%   Generate ASAP2 characterisitcs for 
+%%     - Direct Lookup Table
+%%
+%function FcnGenerateLookupDirect(thisBlock, lkBlk, data, tableCanPrm)
+%with thisBlock
+  %assign tblMdlPrm = ::CompiledModel.ModelParameters.Parameter[Parameter[0]._idx]
+  %assign tblPrmLayout = LibGetDataLayout(tblMdlPrm)
+  %% Guard 1: No support for tables more than 2D
+  %if (tblPrmLayout[1] > 2)
+    %% Direct Lookup Tables with more than 2 dimensions or with column
+    %% outputs are not supported. Only 1D and 2D tables with single
+    %% element outputs are supported.
+    %return TLC_FALSE
+  %endif
+  %%
+  %% Output for 1D Direct Lookup Table
+  %if (tblPrmLayout[2][0] == 1) && (NumDataInputPorts == 1)
+    %% This is a Direct Lookup ND table with 1 dimension and a single
+    %% element output (column dimensions are not supported)
+    %% Create param group
+    %assign group = SLibCreateParameterGroup(thisBlock,"Lookup1D")
+    %createrecord directXPrm {Value []; OriginalDataTypeIdx 7; tableType "DirectLookup"}
+    %assign directXPrm.Value = [0:%<tblPrmLayout[2][1]-1>]
+    %assign tmpVar  = SLibAddMember(thisBlock, group, directXPrm) 
+    %addtorecord group xAxisIsCanPrm "no"
+    %if !ISEMPTY(tableCanPrm)
+      %assign tmpVar  = SLibAddMember(thisBlock, group, tableCanPrm)
+      %addtorecord group tableIsCanPrm "yes"
+    %else
+      %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)
+      %addtorecord group tableIsCanPrm "no"
+    %endif
+    %% Check input signals
+    %assign rowSig =  FcnGetSource(DataInputPort[0].Region[0]._Source)
+    %assign rowName = ""
+    %if !ISEMPTY(rowSig) && FcnIsRecordDataTypeValidForASAP2(rowSig)
+      %assign rdata = FcnGetGlobalMemoryMapData(rowSig)
+      %if FcnRecordIsASAP2TestPointSignal(rowSig) || ...
+          FcnRecordIsASAP2ExternalInput(rowSig) || ...
+          FcnDataSupportsASAP2(rdata)
+        %assign rowName = LibASAP2GetSymbol(rowSig)
+        %assign directXPrm.OriginalDataTypeIdx = LibASAP2GetOrigDataTypeId(rowSig)
+      %endif
+    %endif                  
+    %addtorecord group InputValSigName rowName
+    %%
+    %if !ISEMPTY(tableCanPrm)
+      %if FcnCheckValidityOf1DCanonicalParamGroup(group)
+        %assign tmpVar = FcnWriteCanonicalCharacteristic_Lookup1D(group)
+      %endif
+    %else
+      %if FcnCheckValidityOf1DParamGroup(group)
+        %assign tmpVar = FcnWriteStandardCharacteristic_Lookup1D(group)
+      %endif
+    %endif
+  %% Output for 2D Direct Lookup Table
+  %elseif (tblPrmLayout[2][0] > 1) && (NumDataInputPorts == 2)
+    %% This is a Direct Lookup ND table with 2 dimensions and single 
+    %% element output
+    %% Create param group
+    %assign group = SLibCreateParameterGroup(thisBlock,"Lookup2D")
+    %%
+    %assign colSig =  FcnGetSource(thisBlock.DataInputPort[0].Region._Source)
+    %createrecord directXPrm {Value []; OriginalDataTypeIdx 7; tableType "DirectLookup"}
+    %assign directXPrm.Value = [0:%<tblPrmLayout[2][0]-1>]
+    %%
+    %assign rowSig =  FcnGetSource(thisBlock.DataInputPort[1].Region._Source)
+    %createrecord directYPrm {Value []; OriginalDataTypeIdx 7; tableType "DirectLookup"}
+    %assign directYPrm.Value = [0:%<tblPrmLayout[2][1]-1>]
+    %% 
+    %assign tmpVar  = SLibAddMember(thisBlock, group, directXPrm)
+    %assign tmpVar  = SLibAddMember(thisBlock, group, directYPrm)
+    %addtorecord group xAxisIsCanPrm "no"
+    %addtorecord group yAxisIsCanPrm "no"
+    %%
+    %if !ISEMPTY(tableCanPrm)
+      %assign tmpVar  = SLibAddMember(thisBlock, group, tableCanPrm)
+      %addtorecord group tableIsCanPrm "yes"
+    %else
+      %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)
+      %addtorecord group tableIsCanPrm "no"
+    %endif
+    %% Check input signals
+    %assign rowSig =  FcnGetSource(DataInputPort[0].Region[0]._Source)
+    %assign rowName = ""
+    %if !ISEMPTY(rowSig) && FcnIsRecordDataTypeValidForASAP2(rowSig)
+      %assign rdata = FcnGetGlobalMemoryMapData(rowSig)
+      %if FcnRecordIsASAP2TestPointSignal(rowSig) || ...
+          FcnRecordIsASAP2ExternalInput(rowSig) || ...
+          FcnDataSupportsASAP2(rdata)
+        %assign rowName = LibASAP2GetSymbol(rowSig)
+        %assign directXPrm.OriginalDataTypeIdx = LibASAP2GetOrigDataTypeId(rowSig)
+      %endif
+    %endif        
+    %assign colSig =  FcnGetSource(DataInputPort[1].Region[0]._Source)
+    %assign colName = ""
+    %if !ISEMPTY(colSig) && FcnIsRecordDataTypeValidForASAP2(colSig)
+      %assign cdata = FcnGetGlobalMemoryMapData(colSig)
+      %if FcnRecordIsASAP2TestPointSignal(colSig) || ...
+          FcnRecordIsASAP2ExternalInput(colSig) || ...
+          FcnDataSupportsASAP2(cdata)
+        %assign colName = LibASAP2GetSymbol(colSig)
+        %assign directYPrm.OriginalDataTypeIdx = LibASAP2GetOrigDataTypeId(colSig)
+      %endif
+    %endif
+    %addtorecord group RowIdxSigName rowName
+    %addtorecord group ColIdxSigName colName
+    %%
+    %if !ISEMPTY(tableCanPrm)
+      %if FcnCheckValidityOf2DCanonicalParamGroup(group)
+        %assign tmpVar = FcnWriteCanonicalCharacteristic_Lookup2D(group)
+      %endif
+    %else
+      %if FcnCheckValidityOf2DParamGroup(group)
+          %assign tmpVar = FcnWriteStandardCharacteristic_Lookup2D(group)            
+      %endif
+    %endif
+    %%  
+  %endif %% tblPrmLayout[2][0]
+%endwith
+%return TLC_TRUE
+%endfunction
+
+
+%% Function: FcnGenerateInterpolation1D ===================================
+%% Abstract:
+%%   Generate ASAP2 characterisitcs for 
+%%     - Interpolation using Prelookup (Interpolation_n-D) (1D)
+%%
+%function FcnGenerateInterpolation1D(thisBlock, lkBlk, data, tableCanPrm)
+%with thisBlock
+  %%
+  %if (TYPE(data) == "Scope") && !ISFIELD(data,"UsedInParameterGroup")
+    %% This field ensures that they get skipped by 
+    %% FcnLoopThruModelParameters
+    %<LibAddIdentifier(data, "UsedInParameterGroup", "")>
+  %endif
+  %%
+  %% Guard 1: Must have exactly one prelookup block connected
+  %if (lkBlk.NumPreLookups == 0)
+    %% Early return
+    %return TLC_FALSE
+  %endif
+  %%
+  %% Guard 2: Prelookup input must have data
+  %assign xPreIdx = lkBlk.PreLookupBlock[0].GrSrc
+  %assign xPreBlk = Subsystem[xPreIdx[0]].Block[xPreIdx[1]]
+  %if xPreBlk.NumParameters< 1 || xPreBlk.Parameter[0]._idx < 0
+    %return TLC_FALSE
+  %endif
+  %%
+  %% Guard 3: We do not support even spacing breakpoints
+  %if xPreBlk.Parameter[0].SLName == "BreakpointsFirstPoint"
+    %return TLC_FALSE
+  %endif
+  %%
+  %assign tblBlkPrm   = Parameter[0]
+  %assign tblMdlPrm = ::CompiledModel.ModelParameters.Parameter[tblBlkPrm._idx]
+  %assign blkPath = SLibMangledGrBlockPath(lkBlk.GrSrc)
+  %%
+  %if FcnDataIsStructuredAndSupportsASAP2(data)
+    %% Candidate for STD Axis
+    %if (tblBlkPrm._idx != xPreBlk.Parameter[0]._idx) 
+      %% Return if table and axis points do not use the same 
+      %% ModelParameter
+      %return TLC_FALSE
+    %endif
+    %assign xPreBlkPath = SLibMangledGrBlockPath(xPreIdx)
+    %assign retVal = FEVAL("coder.internal.getTableAndAxisPtsForLUT",blkPath, xPreBlkPath) 
+    %if retVal[0]==-1
+      %% Early return (Not a valid candidate for STD Axis)
+      %return TLC_FALSE
+    %endif
+    %%
+    %% Get positions of table/axis data in bus structure
+    %assign tableBusElemPos = retVal[1]
+    %assign bp1BusElemPos   = retVal[2]
+    %if FcnCheckSTDAxisValidityOf1DParam(tblMdlPrm,"Prelookup")
+      %% Create a Lookup1D param group, which generates a CURVE A2L entry
+      %assign group   = SLibCreateParameterGroup(thisBlock,"Lookup1D")
+      %% 
+      %addtorecord group xAxisType "STD_AXIS"
+      %%
+      %% Store bus elements corresponding to table and axis points 
+      %% to members of the parameter group
+      %assign busObject = data.StructInfo
+      %%              
+      %if !ISFIELD(busObject,"STDAxisInfo")
+        %% Add STDAxisInfo to busObject if not already added. It would 
+        %% be already added if the busObject is being shared by more 
+        %% than one LUT block.
+        %addtorecord busObject STDAxisInfo [%<tableBusElemPos>, %<bp1BusElemPos>]
+      %endif
+      %assign xPrm = AxisRecord { BusElement busObject.BusElement[bp1BusElemPos] }
+      %addtorecord tblMdlPrm AxisRecord { BusElement busObject.BusElement[tableBusElemPos] }
+      %assign tmpVar  = SLibAddMember(thisBlock, group, xPrm)          
+      %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)  
+      %%
+      %addtorecord group xAxisIsCanPrm "no"
+      %addtorecord group tableIsCanPrm "no"
+      %addtorecord group RecordLayoutName busObject.Name
+      %%
+      %% Write to ASAP2RecordLayouts Record
+      %assign tmpvar = SLibWriteToRecordLayoutsRecord(busObject)
+    %else
+      %% Return if STD axis validity failed
+      %return TLC_FALSE
+    %endif %% FcnCheckSTDAxisValidityOf1DParam            
+  %%
+  %else
+    %% Candidate for COM or FIX Axis
+    %%
+    %assign xPrm = xPreBlk.Parameter[0]
+    %assign xMdlPrm = ::CompiledModel.ModelParameters.Parameter[xPrm._idx] 
+    %assign xCanPrm = FcnGetCanonicalParameter(xPrm)  
+    %%
+    %% Create a Lookup1D param group, which generates a CURVE A2L entry
+    %assign group   = SLibCreateParameterGroup(thisBlock,"Lookup1D")
+    %%
+    %if !ISEMPTY(xCanPrm)
+      %assign tmpVar  = SLibAddMember(thisBlock, group, xCanPrm)
+      %addtorecord group xAxisIsCanPrm "yes"
+    %else
+      %assign tmpVar  = SLibAddMember(thisBlock, group, xMdlPrm)   
+      %addtorecord group xAxisIsCanPrm "no"
+    %endif
+    %%
+    %if !ISEMPTY(tableCanPrm)
+      %assign tmpVar  = SLibAddMember(thisBlock, group, tableCanPrm)
+      %addtorecord group tableIsCanPrm "yes"
+    %else
+      %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)   
+      %addtorecord group tableIsCanPrm "no"
+    %endif
+    %%
+    %if !ISEMPTY(tableCanPrm)
+      %if !FcnCheckValidityOf1DCanonicalParamGroup(group)
+        %% Return if parameter group failed validity check
+        %return TLC_FALSE
+      %endif
+    %else
+      %if !FcnCheckValidityOf1DParamGroup(group)
+        %% Return if parameter group failed validity check
+        %return TLC_FALSE
+      %endif
+    %endif
+    %%
+  %endif %% FcnDataIsStructuredAndSupportsASAP2
+  %%
+  %% Figure out input signal
+  %assign rowName = ""
+  %if (xPreBlk.NumDataInputPorts>0) && (xPreBlk.DataInputPort[0].NumRegions>0)
+    %assign rowSig =  FcnGetSource(xPreBlk.DataInputPort[0].Region[0]._Source)
+    %if !ISEMPTY(rowSig) && FcnIsRecordDataTypeValidForASAP2(rowSig)
+      %assign rdata = FcnGetGlobalMemoryMapData(rowSig)
+      %if FcnRecordIsASAP2TestPointSignal(rowSig) || ...
+          FcnRecordIsASAP2ExternalInput(rowSig) || ...
+          FcnDataSupportsASAP2(rdata)
+        %assign rowName = LibASAP2GetSymbol(rowSig)
+      %endif
+    %endif
+  %endif
+  %% Add input quantity to parameter group
+  %addtorecord group InputValSigName rowName 
+  %%
+  %% Write out Characteristic
+  %if !ISEMPTY(tableCanPrm)
+    %assign tmpVar = FcnWriteCanonicalCharacteristic_Lookup1D(group)
+  %else
+    %assign tmpVar = FcnWriteStandardCharacteristic_Lookup1D(group)
+  %endif
+  %%
+%endwith
+%return TLC_TRUE
+%endfunction
+
+
+%% Function: FcnGenerateInterpolation2D ===================================
+%% Abstract:
+%%   Generate ASAP2 characterisitcs for 
+%%     - Interpolation using Prelookup (Interpolation_n-D) (2D)
+%%
+%%
+%function FcnGenerateInterpolation2D(thisBlock, lkBlk, data, tableCanPrm)
+%with thisBlock
+  %assign tblBlkPrm   = Parameter[0]
+  %assign NumDims = 2  
+       
+  %%
+  %if (TYPE(data) == "Scope") && !ISFIELD(data,"UsedInParameterGroup")
+    %% This field ensures that they get skipped by 
+    %% FcnLoopThruModelParameters
+    %<LibAddIdentifier(data, "UsedInParameterGroup", "")>
+  %endif
+
+  %assign NumSubtables = lkBlk.NumberOfSubTableSelectionDimensions
+  %if NumSubtables==2
+    %% If both the breakpoints are SEL inputs, then return early. User wanting
+    %% this behavior can instead use a 2D direct lookup block.
+    %return TLC_FALSE
+  %endif  
+  
+  %% Prelookup setting: OutputSelection = 'Index and fraction'
+  %% When Prelookup is connected to interp block using index
+  %% and fraction signals, then the value of factor will be 2. 
+
+  %% Prelookup setting: OutputSelection = 'Index only'
+  %% When Prelookup is connected to interp block using index
+  %% signal, then the value of factor will be 1. 
+  
+  %% Prelookup setting: OutputSelection = 'Index and fraction as bus'
+  %% When Prelookup is connected to interp block using bus
+  %% then the value of factor will be 1.
+  %assign factor = (thisBlock.NumDataInputPorts - NumSubtables)/(NumDims - NumSubtables)
+    
+  %if NumSubtables==1
+    %if (lkBlk.NumPreLookups != factor)
+      %% When there is one SEL input, the interp block must be connected to 
+      %% one prelookup block
+      %return TLC_FALSE
+    %endif
+  %elseif  NumSubtables==0
+    %if (lkBlk.NumPreLookups != NumDims*factor)
+      %% When there are no SEL inputs, the interp block must be connected to 
+      %% two prelookup blocks. 
+      %return TLC_FALSE
+    %endif
+  %endif  
+    
+  %% Implement guards to return if unsupported type of interpolation block
+  %% ======================================================================
+
+  %% Guard 1: The x axis is attached to a prelookup
+  %assign xPreIdx = lkBlk.PreLookupBlock[0].GrSrc
+  %assign xPreBlk = Subsystem[xPreIdx[0]].Block[xPreIdx[1]]
+  %if xPreBlk.NumParameters < 1 || xPreBlk.Parameter[0]._idx < 0
+    %return TLC_FALSE
+  %endif
+  %%
+  %% Guard 2: If there are no subtables, the y axis is also attached to a prelookup
+  %if NumSubtables == 0
+    %assign yPreIdx = lkBlk.PreLookupBlock[factor].GrSrc
+    %assign yPreBlk = Subsystem[yPreIdx[0]].Block[yPreIdx[1]]
+    %if yPreBlk.NumParameters < 1 || yPreBlk.Parameter[0]._idx < 0
+      %return TLC_FALSE
+    %endif
+  %else
+    %% If there is a sub table, read the source SEL signal
+    %assign selSig = FcnGetSource(thisBlock.DataInputPort[factor].Region[0]._Source)
+    %if ISEMPTY(selSig)
+      %% Skip SEL inputs that are unconnected or connected to blocks with no 
+      %% memory (e.g. Terminator block, or an inactive variant)
+      %return TLC_FALSE
+    %endif
+  %endif
+  %%
+  %% Guard 3: We do not support even spacing breakpoints
+  %if xPreBlk.Parameter[0].SLName == "BreakpointsFirstPoint"
+    %return TLC_FALSE
+  %endif
+  %%
+  %assign tblMdlPrm= ::CompiledModel.ModelParameters.Parameter[tblBlkPrm._idx]
+  %assign blkPath = SLibMangledGrBlockPath(lkBlk.GrSrc)
+  %%
+  %if FcnDataIsStructuredAndSupportsASAP2(data)
+    %% Candidate for STD Axis
+    %if (tblBlkPrm._idx != xPreBlk.Parameter[0]._idx) || ...
+        (xPreBlk.Parameter[0]._idx != yPreBlk.Parameter[0]._idx)
+      %% Return if table and axis points do not use the same 
+      %% ModelParameter
+      %return TLC_FALSE
+    %endif
+    %%
+    %assign xPreBlkPath = SLibMangledGrBlockPath(xPreIdx)
+    %assign yPreBlkPath = SLibMangledGrBlockPath(yPreIdx)
+    %assign retVal = FEVAL("coder.internal.getTableAndAxisPtsForLUT", blkPath, xPreBlkPath, yPreBlkPath)
+    %if retVal[0]==-1
+      %% Early return (Not a valid candidate for STD Axis)
+      %return TLC_FALSE
+    %endif
+    %% Get positions of table/axis data in bus structure
+    %assign tableBusElemPos = retVal[1]
+    %assign bp1BusElemPos   = retVal[2]
+    %assign bp2BusElemPos   = retVal[3]
+    %if FcnCheckSTDAxisValidityOf2DParam(tblMdlPrm,"Prelookup")
+      %% Create a Lookup2D param group, which generates a MAP A2L entry
+      %assign group   = SLibCreateParameterGroup(thisBlock,"Lookup2D")
+      %%
+      %addtorecord group xAxisType "STD_AXIS" 
+      %addtorecord group yAxisType "STD_AXIS"
+      %%
+      %% Store bus elements corresponding to table and axis points 
+      %% to members of the parameter group
+      %assign busObject = data.StructInfo
+      %%              
+      %if !ISFIELD(busObject,"STDAxisInfo")
+        %% Add STDAxisInfo to busObject if not already added. It would 
+        %% be already added if the busObject is being shared by more 
+        %% than one LUT block.
+        %addtorecord busObject ...
+                  STDAxisInfo [%<tableBusElemPos>, %<bp1BusElemPos>, %<bp2BusElemPos>]
+      %endif
+      %assign xPrm = AxisRecord { BusElement busObject.BusElement[bp1BusElemPos] }
+      %assign yPrm = AxisRecord { BusElement busObject.BusElement[bp2BusElemPos]  }
+      %addtorecord tblMdlPrm AxisRecord { BusElement busObject.BusElement[tableBusElemPos] }
+      %assign tmpVar  = SLibAddMember(thisBlock, group, xPrm)
+      %assign tmpVar  = SLibAddMember(thisBlock, group, yPrm)
+      %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)
+      %%
+      %addtorecord group xAxisIsCanPrm "no"
+      %addtorecord group yAxisIsCanPrm "no"
+      %addtorecord group tableIsCanPrm "no"
+      %%
+      %addtorecord group RecordLayoutName busObject.Name
+      %%
+      %% Write to ASAP2RecordLayouts Record
+      %assign tmpvar = SLibWriteToRecordLayoutsRecord(busObject)
+    %else
+      %% Return if STD axis validity failed
+      %return TLC_FALSE
+    %endif %% FcnCheckSTDAxisValidityOf2DParam
+  %else %% FcnDataIsStructuredAndSupportsASAP2
+    %% Candidate for COM or FIX Axis
+    %%
+    %% Create a Lookup2D param group, which generates a MAP A2L entry
+    %assign group   = SLibCreateParameterGroup(thisBlock,"Lookup2D")
+    %%
+    %assign xPrm = xPreBlk.Parameter[0]
+    %assign xMdlPrm = ::CompiledModel.ModelParameters.Parameter[xPrm._idx] 
+    %assign xCanPrm = FcnGetCanonicalParameter(xPrm)  
+    %%
+    %%
+    %if !ISEMPTY(xCanPrm)
+      %assign tmpVar  = SLibAddMember(thisBlock, group, xCanPrm)
+      %addtorecord group xAxisIsCanPrm "yes"
+    %else
+      %assign tmpVar  = SLibAddMember(thisBlock, group, xMdlPrm)
+      %addtorecord group xAxisIsCanPrm "no"
+    %endif
+    %%
+    %if NumSubtables == 0
+      %% Has no subtable means Y is fed by a prelookup
+      %assign yPrm = yPreBlk.Parameter[0]
+      %assign yMdlPrm = ::CompiledModel.ModelParameters.Parameter[yPrm._idx]
+      %assign yCanPrm = FcnGetCanonicalParameter(yPrm) 
+      %%
+      %if !ISEMPTY(yCanPrm)
+        %assign tmpVar = SLibAddMember(thisBlock, group, yCanPrm)
+        %addtorecord group yAxisIsCanPrm "yes"
+      %else
+        %assign tmpVar = SLibAddMember(thisBlock, group, yMdlPrm)
+        %addtorecord group yAxisIsCanPrm "no"
+      %endif
+    %else
+      %% Has subtable means Y is fed by a SEL input
+      %assign colSig =  FcnGetSource(thisBlock.DataInputPort[2].Region._Source)
+      %assign typeidx = SLibGetRecordDataTypeId(colSig)
+      %createrecord yMdlPrm {Value []; OriginalDataTypeIdx typeidx; tableType "DirectLookup"}
+      %assign len = %<data.NumCols>-1
+      %assign yMdlPrm.Value = [0:%<len>]
+      %assign tmpVar = SLibAddMember(thisBlock, group, yMdlPrm)
+      %addtorecord group yAxisIsCanPrm "no"
+    %endif
+    %%
+    %if !ISEMPTY(tableCanPrm)
+      %assign tmpVar = SLibAddMember(thisBlock, group, tableCanPrm)
+      %addtorecord group tableIsCanPrm "yes"
+    %else
+      %assign tmpVar = SLibAddMember(thisBlock, group, tblMdlPrm)
+      %addtorecord group tableIsCanPrm "no"
+    %endif
+    %%
+    %if !ISEMPTY(tableCanPrm)
+      %if !FcnCheckValidityOf2DCanonicalParamGroup(group)
+        %% Return if parameter group failed validity check
+        %return TLC_FALSE
+      %endif
+    %else
+      %if !FcnCheckValidityOf2DParamGroup(group)
+        %% Return if parameter group failed validity check
+        %return TLC_FALSE
+      %endif
+    %endif
+  %endif %% FcnDataIsStructuredAndSupportsASAP2
+  %%
+  %% Figure out row input signal
+  %assign rowName = ""
+  %if (xPreBlk.NumDataInputPorts>0) && (xPreBlk.DataInputPort[0].NumRegions>0)
+    %assign rowSig =  FcnGetSource(xPreBlk.DataInputPort[0].Region[0]._Source)
+    %if !ISEMPTY(rowSig) && FcnIsRecordDataTypeValidForASAP2(rowSig)
+      %assign rdata = FcnGetGlobalMemoryMapData(rowSig)
+      %if FcnRecordIsASAP2TestPointSignal(rowSig) || ...
+          FcnRecordIsASAP2ExternalInput(rowSig) || ...
+          FcnDataSupportsASAP2(rdata)
+        %assign rowName = LibASAP2GetSymbol(rowSig)
+      %endif                              
+    %endif
+  %endif
+  %% Add row input quantity to parameter group
+  %addtorecord group RowIdxSigName rowName
+  %%
+  %% Figure out col input signal
+  %assign colName = ""
+  %if (NumSubtables == 0) && (yPreBlk.NumDataInputPorts>0) && (yPreBlk.DataInputPort[0].NumRegions>0)
+    %assign colSig =  FcnGetSource(yPreBlk.DataInputPort[0].Region[0]._Source)
+    %if !ISEMPTY(colSig) && FcnIsRecordDataTypeValidForASAP2(colSig)
+      %assign cdata = FcnGetGlobalMemoryMapData(colSig)
+      %if FcnRecordIsASAP2TestPointSignal(colSig) || ...
+          FcnRecordIsASAP2ExternalInput(colSig) || ...
+          FcnDataSupportsASAP2(cdata)
+        %assign colName = LibASAP2GetSymbol(colSig)
+      %endif
+    %endif
+  %endif   
+  %% Add col input quantity to parameter group
+  %addtorecord group ColIdxSigName colName
+  %%
+  %% Write out Characteristic
+  %if !ISEMPTY(tableCanPrm)
+    %assign tmpVar = FcnWriteCanonicalCharacteristic_Lookup2D(group)
+  %else
+    %assign tmpVar = FcnWriteStandardCharacteristic_Lookup2D(group) 
+  %endif
+  %%
+%endwith
+%return TLC_TRUE
+%endfunction
+
+
+%% Function: FcnGenerateLookupND ===================================
+%% Abstract:
+%%   Generate ASAP2 characterisitcs for 
+%%     - Lookup Table (n-D)
+%%
+%%
+%function FcnGenerateLookupND(thisBlock, lkBlk, data, tableCanPrm)
+%with thisBlock
+  %assign tblBlkPrm   = Parameter[0]
+  %if !FcnDataSupportsASAP2(data) && ...
+      !FcnDataIsStructuredAndSupportsASAP2(data) && ...         
+      ISEMPTY(tableCanPrm)
+    %% Early return
+    %return TLC_FALSE
+  %endif
+  %%
+  %assign tblMdlPrm= ::CompiledModel.ModelParameters.Parameter[tblBlkPrm._idx]
+  %assign numDims = lkBlk.NumberOfTableDimensions
+  %if numDims == 1
+    %% This is a Lookup_n-D Lookup table with 1 dimension
+    %%
+    %if ((NumParameters < 2) || (Parameter[1]._idx < 0))
+      %return TLC_FALSE
+    %endif          
+    %if Parameter[1].SLName == "BreakpointsForDimension1FirstPoint"
+      %% Ignore 'Even Spacing' breakpoint specification
+      %return TLC_FALSE
+    %endif 
+    %%
+    %if FcnDataIsStructuredAndSupportsASAP2(data)
+      %% Candidate for STD Axis
+      %%
+      %% Find out the dimensions of the Lookup Table
+      %assign blkPath = SLibMangledGrBlockPath(lkBlk.GrSrc)
+      %assign retVal = FEVAL("coder.internal.getTableAndAxisPtsForLUT",blkPath)
+      %if (retVal[0] == -1)
+        %% Early return (Not a valid candidate for STD Axis)
+        %return TLC_FALSE
+      %endif   
+      %if (Parameter[0]._idx != Parameter[1]._idx)
+        %% Return if table and axis points do not use the same 
+        %% ModelParameter
+        %return TLC_FALSE
+      %endif
+      %%
+      %if FcnCheckSTDAxisValidityOf1DParam(tblMdlPrm,"LookupND")
+        %% Create a Lookup1D param group, which generates a CURVE A2L entry
+        %assign group   = SLibCreateParameterGroup(thisBlock,"Lookup1D")
+        %% 
+        %addtorecord group xAxisType "STD_AXIS"
+        %%
+        %% Get positions of table/axis data in bus structure and add them 
+        %% to bus object
+        %assign tableBusElemPos = retVal[1]
+        %assign bp1BusElemPos   = retVal[2]
+        %assign busObject = data.StructInfo
+        %%              
+        %if !ISFIELD(busObject,"STDAxisInfo")
+          %% Add STDAxisInfo to busObject if not already added. It would 
+          %% be already added if the busObject is being shared by more 
+          %% than one LUT block.
+          %addtorecord busObject ...
+                  STDAxisInfo [%<tableBusElemPos>, %<bp1BusElemPos>]
+        %endif 
+        %%
+        %% Store bus elements corresponding to table and axis points 
+        %% to members of the parameter group
+        %assign xMdlPrm = AxisRecord { BusElement busObject.BusElement[bp1BusElemPos] }
+        %addtorecord tblMdlPrm AxisRecord { BusElement busObject.BusElement[tableBusElemPos] }
+        %assign tmpVar  = SLibAddMember(thisBlock, group, xMdlPrm)          
+        %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)       
+        %%
+        %addtorecord group xAxisIsCanPrm "no"
+        %addtorecord group tableIsCanPrm "no"
+        %%
+        %addtorecord group RecordLayoutName busObject.Name
+        %%              
+        %% Write to ASAP2RecordLayouts Record
+        %assign tmpvar = SLibWriteToRecordLayoutsRecord(busObject)
+      %else
+        %% Return if STD axis validity failed
+        %return TLC_FALSE
+      %endif %% FcnCheckSTDAxisValidityOf1DParam            
+    %else %% FcnDataIsStructuredAndSupportsASAP2(data)
+      %% Candidate for COM or FIX Axis
+      %%
+      %% Continue if any parameter is not available for any reason.
+      %% For 1D, there must be 2 parameters (one corresponding to axis data
+      %% and the other to table data)
+      %% 
+      %if thisBlock.NumParameters != 2 && thisBlock.NumParameters != 3
+        %% NumParameters could be 3 when table size is tunable
+        %return TLC_FALSE
+      %endif            
+      %%
+      %assign xPrm = Parameter[1]            
+      %assign xMdlPrm = ::CompiledModel.ModelParameters.Parameter[xPrm._idx]
+      %assign xCanPrm = FcnGetCanonicalParameter(xPrm)        
+      %%
+      %% Create a Lookup1D param group, which generates a CURVE A2L entry
+      %assign group   = SLibCreateParameterGroup(thisBlock,"Lookup1D")
+      %if !ISEMPTY(xCanPrm)
+        %assign tmpVar  = SLibAddMember(thisBlock, group, xCanPrm)
+        %addtorecord group xAxisIsCanPrm "yes"
+      %else
+        %assign tmpVar  = SLibAddMember(thisBlock, group, xMdlPrm)
+        %addtorecord group xAxisIsCanPrm "no"
+      %endif
+      %if !ISEMPTY(tableCanPrm)
+        %assign tmpVar  = SLibAddMember(thisBlock, group, tableCanPrm)
+        %addtorecord group tableIsCanPrm "yes"
+      %else
+        %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)
+        %addtorecord group tableIsCanPrm "no"
+      %endif
+      %%          
+      %if !ISEMPTY(tableCanPrm)
+        %if !FcnCheckValidityOf1DCanonicalParamGroup(group)
+          %% Return if parameter group failed validity check
+          %return TLC_FALSE
+        %endif
+      %else
+        %if !FcnCheckValidityOf1DParamGroup(group)
+          %% Return if parameter group failed validity check
+          %return TLC_FALSE
+        %endif
+      %endif
+    %endif
+    %%
+    %% Figure out input signal
+    %assign rowName = ""
+    %if (NumDataInputPorts==1) && (DataInputPort[0].NumRegions>0)
+      %assign rowSig =  FcnGetSource(DataInputPort[0].Region[0]._Source)
+      %if !ISEMPTY(rowSig) && FcnIsRecordDataTypeValidForASAP2(rowSig)
+        %assign rdata = FcnGetGlobalMemoryMapData(rowSig)
+        %if FcnRecordIsASAP2TestPointSignal(rowSig) || ...
+            FcnRecordIsASAP2ExternalInput(rowSig) || ...
+            FcnDataSupportsASAP2(rdata)
+          %assign rowName = LibASAP2GetSymbol(rowSig)
+        %endif
+      %endif
+    %endif          
+    %%
+    %% Add input quantity to parameter group
+    %addtorecord group InputValSigName rowName
+    %%
+    %% Write out Characteristic
+    %if !ISEMPTY(tableCanPrm)
+      %assign tmpVar = FcnWriteCanonicalCharacteristic_Lookup1D(group)
+    %else
+      %assign tmpVar = FcnWriteStandardCharacteristic_Lookup1D(group)
+    %endif
+    %%
+  %elseif numDims == 2
+    %% This is a n-D Lookup table with 2 dimensions
+    %%
+    %if ((NumParameters < 3) || (Parameter[1]._idx < 0) || (Parameter[2]._idx < 0))
+      %return TLC_FALSE
+    %endif
+    %if Parameter[1].SLName == "BreakpointsForDimension1FirstPoint"
+      %% Ignore 'Even Spacing' breakpoint specification
+      %return TLC_FALSE
+    %endif         
+    %%
+    %if FcnDataIsStructuredAndSupportsASAP2(data)
+      %% Candidate for STD Axis
+      %%
+      %% Find out the dimensions of the Lookup Table
+      %assign blkPath = SLibMangledGrBlockPath(lkBlk.GrSrc)
+      %assign retVal = FEVAL("coder.internal.getTableAndAxisPtsForLUT",blkPath)
+      %if (retVal[0] == -1)
+        %% Early return (Not a valid candidate for STD Axis)
+        %return TLC_FALSE
+      %endif  
+      %if (Parameter[0]._idx != Parameter[1]._idx) || ...
+          (Parameter[1]._idx != Parameter[2]._idx)
+        %% Return if table and axis points do not use the same 
+        %% ModelParameter
+        %return TLC_FALSE
+      %endif
+      %%
+      %if FcnCheckSTDAxisValidityOf2DParam(tblMdlPrm,"LookupND")
+        %% Create a Lookup2D param group, which generates a MAP A2L entry
+        %assign group   = SLibCreateParameterGroup(thisBlock,"Lookup2D")
+        %addtorecord group xAxisType "STD_AXIS" 
+        %addtorecord group yAxisType "STD_AXIS"
+        %%
+        %% Get positions of table/axis data in bus structure and add them 
+        %% to bus object
+        %assign tableBusElemPos = retVal[1]
+        %assign bp1BusElemPos   = retVal[2]
+        %assign bp2BusElemPos   = retVal[3]
+        %assign busObject = data.StructInfo
+        %%              
+        %if !ISFIELD(busObject,"STDAxisInfo")
+          %% Add STDAxisInfo to busObject if not already added. It would 
+          %% be already added if the busObject is being shared by more 
+          %% than one LUT block.
+          %addtorecord busObject ...
+             STDAxisInfo [%<tableBusElemPos>, %<bp1BusElemPos>, %<bp2BusElemPos>]
+        %endif              
+        %%
+        %% Store bus elements corresponding to table and axis points 
+        %% to members of the parameter group
+        %assign xMdlPrm = AxisRecord { BusElement busObject.BusElement[bp1BusElemPos] }
+        %assign yMdlPrm = AxisRecord { BusElement busObject.BusElement[bp2BusElemPos] }
+        %addtorecord tblMdlPrm AxisRecord { BusElement busObject.BusElement[tableBusElemPos] }
+        %assign tmpVar  = SLibAddMember(thisBlock, group, xMdlPrm)
+        %assign tmpVar  = SLibAddMember(thisBlock, group, yMdlPrm)
+        %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)
+        %%
+        %addtorecord group xAxisIsCanPrm "no"
+        %addtorecord group yAxisIsCanPrm "no"
+        %addtorecord group tableIsCanPrm "no"
+        %%
+        %addtorecord group RecordLayoutName busObject.Name
+        %%
+        %% Write to ASAP2RecordLayouts Record
+        %assign tmpvar = SLibWriteToRecordLayoutsRecord(busObject)
+      %else
+        %% Return if STD axis validity failed
+        %return TLC_FALSE
+      %endif %% FcnCheckSTDAxisValidityOf2DParam
+    %else %% FcnDataIsStructuredAndSupportsASAP2(data)
+      %% Candidate for COM or Fix Axis
+      %%
+      %% Continue if any parameter is not available for any reason.
+      %% For 2D, there must be 4 parameters (one corresponding to each axis, 
+      %% one for table data and one for an internal parameter).
+      %%
+      %if thisBlock.NumParameters < 4
+        %return TLC_FALSE
+      %endif
+      %%
+      %assign xPrm = Parameter[1]
+      %assign xMdlPrm = ::CompiledModel.ModelParameters.Parameter[xPrm._idx]
+      %assign xCanPrm = FcnGetCanonicalParameter(xPrm) 
+      %%
+      %assign yPrm = Parameter[2]
+      %assign yMdlPrm = ::CompiledModel.ModelParameters.Parameter[yPrm._idx]
+      %assign yCanPrm = FcnGetCanonicalParameter(yPrm) 
+      %%
+      %% Create a Lookup2D param group, which generates a MAP A2L entry
+      %assign group   = SLibCreateParameterGroup(thisBlock,"Lookup2D")
+      %%
+      %if !ISEMPTY(xCanPrm)
+        %assign tmpVar  = SLibAddMember(thisBlock, group, xCanPrm)
+        %addtorecord group xAxisIsCanPrm "yes"
+      %else
+        %assign tmpVar  = SLibAddMember(thisBlock, group, xMdlPrm)
+        %addtorecord group xAxisIsCanPrm "no"
+      %endif
+      %if !ISEMPTY(yCanPrm)
+        %assign tmpVar  = SLibAddMember(thisBlock, group, yCanPrm)
+        %addtorecord group yAxisIsCanPrm "yes"
+      %else
+        %assign tmpVar  = SLibAddMember(thisBlock, group, yMdlPrm)
+        %addtorecord group yAxisIsCanPrm "no"
+      %endif
+      %if !ISEMPTY(tableCanPrm)
+        %assign tmpVar  = SLibAddMember(thisBlock, group, tableCanPrm)
+        %addtorecord group tableIsCanPrm "yes"
+      %else
+        %assign tmpVar  = SLibAddMember(thisBlock, group, tblMdlPrm)
+        %addtorecord group tableIsCanPrm "no"
+      %endif
+      %%      
+      %if !ISEMPTY(tableCanPrm)
+        %if !FcnCheckValidityOf2DCanonicalParamGroup(group)
+          %% Return if parameter group failed validity check
+          %return TLC_FALSE
+        %endif
+      %else
+        %if !FcnCheckValidityOf2DParamGroup(group)
+          %% Return if parameter group failed validity check
+          %return TLC_FALSE
+        %endif
+      %endif
+    %endif %% FcnDataIsStructuredAndSupportsASAP2(data)
+    %%
+    %% Figure out input signals
+    %assign rowName = ""
+    %assign colName = ""
+    %if (NumDataInputPorts==2) && (DataInputPort[0].NumRegions>0) && ...
+        (DataInputPort[1].NumRegions>0)
+      %assign rowSig =  FcnGetSource(DataInputPort[0].Region[0]._Source)
+      %if !ISEMPTY(rowSig) && FcnIsRecordDataTypeValidForASAP2(rowSig)
+        %assign rdata = FcnGetGlobalMemoryMapData(rowSig)
+        %if FcnRecordIsASAP2TestPointSignal(rowSig) || ...
+            FcnRecordIsASAP2ExternalInput(rowSig) || ...
+            FcnDataSupportsASAP2(rdata)
+          %assign rowName = LibASAP2GetSymbol(rowSig)
+        %endif
+      %endif
+      %assign colSig =  FcnGetSource(DataInputPort[1].Region[0]._Source)
+      %if !ISEMPTY(colSig) && FcnIsRecordDataTypeValidForASAP2(colSig)
+        %assign cdata = FcnGetGlobalMemoryMapData(colSig)
+        %if FcnRecordIsASAP2TestPointSignal(colSig) || ...
+            FcnRecordIsASAP2ExternalInput(colSig) || ...
+            FcnDataSupportsASAP2(cdata)
+          %assign colName = LibASAP2GetSymbol(colSig)
+        %endif
+      %endif
+    %endif
+    %%
+    %% Add input quantities to parameter group
+    %addtorecord group RowIdxSigName rowName
+    %addtorecord group ColIdxSigName colName
+    %%
+    %% Write out Characteristic
+    %if !ISEMPTY(tableCanPrm)
+      %assign tmpVar = FcnWriteCanonicalCharacteristic_Lookup2D(group)
+    %else
+      %assign tmpVar = FcnWriteStandardCharacteristic_Lookup2D(group) 
+    %endif
+    %%
+  %endif %% numDims
+  %%
+%endwith
+%return TLC_TRUE
+%endfunction
+
+
+
+%% ============================================================================
+%% Function:  FcnGetSource(src) void ======
+%% Abstract:
+%%   - Locate the SourceRecord for a given signal.
+%function FcnGetSource(src) void
+  %createrecord portObj { SignalSrc [-1] SignalOffset [-1] Width 1 }
+  %assign portObj.SignalSrc = src
+  %return SLibGetSourceRecord(portObj, 0)
+%endfunction
+
+
+%% ============================================================================
+%% Function: FcnCheckValidityOf1DCanonicalParamGroup ===========================
+%% Abstract:
+%%      Checks that all members of paramGroup refer to valid data records
+%%        - table parameter must be a canonical parameter
+%%        - table parameter must not be used in any other ParameterGroup
+%%        - axis parameter must be either canonical (assume COM_AXIS) or 
+%%          fixed axis type. 
+%%        - add "UsedInParameterGroup" to parameter record
+%%
+%function FcnCheckValidityOf1DCanonicalParamGroup(group) void
+%with group
+  %assign tablePrm = Member[1].Reference
+  %assign xParam   = Member[0].Reference
+  %%
+  %if group.tableIsCanPrm != "yes"
+    %% Invalid if table parameter is not a canonical parameter
+    %return TLC_FALSE
+  %else
+    %if ISFIELD(tablePrm,"UsedInParameterGroup") && !ISEMPTY(tablePrm.UsedInParameterGroup)
+      %if (tablePrm.UsedInParameterGroup != "Lookup1D.Member[1]") 
+        %% Lookup 1d and 2d table data cannot be shared
+        %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+          ["%<tablePrm.Name>", "%<tablePrm.UsedInParameterGroup>", "Lookup1D.Member[1]"])>
+      %endif
+    %else
+      %assign dtID = LibGetRecordDataTypeId(tablePrm)
+      %if !FcnIsNumericDataTypeValidForASAP2(dtID)
+        %% Non-numeric types like struct are not supported
+        %return TLC_FALSE
+      %endif
+      %if !ISFIELD(tablePrm, "UsedInParameterGroup")
+        %<LibAddIdentifier(tablePrm, "UsedInParameterGroup", "Lookup1D.Member[1]")>
+      %else
+        %assign tablePrm.UsedInParameterGroup = "Lookup1D.Member[1]"
+      %endif
+    %endif
+  %endif
+  %%
+  %assign xData  = FcnGetGlobalMemoryMapData(xParam)
+  
+  %if FcnDataSupportsASAP2(xData) 
+    %%
+    %if ISFIELD(xData,"UsedInParameterGroup")
+      %if (xData.UsedInParameterGroup     != "Lookup1D.Member[0]") 
+        %% Lookup 1d and 2d tables can share same axis parameter 
+        %if ((xData.UsedInParameterGroup != "Lookup2D.Member[0]") &&...
+          (xData.UsedInParameterGroup != "Lookup2D.Member[1]"))
+          %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+            ["%<xData.Name>",  "%<xData.UsedInParameterGroup>", "Lookup1D.Member[0]"])>
+        %endif          
+      %endif
+    %else
+      %<LibAddIdentifier(xData, "UsedInParameterGroup", "Lookup1D.Member[0]")>
+    %endif
+    %%
+    %assign xParamName = LibASAP2GetSymbol(xParam)  
+    %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,xParamName)
+      %addtorecord group isDuplicateBreakPoint TLC_TRUE         
+    %else
+      %addtorecord ::CompiledModel.ASAP2DataEntityRec %<xParamName> 1 
+      %addtorecord group isDuplicateBreakPoint TLC_FALSE 
+    %endif  
+    %%
+    %% Decide which axis, COM_AXIS or STD_AXIS
+    %% Check if this parameter is shared between tables      
+    %% If Axis parameters are shared between tables then create COM_AXIS
+    %addtorecord group xAxisType "COM_AXIS"
+  %elseif group.xAxisIsCanPrm == "yes"
+    %% Assume the axis type is COM_AXIS. The merge tool (post-processing) will
+    %% validate the correctness of this axis type. 
+    %if ISFIELD(xParam,"UsedInParameterGroup")
+      %if (xParam.UsedInParameterGroup     != "Lookup1D.Member[0]") 
+        %% Lookup 1d and 2d tables can share same axis parameter 
+        %if ((xParam.UsedInParameterGroup != "Lookup2D.Member[0]") &&...
+          (xParam.UsedInParameterGroup != "Lookup2D.Member[1]"))
+          %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+            ["%<xParam.Name>",  "%<xParam.UsedInParameterGroup>", "Lookup1D.Member[0]"])>
+        %endif          
+      %endif
+    %else
+      %assign dtID = LibGetRecordDataTypeId(xParam)
+      %if !FcnIsNumericDataTypeValidForASAP2(dtID)
+        %% Non-numeric types like struct are not supported
+        %return TLC_FALSE
+      %endif
+      %<LibAddIdentifier(xParam, "UsedInParameterGroup", "Lookup1D.Member[0]")>
+    %endif
+    %% Sharing a canonical breakpoint parameter with multiple LUT blocks is 
+    %% currently not supported. Hence it can never be duplicate.
+    %addtorecord group isDuplicateBreakPoint TLC_FALSE
+    %addtorecord group xAxisType "COM_AXIS"
+  %else
+    %% Only supported options are FIX_AXIS and FIX_AXIS_PAR_LIST
+    %if FcnIsParamCandidateForFixAxis(xParam)
+      %if (FcnAxisIsEvenlySpaced(xParam.Value))
+        %addtorecord group xAxisType "FIX_AXIS"
+      %else
+        %addtorecord group xAxisType "FIX_AXIS_PAR_LIST"
+      %endif
+    %else
+      %<FcnWarnForInvalidFixAxis(xParam, "1")>
+      %return TLC_FALSE  
+    %endif
+  %endif
+  %%
+  %return TLC_TRUE
+%endwith
+%endfunction
+
+
+%% Function: FcnCheckValidityOf2DCanonicalParamGroup ===========================
+%% Abstract:
+%%      Checks that all members of paramGroup refer to valid data records
+%%        - table parameter must be a canonical parameter
+%%        - table parameter must not be used in any other ParameterGroup
+%%        - axis parameters must be either canonical (assume COM_AXIS) or 
+%%          fixed axis type. 
+%%        - add "UsedInParameterGroup" to parameter record
+%%
+%function FcnCheckValidityOf2DCanonicalParamGroup(group) void
+%with group
+  %%
+  %assign tablePrm = Member[2].Reference
+  %assign xParam   = Member[0].Reference
+  %assign yParam   = Member[1].Reference
+  %%
+  %if group.tableIsCanPrm != "yes"
+    %% Invalid if table parameter is not a canonical parameter
+    %return TLC_FALSE
+  %else
+    %if ISFIELD(tablePrm,"UsedInParameterGroup") && !ISEMPTY(tablePrm.UsedInParameterGroup)
+      %if (tablePrm.UsedInParameterGroup    != "Lookup2D.Member[2]") 
+        %% Lookup 1d and 2d table data cannot be shared
+        %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+          ["%<tablePrm.Name>", "%<tablePrm.UsedInParameterGroup>", "Lookup2D.Member[2]"])>
+      %endif
+    %else
+      %assign dtID = LibGetRecordDataTypeId(tablePrm)
+      %if !FcnIsNumericDataTypeValidForASAP2(dtID)
+        %% Non-numeric types like struct are not supported
+        %return TLC_FALSE
+      %endif
+      %if !ISFIELD(tablePrm, "UsedInParameterGroup")
+        %<LibAddIdentifier(tablePrm, "UsedInParameterGroup", "Lookup2D.Member[2]")>
+      %else
+        %assign tablePrm.UsedInParameterGroup = "Lookup2D.Member[2]"
+      %endif
+    %endif  
+  %endif
+  %%
+  %assign xData  = FcnGetGlobalMemoryMapData(xParam)
+  %if FcnDataSupportsASAP2(xData) 
+    %%
+    %if ISFIELD(xData,"UsedInParameterGroup")
+      %if (xData.UsedInParameterGroup    != "Lookup2D.Member[0]") 
+        %% Lookup 1d and 2d tables can share same axis parameter 
+        %if ((xData.UsedInParameterGroup != "Lookup1D.Member[0]") &&...
+          (xData.UsedInParameterGroup   != "Lookup2D.Member[1]"))
+          %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+            ["%<xData.Name>", "%<xData.UsedInParameterGroup>", "Lookup2D.Member[0]"])>
+        %endif          
+      %endif
+    %else
+      %<LibAddIdentifier(xData, "UsedInParameterGroup", "Lookup2D.Member[0]")>
+    %endif
+    %%
+    %assign xParamName = LibASAP2GetSymbol(xParam)  
+    %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,xParamName)
+      %addtorecord group xIsDuplicateBreakPoint TLC_TRUE         
+    %else
+      %addtorecord ::CompiledModel.ASAP2DataEntityRec %<xParamName> 1 
+      %addtorecord group xIsDuplicateBreakPoint TLC_FALSE 
+    %endif   
+    %%
+    %% Decide which axis, COM_AXIS or STD_AXIS
+    %% Check if this parameter is shared between tables        
+    %% If Axis parameters are shared between tables then create COM_AXIS
+    %addtorecord group xAxisType "COM_AXIS"
+  %elseif group.xAxisIsCanPrm == "yes"
+    %% Assume the axis type is COM_AXIS. The merge tool (post-processing) will
+    %% validate the correctness of this axis type.    
+    %if ISFIELD(xParam,"UsedInParameterGroup")
+      %if (xParam.UsedInParameterGroup    != "Lookup2D.Member[0]") 
+        %% Lookup 1d and 2d tables can share same axis parameter 
+        %if ((xParam.UsedInParameterGroup != "Lookup1D.Member[0]") &&...
+          (xParam.UsedInParameterGroup   != "Lookup2D.Member[1]"))
+          %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+            ["%<xParam.Name>", "%<xParam.UsedInParameterGroup>", "Lookup2D.Member[0]"])>
+        %endif          
+      %endif
+    %else
+      %assign dtID = LibGetRecordDataTypeId(xParam)
+      %if !FcnIsNumericDataTypeValidForASAP2(dtID)
+        %% Non-numeric types like struct are not supported
+        %return TLC_FALSE
+      %endif
+      %<LibAddIdentifier(xParam, "UsedInParameterGroup", "Lookup2D.Member[0]")>
+    %endif    
+    %% Sharing a canonical breakpoint parameter with multiple LUT blocks is 
+    %% currently not supported. Hence it can never be duplicate.
+    %addtorecord group xIsDuplicateBreakPoint TLC_FALSE
+    %addtorecord group xAxisType "COM_AXIS"    
+  %else
+    %% Only supported options are FIX_AXIS and FIX_AXIS_PAR_LIST
+    %if FcnIsParamCandidateForFixAxis(xParam)
+      %if (FcnAxisIsEvenlySpaced(xParam.Value))
+        %addtorecord group xAxisType "FIX_AXIS"
+      %else
+        %addtorecord group xAxisType "FIX_AXIS_PAR_LIST"
+      %endif
+    %else
+      %<FcnWarnForInvalidFixAxis(xParam, "1")>
+      %return TLC_FALSE  
+    %endif
+  %endif
+  %%
+  %assign yData  = FcnGetGlobalMemoryMapData(yParam)
+  
+  %if FcnDataSupportsASAP2(yData) 
+    %%
+    %if ISFIELD(yData,"UsedInParameterGroup")
+      %if (yData.UsedInParameterGroup != "Lookup2D.Member[1]") 
+        %% Lookup 1d and 2d tables can share same axis parameter 
+        %if ((yData.UsedInParameterGroup != "Lookup1D.Member[0]") &&...
+          (yData.UsedInParameterGroup != "Lookup2D.Member[0]")) 
+          %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+            ["%<yData.Name>", "%<yData.UsedInParameterGroup>", "Lookup2D.Member[1]"])>
+        %endif          
+      %endif
+    %else
+      %<LibAddIdentifier(yData, "UsedInParameterGroup", "Lookup2D.Member[1]")>
+    %endif
+    %%
+    %assign yParamName = LibASAP2GetSymbol(yParam)  
+    %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,yParamName)
+      %addtorecord group yIsDuplicateBreakPoint TLC_TRUE         
+    %else
+      %addtorecord ::CompiledModel.ASAP2DataEntityRec %<yParamName> 1 
+      %addtorecord group yIsDuplicateBreakPoint TLC_FALSE 
+    %endif 
+    %addtorecord group yAxisType "COM_AXIS"
+    %%
+  %elseif group.yAxisIsCanPrm == "yes"
+    %% Assume the axis type is COM_AXIS. The merge tool (post-processing) will
+    %% validate the correctness of this axis type.    
+    %if ISFIELD(yParam,"UsedInParameterGroup")
+      %if (yParam.UsedInParameterGroup != "Lookup2D.Member[1]") 
+        %% Lookup 1d and 2d tables can share same axis parameter 
+        %if ((yParam.UsedInParameterGroup != "Lookup1D.Member[0]") &&...
+          (yParam.UsedInParameterGroup != "Lookup2D.Member[0]")) 
+          %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+            ["%<yParam.Name>", "%<yParam.UsedInParameterGroup>", "Lookup2D.Member[1]"])>
+        %endif          
+      %endif
+    %else
+      %assign dtID = LibGetRecordDataTypeId(yParam)
+      %if !FcnIsNumericDataTypeValidForASAP2(dtID)
+        %% Non-numeric types like struct are not supported
+        %return TLC_FALSE
+      %endif
+      %<LibAddIdentifier(yParam, "UsedInParameterGroup", "Lookup2D.Member[1]")>
+    %endif    
+    %% Sharing a canonical breakpoint parameter with multiple LUT blocks is 
+    %% currently not supported. Hence it can never be duplicate.
+    %addtorecord group yIsDuplicateBreakPoint TLC_FALSE
+    %addtorecord group yAxisType "COM_AXIS"
+  %else   
+    %% Only supported options are FIX_AXIS and FIX_AXIS_PAR_LIST
+    %if FcnIsParamCandidateForFixAxis(yParam)
+      %if (FcnAxisIsEvenlySpaced(yParam.Value))
+        %addtorecord group yAxisType "FIX_AXIS"
+      %else
+        %addtorecord group yAxisType "FIX_AXIS_PAR_LIST"
+      %endif
+    %else
+      %<FcnWarnForInvalidFixAxis(yParam, "2")>
+      %return TLC_FALSE  
+    %endif
+  %endif
+  %%
+  %return TLC_TRUE
+%endwith
+%endfunction
+
+
+%% Function: FcnCheckValidityOf1DParamGroup ====================================
+%% Abstract:
+%%      Checks that all members of paramGroup refer to valid data records
+%%        - table data record must have Object
+%%        - table data record must not be used in any other ParameterGroup
+%%      - assign group to use COM_AXIS or FIX_AXIS
+%%      Add "UsedInParameterGroup" to data record
+%%
+%function FcnCheckValidityOf1DParamGroup(paramGroup)
+  %with paramGroup
+   
+    %assign yData = FcnGetGlobalMemoryMapData(Member[1].Reference)
+    %% If Y-axis data is global and has a Simulink Object
+    %% associated with it, add UsedInParameterGroup else return 0
+    %if !(FcnDataSupportsASAP2(yData))
+      %% Early return  
+      %return TLC_FALSE
+    %endif
+    %if ISFIELD(yData, "UsedInParameterGroup") && !ISEMPTY(yData.UsedInParameterGroup)
+      %if (yData.UsedInParameterGroup    != "Lookup1D.Member[1]") 
+        %% Lookup 1d and 2d table data cannot be shared
+        %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+          ["%<yData.Name>", "%<yData.UsedInParameterGroup>", "Lookup1D.Member[1]"])>
+      %endif
+    %else
+       %if !ISFIELD(yData, "UsedInParameterGroup")
+         %<LibAddIdentifier(yData, "UsedInParameterGroup", "Lookup1D.Member[1]")>
+       %else
+          %assign yData.UsedInParameterGroup = "Lookup1D.Member[1]"
+       %endif
+    %endif
+    %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,yData.Name)
+      %return TLC_FALSE
+    %else
+      %addtorecord ::CompiledModel.ASAP2DataEntityRec %<yData.Name> 1         
+    %endif
+    %%
+    %assign xParam = Member[0].Reference
+    %assign xData  = FcnGetGlobalMemoryMapData(xParam)
+    %% If X-axis data is global and has a Simulink Object
+    %% associated with it, add UsedInParameterGroup
+    %if (FcnDataSupportsASAP2(xData) || FcnDataIsStructuredAndSupportsASAP2(xData))
+      %%
+      %if ISFIELD(xData,"UsedInParameterGroup")
+        %if (xData.UsedInParameterGroup     != "Lookup1D.Member[0]") 
+           %% Lookup 1d and 2d tables can share same axis parameter 
+           %if ((xData.UsedInParameterGroup != "Lookup2D.Member[0]") &&...
+             (xData.UsedInParameterGroup != "Lookup2D.Member[1]"))
+             %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+               ["%<xData.Name>",  "%<xData.UsedInParameterGroup>", "Lookup1D.Member[0]"])>
+           %endif          
+        %endif
+      %else
+        %<LibAddIdentifier(xData, "UsedInParameterGroup", "Lookup1D.Member[0]")>
+      %endif
+      %%
+      %assign xParamName = LibASAP2GetSymbol(xParam)  
+      %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,xParamName)
+        %addtorecord paramGroup isDuplicateBreakPoint TLC_TRUE         
+      %else
+        %addtorecord ::CompiledModel.ASAP2DataEntityRec %<xParamName> 1 
+        %addtorecord paramGroup isDuplicateBreakPoint TLC_FALSE 
+      %endif  
+      %%
+      %% Decide which axis, COM_AXIS or STD_AXIS
+      %% Check if this parameter is shared between tables      
+      %% If Axis parameters are shared between tables then create COM_AXIS
+      %addtorecord paramGroup xAxisType "COM_AXIS"
+      %% Store if the com_axis support tunable size
+      %if FcnDataIsStructuredAndSupportsASAP2(xData) && xParam.IsBPObject
+        %assign xBusObject = xData.StructInfo
+        %%              
+        %if !ISFIELD(xBusObject,"COMAxisInfo")
+          %% Add COMAxisInfo to busObject if not already added. It would 
+          %% be already added if the breakpoint is being shared by more 
+          %% than one LUT block.
+          %addtorecord xBusObject COMAxisInfo TLC_TRUE
+          %% Write to ASAP2RecordLayouts Record
+          %assign tmpvar = SLibWriteToRecordLayoutsRecord(xBusObject)          
+        %endif
+        %addtorecord xParam RecordLayoutName xBusObject.Name 
+      %endif
+    %else
+      %%  
+      %if FcnIsParamCandidateForFixAxis(xParam)
+        %if (FcnAxisIsEvenlySpaced(xParam.Value))
+          %addtorecord paramGroup xAxisType "FIX_AXIS"
+        %else
+          %addtorecord paramGroup xAxisType "FIX_AXIS_PAR_LIST"
+        %endif
+      %else
+        %<FcnWarnForInvalidFixAxis(Member[1].Reference, "1")>
+        %return TLC_FALSE  
+      %endif
+    %endif
+    %%
+    %return TLC_TRUE
+  %endwith
+%endfunction
+
+
+%% Function: FcnCheckValidityOf2DParamGroup ====================================
+%% Abstract:
+%%     Checks that all members of paramGroup refer to valid data records
+%%        - tabledata record must have Object
+%%        - data record must not be used in any other ParameterGroup
+%%      - assign group to use STD_AXIS, COM_AXIS, or FIX_AXIS
+%%      Add "UsedInParameterGroup" to data record
+%%
+%function FcnCheckValidityOf2DParamGroup(paramGroup)
+  %with paramGroup
+    
+    %assign zData       = FcnGetGlobalMemoryMapData(Member[2].Reference)
+    %% If Z-axis data is global and has a Simulink Object
+    %% associated with it, add UsedInParameterGroup else return 0
+    %if !(FcnDataSupportsASAP2(zData))
+      %% Early return  
+      %return TLC_FALSE
+    %endif
+    %if ISFIELD(zData, "UsedInParameterGroup") && !ISEMPTY(zData.UsedInParameterGroup)
+      %if (zData.UsedInParameterGroup    != "Lookup2D.Member[2]") 
+        %% Lookup 1d and 2d table data cannot be shared
+        %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+          ["%<zData.Name>", "%<zData.UsedInParameterGroup>", "Lookup2D.Member[2]"])>
+      %endif
+    %else
+      %if !ISFIELD(zData, "UsedInParameterGroup")
+        %<LibAddIdentifier(zData, "UsedInParameterGroup", "Lookup2D.Member[2]")>
+      %else
+        %assign zData.UsedInParameterGroup = "Lookup2D.Member[2]"
+      %endif
+    %endif
+    %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,zData.Name)
+      %return TLC_FALSE
+    %else
+      %addtorecord ::CompiledModel.ASAP2DataEntityRec %<zData.Name> 1         
+    %endif
+    %%
+    %assign xParam = Member[0].Reference
+    %assign xData  = FcnGetGlobalMemoryMapData(xParam)
+    %% If X-axis data is global and has a Simulink Object
+    %% associated with it, add UsedInParameterGroup
+    %if (FcnDataSupportsASAP2(xData) || FcnDataIsStructuredAndSupportsASAP2(xData))      
+      %%
+      %if ISFIELD(xData,"UsedInParameterGroup")
+        %if (xData.UsedInParameterGroup    != "Lookup2D.Member[0]") 
+          %% Lookup 1d and 2d tables can share same axis parameter 
+          %if ((xData.UsedInParameterGroup != "Lookup1D.Member[0]") &&...
+            (xData.UsedInParameterGroup   != "Lookup2D.Member[1]"))
+            %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+              ["%<xData.Name>", "%<xData.UsedInParameterGroup>", "Lookup2D.Member[0]"])>
+          %endif          
+        %endif
+      %else
+        %<LibAddIdentifier(xData, "UsedInParameterGroup", "Lookup2D.Member[0]")>
+      %endif
+      %%
+      %assign xParamName = LibASAP2GetSymbol(xParam)  
+      %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,xParamName)
+        %addtorecord paramGroup xIsDuplicateBreakPoint TLC_TRUE         
+      %else
+        %addtorecord ::CompiledModel.ASAP2DataEntityRec %<xParamName> 1 
+        %addtorecord paramGroup xIsDuplicateBreakPoint TLC_FALSE 
+      %endif   
+      %%
+      %% Decide which axis, COM_AXIS or STD_AXIS
+      %% Check if this parameter is shared between tables        
+      %% If Axis parameters are shared between tables then create COM_AXIS
+      %addtorecord paramGroup xAxisType "COM_AXIS"
+      %% Store if the com_axis support tunable size
+      %if FcnDataIsStructuredAndSupportsASAP2(xData) && xParam.IsBPObject
+        %assign xBusObject = xData.StructInfo
+        %%              
+        %if !ISFIELD(xBusObject,"COMAxisInfo")
+          %% Add COMAxisInfo to busObject if not already added. It would 
+          %% be already added if the breakpoint is being shared by more 
+          %% than one LUT block.
+          %addtorecord xBusObject COMAxisInfo TLC_TRUE
+          %% Write to ASAP2RecordLayouts Record
+          %assign tmpvar = SLibWriteToRecordLayoutsRecord(xBusObject)
+        %endif
+        %addtorecord xParam RecordLayoutName xBusObject.Name
+      %endif
+    %else
+      %if FcnIsParamCandidateForFixAxis(xParam)
+        %if (FcnAxisIsEvenlySpaced(xParam.Value))
+          %addtorecord paramGroup xAxisType "FIX_AXIS"
+        %else
+          %addtorecord paramGroup xAxisType "FIX_AXIS_PAR_LIST"
+        %endif
+      %else
+        %<FcnWarnForInvalidFixAxis(Member[2].Reference, "1")>
+        %return TLC_FALSE  
+      %endif
+    %endif
+    %%    
+    %assign yParam = Member[1].Reference
+    %assign yData  = FcnGetGlobalMemoryMapData(yParam)
+    %% If y-axis data is global and has a Simulink Object
+    %% associated with it, add UsedInParameterGroup
+    %if (FcnDataSupportsASAP2(yData) || FcnDataIsStructuredAndSupportsASAP2(yData))    
+      %%
+      %if ISFIELD(yData,"UsedInParameterGroup")
+        %if (yData.UsedInParameterGroup != "Lookup2D.Member[1]") 
+          %% Lookup 1d and 2d tables can share same axis parameter 
+          %if ((yData.UsedInParameterGroup != "Lookup1D.Member[0]") &&...
+            (yData.UsedInParameterGroup != "Lookup2D.Member[0]")) 
+            %<SLibReportErrorWithIdAndArgs("RTW:tlc:ParameterGroup", ...
+              ["%<yData.Name>", "%<yData.UsedInParameterGroup>", "Lookup2D.Member[1]"])>
+          %endif          
+        %endif
+      %else
+        %<LibAddIdentifier(yData, "UsedInParameterGroup", "Lookup2D.Member[1]")>
+      %endif
+      %%
+      %assign yParamName = LibASAP2GetSymbol(yParam)  
+      %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,yParamName)
+        %addtorecord paramGroup yIsDuplicateBreakPoint TLC_TRUE         
+      %else
+        %addtorecord ::CompiledModel.ASAP2DataEntityRec %<yParamName> 1 
+        %addtorecord paramGroup yIsDuplicateBreakPoint TLC_FALSE 
+      %endif 
+      %addtorecord paramGroup yAxisType "COM_AXIS"
+      %% Store if the com_axis support tunable size
+      %if FcnDataIsStructuredAndSupportsASAP2(yData) && yParam.IsBPObject
+        %assign yBusObject = yData.StructInfo
+        %%              
+        %if !ISFIELD(yBusObject,"COMAxisInfo")
+          %% Add COMAxisInfo to busObject if not already added. It would 
+          %% be already added if the breakpoint is being shared by more 
+          %% than one LUT block.
+          %addtorecord yBusObject COMAxisInfo TLC_TRUE
+          %% Write to ASAP2RecordLayouts Record
+          %assign tmpvar = SLibWriteToRecordLayoutsRecord(yBusObject)          
+        %endif
+        %addtorecord yParam RecordLayoutName yBusObject.Name
+      %endif
+     %else
+      %% Check if parameter is a candidate for FIX_AXIS
+      %if FcnIsParamCandidateForFixAxis(yParam) 
+         %if (FcnAxisIsEvenlySpaced(yParam.Value))
+           %addtorecord paramGroup yAxisType "FIX_AXIS"
+         %else
+           %addtorecord paramGroup yAxisType "FIX_AXIS_PAR_LIST"
+         %endif
+       %else
+         %<FcnWarnForInvalidFixAxis(Member[2].Reference, "2")> 
+        %return TLC_FALSE  
+      %endif
+    %endif
+    %%
+    %return TLC_TRUE
+  %endwith
+%endfunction
+
+
+%% Function: FcnCheckSTDAxisValidityOf2DParam ====================================
+%% Abstract:
+%%      Checks validity of parameter for STD Axis support
+%%      Add "UsedInParameterGroup" to data record
+%%
+%function FcnCheckSTDAxisValidityOf2DParam(tblPrm, LookupType)
+  %if LookupType == "Prelookup"
+    %% Parameter should be used only by Interpolation block (for table)
+    %% and Prelookup blocks (for breakpoints)
+    %assign numUses = 0
+    %foreach blkGrIdx = SIZE(tblPrm.GraphicalRef,0)
+      %assign subsysIdx = tblPrm.GraphicalRef[blkGrIdx][0]
+      %assign blkIdx = tblPrm.GraphicalRef[blkGrIdx][1]
+      %if ::CompiledModel.BlockHierarchyMap.Subsystem[subsysIdx].Block[blkIdx].Type ...
+        != "ModelReference"
+        %assign numUses = numUses + 1
+      %endif
+    %endforeach
+    
+    %if numUses != 3
+      %return TLC_FALSE
+    %endif
+  %elseif LookupType == "LookupND"
+    %% Parameter should be used only by LookupND block (for table and 
+    %% breakpoints)
+    %assign numUses = 0
+    %foreach blkGrIdx = SIZE(tblPrm.GraphicalRef,0)
+      %assign subsysIdx = tblPrm.GraphicalRef[blkGrIdx][0]
+      %assign blkIdx = tblPrm.GraphicalRef[blkGrIdx][1]
+      %if ::CompiledModel.BlockHierarchyMap.Subsystem[subsysIdx].Block[blkIdx].Type ...
+        != "ModelReference"
+        %assign numUses = numUses + 1
+      %endif
+    %endforeach
+    
+    %if numUses != 1
+      %return TLC_FALSE
+    %endif
+  %else
+    %<SLibReportErrorWithIdAndArgs("RTW:tlc:WrongLookupType", LookupType)>
+  %endif
+  %%
+  %assign zData       = FcnGetGlobalMemoryMapData(tblPrm)
+  %if ISFIELD(zData, "UsedInParameterGroup") && !ISEMPTY(zData.UsedInParameterGroup)
+    %if (zData.UsedInParameterGroup    != "STDAxisLookup2D")
+      %return TLC_FALSE
+    %endif
+  %else
+    %if !ISFIELD(zData, "UsedInParameterGroup")
+      %<LibAddIdentifier(zData, "UsedInParameterGroup", "STDAxisLookup2D")>
+    %else
+      %assign zData.UsedInParameterGroup = "STDAxisLookup2D"
+    %endif
+  %endif
+  %% Check if data is used in any other ParameterGroup
+  %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,zData.Name)
+    %return TLC_FALSE
+  %else
+    %addtorecord ::CompiledModel.ASAP2DataEntityRec %<zData.Name> 1         
+  %endif
+  %%
+  %return TLC_TRUE
+%endfunction
+
+
+%% Function: FcnCheckSTDAxisValidityOf1DParam ====================================
+%% Abstract:
+%%      Checks validity of parameter for STD Axis support
+%%      Add "UsedInParameterGroup" to data record
+%%
+%function FcnCheckSTDAxisValidityOf1DParam(tblPrm, LookupType)
+  %if LookupType == "Prelookup"
+    %% Parameter should be used only by Interpolation block (for table)
+    %% and Prelookup block (for breakpoints)
+    %assign numUses = 0
+    %foreach blkGrIdx = SIZE(tblPrm.GraphicalRef,0)
+      %assign subsysIdx = tblPrm.GraphicalRef[blkGrIdx][0]
+      %assign blkIdx = tblPrm.GraphicalRef[blkGrIdx][1]
+      %if ::CompiledModel.BlockHierarchyMap.Subsystem[subsysIdx].Block[blkIdx].Type ...
+        != "ModelReference"
+        %assign numUses = numUses + 1
+      %endif
+    %endforeach
+    
+    %if numUses != 2
+      %return TLC_FALSE
+    %endif
+  %elseif LookupType == "LookupND"
+    %% Parameter should be used only by LookupND block (for table and 
+    %% breakpoints)
+    %assign numUses = 0
+    %foreach blkGrIdx = SIZE(tblPrm.GraphicalRef,0)
+      %assign subsysIdx = tblPrm.GraphicalRef[blkGrIdx][0]
+      %assign blkIdx = tblPrm.GraphicalRef[blkGrIdx][1]
+      %if ::CompiledModel.BlockHierarchyMap.Subsystem[subsysIdx].Block[blkIdx].Type ...
+        != "ModelReference"
+        %assign numUses = numUses + 1
+      %endif
+    %endforeach 
+    
+    %if numUses != 1
+      %return TLC_FALSE
+    %endif
+  %else
+    %<SLibReportErrorWithIdAndArgs("RTW:tlc:WrongLookupType", LookupType)>
+  %endif
+  %%
+  %assign zData       = FcnGetGlobalMemoryMapData(tblPrm)
+  %if ISFIELD(zData, "UsedInParameterGroup") && !ISEMPTY(zData.UsedInParameterGroup)
+    %if (zData.UsedInParameterGroup    != "STDAxisLookup1D")
+      %return TLC_FALSE
+    %endif
+  %else
+    %if !ISFIELD(zData, "UsedInParameterGroup")
+      %<LibAddIdentifier(zData, "UsedInParameterGroup", "STDAxisLookup1D")>
+    %else
+      %assign zData.UsedInParameterGroup = "STDAxisLookup1D"
+    %endif
+  %endif
+  %% Check if data is used in any other ParameterGroup
+  %if ISFIELD(::CompiledModel.ASAP2DataEntityRec,zData.Name)
+    %return TLC_FALSE
+  %else
+    %addtorecord ::CompiledModel.ASAP2DataEntityRec %<zData.Name> 1         
+  %endif
+  %%
+  %return TLC_TRUE
+%endfunction
+
+
+%% Function: FcnIsParamCandidateForFixAxis(param)===============================
+%% Abstract:
+%%      If axis values are evenly spaced integers return TLC_TRUE.
+%%
+%function FcnIsParamCandidateForFixAxis(param)  
+  %% Check if Parameter DataType is an integer first. If DataType is not 
+  %% an integer, or is not evenly spaced return TLC_FLASE
+  %assign paramDTId = param.OriginalDataTypeIdx
+  %if (  LibIsDataTypeFixpt(paramDTId) && ...
+    !LibIsNonBuiltInTypeNeededForFixpt(paramDTId) )
+    %return TLC_TRUE
+  %endif
+  %assign eDTId = LibGetDataTypeIdAliasedThruToFromId(paramDTId)
+  %if LibIsEnumDataType(eDTId)
+    %if LibIsEnumTypeStoredAsInt(eDTId) 
+      %return TLC_TRUE 
+    %else
+      %assign eDTId = LibGetEnumTypeStorageType(eDTId)
+    %endif
+  %endif
+  %if ( LibIsBuiltInDataType(eDTId) && SLibIsIntegerFromId(eDTId) )
+    %return TLC_TRUE 
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+  
+
+%% Function: SLibWriteToRecordLayoutsRecord ========
+%% Abstract:
+%%   Store details of Record Layout to ASAP2RecordLayouts record
+%function SLibWriteToRecordLayoutsRecord(busObject) void
+    
+  %if !ISFIELD(busObject,"STDAxisInfo") && !ISFIELD(busObject,"COMAxisInfo")
+    %assign errStr = "Bus object does not have any information regarding Axis"
+    %<LibReportFatalError(errStr)>
+  %endif
+  
+  %assign recordLayoutName = busObject.Name
+  %if ISFIELD(::CompiledModel.ASAP2RecordLayouts.RecordLayouts,recordLayoutName)
+    %% Record Layout already exists
+    %return
+  %endif
+  %assign %<recordLayoutName> = busObject
+  %assign recordLayouts = ::CompiledModel.ASAP2RecordLayouts.RecordLayouts
+  %assign recordLayouts = recordLayouts + %<recordLayoutName>
+  %assign ::CompiledModel.ASAP2RecordLayouts.NumRecordLayouts = ...
+    ::CompiledModel.ASAP2RecordLayouts.NumRecordLayouts + 1
+%endfunction
+
+
+%% Function: FcnWarnForInvalidFixAxis(tableParam, bpParam, bpNum) ==============
+%% Abstract:
+%%   - Warn for breakpoints data that do not qualify for fix axis
+%%   - Remove "UsedInParameterGroup" field from table parameter/data, so that 
+%%     it can get described as a CHARACTERISTIC of VALUE or VAL_BLK type
+%function FcnWarnForInvalidFixAxis(tableParam, bpNum) void
+  %% Allow table data to get described as a CHARACTERISTIC of type 
+  %% VALUE or VAL_BLK
+  %if ISFIELD(tableParam, "UsedInParameterGroup")
+    %% Canonical parameter
+    %<REMOVEFIELD(tableParam, "UsedInParameterGroup")>
+  %else
+    %assign tableData = FcnGetGlobalMemoryMapData(tableParam)
+    %if TYPE(tableData) == "Scope"
+      %<REMOVEFIELD(tableData, "UsedInParameterGroup")>
+    %endif
+  %endif  
+  %assign lutBlockPath = ""
+  %if ISFIELD(tableParam, "GraphicalRef")
+    %assign lutBlockPath = SLibMangledGrBlockPath(tableParam.GraphicalRef[0])
+  %elseif ISFIELD(tableParam, "MdlPrmIdx")
+    %% Synthesized block
+    %assign lutBlockPath = SLibMangledGrBlockPath(ModelParameters.Parameter[tableParam.MdlPrmIdx].GraphicalRef[0])
+  %endif  
+  %assign warnArgs = ["%<bpNum>", "%<lutBlockPath>"]
+  %<SLibReportWarningWithIdAndArgs("RTW:asap2:InvalidForFixAxis", warnArgs)>
+%endfunction
+
+
+%% Function:  FcnWriteStandardCharacteristic_Lookup1D(paramGroup) Output ======
+%% Abstract:
+%%   - Write Lookup1D block characteristic to the a2l file. Depending on the axis
+%%     type call appropriate functions to write the axis description to the a2l
+%%     file.
+%%   - The table parameter must resolve to a Simulink data object with a
+%%     non-Auto storage class.
+%function FcnWriteStandardCharacteristic_Lookup1D(paramGroup) Output
+  %assign xParam = paramGroup.Member[0].Reference
+  %assign yParam = paramGroup.Member[1].Reference
+  %%
+  %<LibASAP2AddCharacteristicToGraphicalGroups(yParam)>
+  %<ASAP2UserFcnWriteCharacteristic_Lookup1D(paramGroup,TLC_FALSE)>\
+%endfunction
+
+
+%% Function:  FcnWriteCanonicalCharacteristic_Lookup1D(paramGroup) Output =====
+%% Abstract:
+%%   - Write Lookup1D block characteristic to the a2l file. Depending on the axis
+%%     type call appropriate functions to write the axis description to the a2l
+%%     file (referenced models only).
+%%   - The table parameter must resolve to a model argument in a referenced model
+%function FcnWriteCanonicalCharacteristic_Lookup1D(paramGroup) Output
+  %assign xAxisParam = paramGroup.Member[0].Reference 
+  %assign tableParam = paramGroup.Member[1].Reference
+  %%
+  %% xxxx: Add to graphical group
+  %%
+  %<ASAP2UserFcnWriteCharacteristic_Lookup1D(paramGroup,TLC_TRUE)>\
+  %%
+%endfunction
+
+%% Function: FcnWriteStandardCharacteristic_Lookup2D(paramGroup) Output ========
+%% Abstract:
+%%   - Write Lookup2D block characteristic to the a2l file. Depending on the axis
+%%     type call appropriate functions to write the axis description to the a2l
+%%     file.
+%%   - The table parameter must resolve to a Simulink data object with a
+%%     non-Auto storage class
+%function FcnWriteStandardCharacteristic_Lookup2D(paramGroup) Output
+  %assign zParam = paramGroup.Member[2].Reference
+  %%
+  %<LibASAP2AddCharacteristicToGraphicalGroups(zParam)>
+  %<ASAP2UserFcnWriteCharacteristic_Lookup2D(paramGroup,TLC_FALSE)>\
+%endfunction
+
+%% Function: FcnWriteCanonicalCharacteristic_Lookup2D(paramGroup) Output =======
+%% Abstract:
+%%   - Write Lookup2D block characteristic to the a2l file. Depending on the axis
+%%     type call appropriate functions to write the axis description to the a2l
+%%     file (referenced models only).
+%%   - The table parameter must resolve to a model argument in a referenced model
+%function FcnWriteCanonicalCharacteristic_Lookup2D(paramGroup) Output
+  %%
+  %% xxxx: Add to graphical group
+  %%
+  %<ASAP2UserFcnWriteCharacteristic_Lookup2D(paramGroup,TLC_TRUE)>\
+%endfunction
+

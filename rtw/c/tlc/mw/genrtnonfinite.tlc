@@ -1,0 +1,369 @@
+%%
+%%  
+%%
+%% Abstract:
+%%      TLC file for generating the nonfinite code via Code Replacement Library (CRL).
+%%
+%% Copyright 2003-2016 The MathWorks, Inc.
+
+%implements "genrtnonfinite" "C"
+
+%% Function: rt_IsInf/rtIsInfF/rtIsNaN/rtIsNanF ================================
+%% Abstract:
+%%      GENERATE entry point for Code Replacement Library TLC callbacks. Creates
+%%      header and source file contents for nonfinites by calling
+%%      rt_InitInfAndNaN
+%%
+%function rtIsInf(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+%function rtIsInfF(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+%function rtIsNaN(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+%function rtIsNaNF(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+
+%% Function: CodeForBinary64NaNCheck
+%function CodeForBinary64NaNCheck(endianAwareStruct)
+  %return "\
+  union {\
+    %<endianAwareStruct> bitVal;\
+    real_T fltVal;\
+  } tmpVal;\
+  tmpVal.fltVal = value;\
+  result = (boolean_T)((tmpVal.bitVal.words.wordH & 0x7FF00000) == 0x7FF00000 &&\
+                       ( (tmpVal.bitVal.words.wordH & 0x000FFFFF) != 0 ||\
+                         (tmpVal.bitVal.words.wordL != 0) ));\
+"
+%endfunction
+
+%% Function: CodeForSwitchOnEndianness
+%function CodeForSwitchOnEndianness(codeForLittleEndian, codeForBigEndian) Output
+  %if ConfigSet.TargetEndianess == "Unspecified" || ConfigSet.PortableWordSizes == 1
+    uint16_T one = 1U;
+
+    enum {
+      LittleEndian,
+      BigEndian
+    } machByteOrder = (*((uint8_T *) &one) == 1U) ? LittleEndian : BigEndian;
+
+    switch (machByteOrder) {
+      case LittleEndian: {
+        %<codeForLittleEndian>
+        break;
+      }
+      case BigEndian: {
+        %<codeForBigEndian>
+        break;
+      }
+    }
+  %elseif ConfigSet.TargetEndianess == "LittleEndian"
+    %<codeForLittleEndian>
+  %elseif ConfigSet.TargetEndianess == "BigEndian"
+    %<codeForBigEndian>
+  %else
+    %openfile errTxt
+    Unsupported Target Endianess: %<ConfigSet.TargetEndianess>
+    %closefile errTxt
+    %<LibReportFatalError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: rtInf/rtInfF/rtMinusInf/rtMinusInfF/rtNaN/rtNaNF ===================
+%% Abstract:
+%%      GENERATE entry point for Code Replacement Library TLC callbacks. Creates
+%%      header and source file contents for nonfinite constants by calling
+%%      rt_InitInfAndNaN. Functions are prefixed with "gen_" to avoid clashing with
+%%      TLC reserved keywords.
+%%
+%function gen_rtInf(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+%function gen_rtInfF(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+%function gen_rtMinusInf(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+%function gen_rtMinusInfF(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+%function gen_rtNaN(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+%function gen_rtNaNF(fctInfo,fileH,fileC) void
+  %<rt_InitInfAndNaN(fctInfo,fileH,fileC)>
+%endfunction
+
+
+%% Function: rt_InitInfAndNaN ==================================================
+%% Abstract:
+%%      GENERATE entry point for Code Replacement Library TLC callbacks. Creates
+%%      header and source file contents for nonfinites.
+%%
+%function rt_InitInfAndNaN(fctInfo,fileH,fileC) void
+
+  %% Check for "CustomNonFinites" variable used to override default support
+  %if EXISTS(CustomNonFinites)
+    %% Using a custom nonfinites file: modelname, fciInfo, fileH and fileC
+    %% are in scope.
+    %if FILE_EXISTS(CustomNonFinites)
+      %include CustomNonFinites
+      %return
+    %else
+      %% Support file being only on MATLAB path
+      %assign customFilePath = FEVAL("which", CustomNonFinites)
+      %if (TYPE(customFilePath) == "String") && FILE_EXISTS(customFilePath)
+        %include customFilePath
+        %return
+      %else
+        %assign warnTxt = "The CustomNonFinites file, '%<CustomNonFinites >'," ...
+          " was specified, however, the file does not exist. Generating " ...
+          "the default nonfinite support."
+        %<LibReportWarning(warnTxt)>
+      %endif
+    %endif
+  %endif
+  
+  %% Default nonfinite support
+
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+  
+  %% For size_t.
+  %<SLibCacheUtilCodeToFile("util_hdr_reqed_incl", fileH, "<stddef.h>")>
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()> 
+  %<SLibApplyMemSecToDataDecl("real_T rtInf;",         "MemSecDataParameters", "rtInf")>
+  %<SLibApplyMemSecToDataDecl("real_T rtMinusInf;",    "MemSecDataParameters", "rtMinusInf")>
+  %<SLibApplyMemSecToDataDecl("real_T rtNaN;",         "MemSecDataParameters", "rtNaN")>
+  %<SLibApplyMemSecToDataDecl("real32_T rtInfF;",      "MemSecDataParameters", "rtInfF")>
+  %<SLibApplyMemSecToDataDecl("real32_T rtMinusInfF;", "MemSecDataParameters", "rtMinusInfF")>
+  %<SLibApplyMemSecToDataDecl("real32_T rtNaNF;",      "MemSecDataParameters", "rtNaNF")>
+
+  %<SLibGetFcnMemSecPragmaOnDecl("rt_InitInfAndNaN", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>void rt_InitInfAndNaN(size_t realSize);
+  %<SLibGetFcnMemSecPragmaOnDecl("rt_InitInfAndNaN", msFcn, "Post")>\
+  %<SLibGetFcnMemSecPragmaOnDecl("rtIsInf", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>boolean_T rtIsInf(real_T value);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtIsInf", msFcn, "Post")>\
+  %<SLibGetFcnMemSecPragmaOnDecl("rtIsInfF", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>boolean_T rtIsInfF(real32_T value);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtIsInfF", msFcn, "Post")>\
+  %<SLibGetFcnMemSecPragmaOnDecl("rtIsNaN", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>boolean_T rtIsNaN(real_T value);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtIsNaN", msFcn, "Post")>\
+  %<SLibGetFcnMemSecPragmaOnDecl("rtIsNaNF", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>boolean_T rtIsNaNF(real32_T value);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtIsNaNF", msFcn, "Post")>\
+  
+  typedef struct {
+    struct {
+        uint32_T wordH;
+        uint32_T wordL;
+    } words;
+  } BigEndianIEEEDouble;
+  
+
+  typedef struct {
+    struct {
+        uint32_T wordL;
+        uint32_T wordH;
+    } words;
+  } LittleEndianIEEEDouble;
+
+  
+  typedef struct {
+    union {
+      real32_T wordLreal;
+      uint32_T wordLuint;
+    } wordL;
+  } IEEESingle;
+  
+  
+  %<FcnGenCloseExternCForCPP()> 
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+  
+  %% Create source file contents
+  %<LibPushEmptyStackSharedUtils()>
+  %assign rtGetNaNDblInfo = SLibGenOneInputOneOutputFcnCallInfo("getNaN",tSS_VOID,tSS_DOUBLE,"")
+  %assign rtGetNaNSglInfo = SLibGenOneInputOneOutputFcnCallInfo("getNaN",tSS_VOID,tSS_SINGLE,"")
+  %assign rtGetInfDblInfo = SLibGenOneInputOneOutputFcnCallInfo("getInf",tSS_VOID,tSS_DOUBLE,"")
+  %assign rtGetInfSglInfo = SLibGenOneInputOneOutputFcnCallInfo("getInf",tSS_VOID,tSS_SINGLE,"")
+  %assign rtGetMinusInfDblInfo = SLibGenOneInputOneOutputFcnCallInfo("getMinusInf",tSS_VOID,tSS_DOUBLE,"")
+  %assign rtGetMinusInfSglInfo = SLibGenOneInputOneOutputFcnCallInfo("getMinusInf",tSS_VOID,tSS_SINGLE,"")
+  %assign nonfiniteIncludes = FcnDumpSharedUtilsIncludes()
+
+  %assign derivStackBuf = LibPopStackSharedUtilsIncludes()    
+    
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  %openfile buf
+  /*
+  * Abstract:
+  *      Function to initialize non-finites,
+  *      (Inf, NaN and -Inf).
+  */
+  %if ((GenUtilsSrcInSharedLocation == 1) || !SLibIsCompactFileFormat())
+    #include "rt_nonfinite.h"
+  %endif
+
+  %<nonfiniteIncludes>
+    
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>
+
+  %openfile buf
+  #define NumBitsPerChar  %<::CompiledModel.ConfigSet.ProdBitPerChar>U
+  %closefile buf
+  %<SLibCacheMacroToUtilityFile("NumBitsPerChar", buf, "util_src_defines", fileC)>
+
+  %openfile buf
+
+  %if GenCPP
+  extern "C" {
+  %endif
+
+  %<SLibApplyMemSecToDataDefn("real_T rtInf;",         "MemSecDataParameters", "rtInf")>
+  %<SLibApplyMemSecToDataDefn("real_T rtMinusInf;",    "MemSecDataParameters", "rtMinusInf")>
+  %<SLibApplyMemSecToDataDefn("real_T rtNaN;",         "MemSecDataParameters", "rtNaN")>
+  %<SLibApplyMemSecToDataDefn("real32_T rtInfF;",      "MemSecDataParameters", "rtInfF")>
+  %<SLibApplyMemSecToDataDefn("real32_T rtMinusInfF;", "MemSecDataParameters", "rtMinusInfF")>
+  %<SLibApplyMemSecToDataDefn("real32_T rtNaNF;",      "MemSecDataParameters", "rtNaNF")>
+
+  %if GenCPP
+    }
+  %endif
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_decl", fileC, buf)>
+  
+  %openfile buf
+  %if GenCPP
+  extern "C" {
+  %endif
+  %assign fcnName = "rt_InitInfAndNaN"
+  %assign fcnReturns = "void"
+  %assign fcnParams = "size_t realSize"
+  %openfile fcnAbstract
+Initialize the rtInf, rtMinusInf, and rtNaN needed by the
+generated code. NaN is initialized as non-signaling. Assumes IEEE.
+  %closefile fcnAbstract
+  
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract fcnAbstract; Category "utility"; GeneratedBy "genrtnonfinite.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+
+    (void) (realSize); 
+    rtNaN = %<rtGetNaNDblInfo.Expr>;
+    rtNaNF = %<rtGetNaNSglInfo.Expr>;
+    rtInf = %<rtGetInfDblInfo.Expr>;
+    rtInfF = %<rtGetInfSglInfo.Expr>;
+    rtMinusInf = %<rtGetMinusInfDblInfo.Expr>;
+    rtMinusInfF = %<rtGetMinusInfSglInfo.Expr>;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtIsInf"
+  %assign fcnReturns = "boolean_T"
+  %assign fcnParams = "real_T value"
+  %assign fcnAbstract = "Test if value is infinite"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract fcnAbstract; Category "utility"; GeneratedBy "genrtnonfinite.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    return (boolean_T)((value==rtInf || value==rtMinusInf) ? 1U : 0U);
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtIsInfF"
+  %assign fcnReturns = "boolean_T"
+  %assign fcnParams = "real32_T value"
+  %assign fcnAbstract = "Test if single-precision value is infinite"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract fcnAbstract; Category "utility"; GeneratedBy "genrtnonfinite.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    return (boolean_T)(((value)==rtInfF || (value)==rtMinusInfF) ? 1U : 0U);
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtIsNaN"
+  %assign fcnReturns = "boolean_T"
+  %assign fcnParams = "real_T value"
+  %assign fcnAbstract = "Test if value is not a number"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract fcnAbstract; Category "utility"; GeneratedBy "genrtnonfinite.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    boolean_T result = (boolean_T) 0;
+    size_t bitsPerReal = sizeof(real_T) * (NumBitsPerChar);
+    
+    if (bitsPerReal == 32U) {
+      result = rtIsNaNF((real32_T)value);
+    } else {
+      %assign codeForLittleEndian = CodeForBinary64NaNCheck("LittleEndianIEEEDouble")
+      %assign codeForBigEndian = CodeForBinary64NaNCheck("BigEndianIEEEDouble")
+      %<CodeForSwitchOnEndianness(codeForLittleEndian, codeForBigEndian)>
+    }
+    return result;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtIsNaNF"
+  %assign fcnReturns = "boolean_T"
+  %assign fcnParams = "real32_T value"
+  %assign fcnAbstract = "Test if single-precision value is not a number"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+    Abstract fcnAbstract; Category "utility"; GeneratedBy "genrtnonfinite.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    IEEESingle tmp;
+    tmp.wordL.wordLreal = value;
+    return (boolean_T)( (tmp.wordL.wordLuint & 0x7F800000) == 0x7F800000 &&
+                        (tmp.wordL.wordLuint & 0x007FFFFF) != 0 );
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  %if GenCPP
+  }
+  %endif
+  
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>  
+  
+%endfunction

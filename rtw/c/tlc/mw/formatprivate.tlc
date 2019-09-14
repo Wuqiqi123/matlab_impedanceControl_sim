@@ -1,0 +1,347 @@
+%% ============================================================================
+%% File name: formatprivate.tlc
+%% Copyright 1994-2018 The MathWorks, Inc.
+%% 
+
+%if EXISTS("_FORMATPRIVATE_") == 0
+  
+  %assign rootIdx    = NumSystems-1
+  %assign rootSystem = System[rootIdx]
+
+  %%
+  %% Create the banners for the model_private.h and model_types.h files
+  %%
+  %openfile bannerBuf
+  /*
+  * %<Name>_private.h
+  *
+  %<SLibCommonHeaderInfo()>\
+  */
+  %closefile bannerBuf
+  %<SLibCacheCodeToFile("mdl_priv_hdr_ban", bannerBuf)>
+  
+  
+  %% Includes
+  %openfile incl_codertypes_buf
+  %<SLibIncludeUsedCoderTypesFilenames()>
+  
+  %% This include is needed by the model reference SIM target to directly access
+  %% simulink methods, rather than going through the simstruct.
+  %if IsModelReferenceSimTarget()
+    #include "simtarget/slMdlrefSimTargetCoreHeaders.h"
+    #include "simtarget/slMdlrefSimTargetInstrumentationHeaders.h"
+    #include "messages/slMessagesSfcnBridge.h"
+    %% Add the intrinsic header if the FTZ setting is on.
+    %if ::CompiledModel.ConfigSet.DenormalBehavior == "FTZ"
+        #include "xmmintrin.h"
+    %endif
+  %endif
+  
+  %closefile incl_codertypes_buf
+  %<SLibCacheCodeToFile("mdl_priv_hdr_incl", incl_codertypes_buf)>
+
+  %openfile incl_mdltypes_for_variantguards_buf
+  %if ::CompiledModel.HasCodeVariants && !SLibIsCompactFileFormat() && ::CompiledModel.ModelParameters.IncludeMdlTypesInMdlPvtforVariants
+    %<SLibIncludeModelTypesHeader()>
+  %endif
+  %closefile incl_mdltypes_for_variantguards_buf
+  %<SLibCacheCodeToFile("mdl_priv_hdr_incl",incl_mdltypes_for_variantguards_buf)>
+  
+  %if IsModelReferenceSimTarget()
+    %openfile tmpBuf
+    %assign dsmDecls = SLibGetModelRefGlobalDSMDeclarations()
+    %if !ISEMPTY(dsmDecls)
+      %assign numDecls = SIZE(dsmDecls.DSMDeclaration, 1)
+      %foreach idx = numDecls
+        %assign needsExtern = dsmDecls.DSMDeclaration[idx].ExternNeeded
+        %if needsExtern
+          %assign dsmDecl = dsmDecls.DSMDeclaration[idx].Declaration
+          extern %<dsmDecl>
+        %endif
+      %endforeach
+    %endif
+
+    #include "sl_fileio_rtw.h"
+    extern const char *rt_GetMatSignalLoggingFileName(void);
+    extern const char *rt_GetMatSigLogSelectorFileName(void);
+    extern void *rt_GetOSigstreamManager(void);
+    extern void **rt_GetOSigstreamManagerAddr(void);
+    extern void *rt_slioCatalogue(void);
+    extern void **rt_slioCatalogueAddr(void);
+    extern void rt_ssSet_slErrMsg(SimStruct* S, void* diag);
+    extern void rt_ssReportDiagnosticAsWarning(SimStruct* S, void* diag);
+    
+    extern boolean_T slIsRapidAcceleratorSimulating(void);
+    
+    extern void rt_RAccelReplaceFromFilename(const char *blockpath, char *fileNam);
+    
+    extern void rt_RAccelReplaceToFilename(const char *blockpath, char *fileNam);
+
+    extern void * gblLoggingInterval;
+    
+        
+    %closefile tmpBuf
+    %<SLibCacheCodeToFile("mdl_priv_hdr_incl", tmpBuf)>
+  %endif
+  
+  %openfile tmpBuf    
+  %<LibDumpIncludesCache()>\
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("custom_blockTypeSetup_include", tmpBuf)>
+  
+  %% Defines
+  %<SLibCacheCodeToFile("mdl_priv_data_define", LibDumpCommonDefines(rootIdx))>
+
+  %openfile tmpBuf
+  %<LibDumpDefinesCache()>\
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("custom_blockTypeSetup_define", tmpBuf)>
+  
+  %% Typedefs
+  %openfile tmpBuf
+  %<LibDumpTypedefsCache()>\
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("custom_blockTypeSetup_typedef", tmpBuf)>
+  
+  %openfile rtwTypedefsBuffer
+  %<LibDeclareCompoundDataTypes()>\
+  %closefile rtwTypedefsBuffer
+  %<SLibCacheCodeToFile("mdl_priv_data_typedef", rtwTypedefsBuffer)>
+  
+  %if !SLibIsERTCodeFormat()
+    %% Block I/O structure
+    %<SLibCacheCodeToFile("mdl_priv_data_typedef", LibDumpSystemTypeDefs(rootSystem))>
+  %endif
+  
+  %% ============================================================================
+  %% Tunable Parameters
+  %%
+  %openfile tunableParametersBuffer
+  %if !SLibPrmBufferIsEmpty("SfcnTunable", "Decl")
+    
+    /*
+    * Tunable Parameters
+    *
+    * Note: Tunable parameters with Auto storage class are treated as S-Function
+    * parameters in the generated S-Function Target.  The generated 
+    * s-function will declare them as parameters and verify correct data 
+    * types/sizes are maintained.  The parameters are propagated to nested
+    * non-inlined S-Functions
+    *
+    */
+    %% S-Function target must guard against redefinition of constant signals
+    %if CodeFormat == "S-Function"
+      #if !defined(RTW_GENERATED_SFCN_TUNABLE_PRMS_%<Name>)
+      %<SLibGetPrmBuffer("SfcnTunable", "Decl")>\
+      #endif /* RTW_GENERATED_SFCN_TUNABLE_PRMS_%<Name> */
+    %else 
+      %<SLibGetPrmBuffer("SfcnTunable", "Decl")>\
+    %endif
+  %endif
+  %closefile tunableParametersBuffer
+
+  %<SLibCacheCodeToFile("mdl_priv_data_typedef", tunableParametersBuffer)>
+
+  %% For constant parameters that are shared, write defines. These buffers will only 
+  %% contain constants accessed by this model, and outside of shared functions.
+  %if !SLibPrmBufferIsEmpty("UnstructuredConstant", "ExternDecl")
+    %openfile tmpBuff
+    %<SLibGetPrmBuffer("UnstructuredConstant", "ExternDecl")>
+    %closefile tmpBuff
+    %<SLibCacheCodeToFile("mdl_priv_constParam_macro_define", tmpBuff)>
+  %endif
+
+  %if !SLibPrmBufferIsEmpty("UnstructuredConstant", "MacroDecl")
+    %openfile tmpBuff
+    %<SLibGetPrmBuffer("UnstructuredConstant", "MacroDecl")>
+    %closefile tmpBuff
+    %<SLibCacheCodeToFile("mdl_priv_constParam_macro_define", tmpBuff)>
+  %endif
+  
+  %% Constant block parameters (Macro declaration)
+  %if !SLibPrmBufferIsEmpty("Const", "MacroDecl")
+    %assign cpDefs = SLibGetPrmBuffer("Const", "MacroDecl")
+    %% S-Function target must guard against redefinition of constant parameters
+    %if CodeFormat == "S-Function"
+      %assign tmpDefs = cpDefs
+      %openfile cpDefs
+      #if !defined(RTW_GNERATED_SFCN_NOT_PRIVATE_%<Name>)
+      %<tmpDefs>\
+      #endif /* RTW_GNERATED_SFCN_NOT_PRIVATE_%<Name> */
+      %closefile cpDefs
+      %undef tmpDefs
+    %endif
+    %<SLibCacheCodeToFile("mdl_priv_constParam_macro_define", cpDefs)>
+  %endif
+  
+ 
+  %% ============================================================================
+  %% Imported Extern Signals
+  %%
+  %openfile importedExternSignalsBuffer
+  %if !SLibImportedExternSignalsIsEmpty()
+    
+    /* Imported (extern) block signals */
+    %<SLibDumpImportedExternSignalsDefinition()>\
+  %endif
+  %closefile importedExternSignalsBuffer
+  
+  %<SLibCacheCodeToFile("data_importedData_decl", ...
+    importedExternSignalsBuffer)>
+
+  %% ============================================================================
+  %% Imported Extern Pointer Signals
+  %%
+  %openfile importedExternPointerSignalsBuffer
+  %if !SLibImportedExternPointerSignalsIsEmpty()
+    
+    /* Imported (extern) pointer block signals */
+    %<SLibDumpImportedExternPointerSignalsDefinition()>\
+  %endif
+  %closefile importedExternPointerSignalsBuffer
+  %<SLibCacheCodeToFile("data_importedData_decl", importedExternPointerSignalsBuffer)>
+
+  %if CodeFormat != "S-Function" || Accelerator
+  %% ===========================================================================
+  %% Imported Extern DWork
+  %%
+  %openfile importedExternDWorkBuffer
+  %if !SLibImportedExternDWorkIsEmpty()
+    
+    /* Imported (extern) states */
+    %<SLibDumpImportedExternDWorkDefinition()>\
+  %endif
+  %closefile importedExternDWorkBuffer
+  
+  
+  %% ===========================================================================
+  %% Imported Extern Pointer DWork
+  %%
+  %openfile importedExternPointerDWorkBuffer
+  %if !SLibImportedExternPointerDWorkIsEmpty()
+    
+    /* Imported (extern) pointer states */
+    %<SLibDumpImportedExternPointerDWorkDefinition()>\
+  %endif
+  %closefile importedExternPointerDWorkBuffer
+%endif
+
+%% Extern data
+%if CodeFormat != "S-Function" || Accelerator
+  %<SLibCacheCodeToFile("data_importedData_decl", importedExternDWorkBuffer)>
+  %<SLibCacheCodeToFile("data_importedData_decl", importedExternPointerDWorkBuffer)>
+%endif
+
+%% ============================================================================
+%% Imported extern parameters
+%%
+%openfile importedExternParametersBuffer
+%if !SLibPrmBufferIsEmpty("ImportedExtern", "Decl")
+
+  /* Imported (extern) block parameters */
+  %<SLibGetPrmBuffer("ImportedExtern", "Decl")>\
+%endif
+%closefile importedExternParametersBuffer
+
+
+%% ============================================================================
+%% Imported extern pointer parameters
+%%
+%openfile importedExternPointerParametersBuffer
+%if !SLibPrmBufferIsEmpty("ImportedExternPointer", "Decl")
+
+  /* Imported (extern) pointer block parameters */
+  %<SLibGetPrmBuffer("ImportedExternPointer", "Decl")>\
+%endif
+%closefile importedExternPointerParametersBuffer
+
+%<SLibCacheCodeToFile("data_importedData_decl", importedExternParametersBuffer)>
+%<SLibCacheCodeToFile("data_importedData_decl", importedExternPointerParametersBuffer)>
+
+%openfile tmpBuf
+%<LibDumpExternsCache()>\
+%closefile tmpBuf
+%<SLibCacheCodeToFile("custom_blockTypeSetup_extern_data_decl", tmpBuf)>
+
+%% Extern functions
+%openfile sysPrototypesBuf
+%<LibDumpSystemPrototype(rootSystem)>\
+%foreach sysIdx = ::CompiledModel.NumSystems
+  %assign aSys = ::CompiledModel.System[sysIdx]
+  %if LibIsServer(aSys) && (!LibIsGlobalServer(aSys)) && (!SLibIsModelScopedServer(aSys))
+    %% Must be private SLFcn. Needs to go to model_private.h
+    %<LibDumpSystemPrototype(aSys)>\ 
+  %elseif SLibIsModelScopedServer(aSys)
+    %% Model scoped SLFcns need to go to model.h
+    %openfile modelScopedSLFcnBuff
+    %<LibDumpSystemFcnPrototype(aSys)>
+    %closefile modelScopedSLFcnBuff
+    %<SLibCacheSystemCodeToFile("sys_fcn_decl", aSys, modelScopedSLFcnBuff)>
+  %endif
+%endforeach
+%closefile sysPrototypesBuf
+%openfile tmpBuf
+%<LibDumpFunctionPrototypesCache()>\
+%closefile tmpBuf
+%<SLibCacheCodeToFile("custom_blockTypeSetup_fcn_prototype", tmpBuf)>
+
+%if ::CompiledModel.ConfigSet.GenerateTestInterfaces
+  %<SLibCacheCodeToFile("sf_machine_public_extern_data_decl", sysPrototypesBuf)>
+%else
+  %<SLibCacheCodeToFile("mdl_priv_fcn_decl", sysPrototypesBuf)>
+%endif
+
+%% To generate standalone headers, include model.h as well
+%% but only if we have a reusable function in which we pass
+%% data structures like external I/O or block IO etc.
+%if !ISEMPTY(sysPrototypesBuf)
+  %assign modelHeaderFileName = SLibGetFileNameForCode("mdl_hdr")
+  %openfile headerBuffer
+    #include "%<modelHeaderFileName>.h"
+  %closefile headerBuffer
+  %<SLibCacheCodeToFile("mdl_priv_hdr_incl", headerBuffer)>
+%endif
+    
+%openfile ertPrivateExternsBuffer
+%if (SLibIsERTCodeFormat()) && (NumContStates > 0) && !IsModelReferenceTarget()
+  /* private model entry point functions */
+  %%  
+  %<SLibGetFcnMemSecPragmaOnDecl("%<Name>_derivatives", "MemSecFuncExecute", "Pre")>\
+  %<LibExternInFcnDecls()>void \
+  %<Name>_derivatives(%<SLibModelFcnArgs("Derivative",TLC_FALSE,"")>);
+  %<SLibGetFcnMemSecPragmaOnDecl("%<Name>_derivatives", "MemSecFuncExecute", "Post")>\
+%endif
+%closefile ertPrivateExternsBuffer
+%<SLibCacheCodeToFile("mdl_priv_fcn_decl", ertPrivateExternsBuffer)>
+
+%% ============================================================================
+%% Single/Multitasking error checks
+%%
+%openfile rtwCompilerErrorsBuffer
+%switch CodeFormat
+  %case "RealTime"
+    %% Check for illegal multitasking transition
+    %<LibCheckForValidMTaskDefine()>\
+    %break
+  %case "S-Function"
+    %if !Accelerator
+      %if SolverType == "FixedStep"
+	%if (FixedStepOpts.SolverMode == "SingleTasking") && (NumRuntimeExportedRates > 1)
+	  %% Building s-function as SingleTasking so check that
+	  %% MultiTasking mode is not later used.
+	  %<LibCheckForValidMTaskDefine()>\
+	%endif
+      %endif
+    %endif
+    %break
+  %default
+    %break
+%endswitch
+%closefile rtwCompilerErrorsBuffer
+
+%% Compiler errors
+%if !WHITE_SPACE(rtwCompilerErrorsBuffer)
+  %<SLibCacheCodeToFile("mdl_priv_compilerErrorCheck", rtwCompilerErrorsBuffer)>
+%endif
+
+%endif %% _FORMATPRIVATE_

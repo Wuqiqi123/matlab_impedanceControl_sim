@@ -1,0 +1,503 @@
+%% ============================================================================
+%% File : paralleldeploymentlib.tlc
+%%
+%% Abstract:
+%%   This is the system library file for target customization of code 
+%%   generation for a parallel deployment diagram.
+%%
+%% 
+%% Copyright 2010-2014 The MathWorks, Inc.
+%%
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PARALLELDEPLOYMENTLIB_") == 0
+%assign _PARALLELDEPLOYMENTLIB_ = 1
+%endif %% __PARALLELDEPLOYMENTLIB_
+
+%% =============================================================================
+%% Public functions
+%% =============================================================================
+
+%% LibDeploymentGetNumTaskGroups ===============================================
+%% Abstract:
+%%   Get the number of task groups that have been created.
+%%
+%% Call syntax:
+%%   %assign numTaskGroups = LibDeploymentGetNumTaskGroups()
+%%
+%% Returns:
+%%   Returns the number of task groups (Number).
+%%
+%function LibDeploymentGetNumTaskGroups() void
+  %return ::CompiledModel.NumEventHandlers
+%endfunction
+
+
+%% LibDeploymentGetTaskGroup ===================================================
+%% Abstract:
+%%   Returns the record of task group %<tgIdx>.
+%%
+%% Call syntax:
+%%   %assign tg = LibDeploymentGetTaskGroup(tgIdx)
+%%
+%function LibDeploymentGetTaskGroup(tgIdx) void
+  %return ::CompiledModel.EventHandler[tgIdx]
+%endfunction
+
+
+%% LibDeploymentGetTask ========================================================
+%% Abstract:
+%%   Returns the record of task %<tIdx> of task group %<tgIdx>.
+%%
+%% Call syntax:
+%%   %assign tg = LibDeploymentGetTask(tIdx, tgIdx)
+%%
+%function LibDeploymentGetTask(tIdx, tgIdx) void
+  %return ::CompiledModel.EventHandler[tgIdx].Task[tIdx]
+%endfunction
+
+
+%% LibDeploymentCallTaskFunction ===============================================
+%% Abstract:
+%%   Emits a call to task %<tIdx> of task group %<tgIdx>
+%%
+%% Call syntax:
+%%   %assign buffer = LibDeploymentCallTaskFunction(tIdx, tgIdx)
+%%
+%function LibDeploymentCallTaskFunction(tIdx, tgIdx) void
+  %return SLibDeploymentEmitCallTaskFunction(tIdx, tgIdx)
+%endfunction
+
+
+%% LibDeploymentCallAdvanceTaskCounters ========================================
+%% Abstract:
+%%   Emits a call to AdvanceTaskCounters function
+%%
+%% Call syntax:
+%%   %assign buffer = LibDeploymentCallAdvanceTaskCounters()
+%%
+%function LibDeploymentCallAdvanceTaskCounters() void
+  %assign rootSystem = System[NumSystems-1]
+  %openfile tmpBuf
+  %if !LibIsSingleRateSystem(rootSystem)
+    %<SLibDeploymentSchedulerName()>();
+  %endif
+  %closefile tmpBuf
+  %return tmpBuf
+%endfunction
+
+%% SLibDeploymentGetEventHandlerType ============================================
+%% Abstract:
+%%   Returns the periodicity type for an event handler
+%function SLibDeploymentGetEventType(ehId) void
+  %return ::CompiledModel.EventHandler[ehId].Periodicity.Type
+%endfunction
+
+%% SLibDeploymentGetEventHandlerName ============================================
+%% Abstract:
+%function SLibDeploymentGetEventHandlerName(ehId)
+  %return ::CompiledModel.EventHandler[ehId].Name
+%endfunction
+
+%% SLibDeploymentGetTaskName ===================================================
+%% Abstract:
+%function SLibDeploymentGetTaskName(ehId, taskId)
+  %if ISFIELD(::CompiledModel.EventHandler[ehId].Task[taskId], "Name")
+    %assign retVal = ::CompiledModel.EventHandler[ehId].Task[taskId].Name
+  %else
+    %assign retVal = ""
+  %endif
+  %return retVal
+%endfunction
+
+%% LibDeploymentGetEventHandlerTargetObject() =====================================
+%% Abstract:
+%function SLibDeploymentGetEventHandlerTargetObject(ehId) 
+  %if ISFIELD(::CompiledModel.EventHandler[ehId], "TargetObject")
+    %return ::CompiledModel.EventHandler[ehId].TargetObject
+  %else
+    %return ""
+  %endif
+%endfunction  
+
+%% SLibDeploymentGetEventHandlerType() =====================================
+%% Abstract:
+%function SLibDeploymentGetEventHandlerType(ehId) 
+  %if ISEQUAL(::CompiledModel.EventHandler[ehId].NumTasks, 0) && ...
+    !ISEQUAL(::CompiledModel.EventHandler[ehId].NumEntryPointInfos, 0)
+    %assign ehType = "isr"
+  %elseif !ISEQUAL(::CompiledModel.EventHandler[ehId].NumTasks, 0) && ...
+    ISEQUAL(::CompiledModel.EventHandler[ehId].NumEntryPointInfos, 0)
+    %assign ehType = "task"
+  %else  
+    %assign errTxt = "Mapping to both event handler and task is not supported"
+    %<LibReportError(errTxt)>
+  %endif
+  %return ehType
+%endfunction  
+
+%% SLibDeploymentEmitCallToEventHandlerTask =====================================
+%% Abstract:
+%function SLibDeploymentEmitCallToEventHandlerTask(ehIdx, taskIdx)
+  %assign tg     = ::CompiledModel.EventHandler[ehIdx]
+  %assign retVal = "%<tg.Task[taskIdx].FunctionName>();"       
+  %return retVal
+%endfunction
+
+%% SLibDeploymentbEmitCallToEventHandler =========================================
+%% Abstract:
+%function SLibDeploymentEmitCallToEventHandler(ehIdx)
+  %assign tg     = ::CompiledModel.EventHandler[ehIdx]
+  %assign retVal = ""
+  %if !ISEQUAL(tg.NumEntryPointInfos, 0)  
+    %assert !WHITE_SPACE(tg.OutputWrapperFcn)
+    %assign retVal ="%<tg.OutputWrapperFcn>();"
+    %if !WHITE_SPACE(tg.UpdateWrapperFcn)
+      %assign retVal = retVal + "%<tg.UpdateWrapperFcn>();"
+    %endif
+  %endif
+  %return retVal
+%endfunction  
+  
+%% SLibDeploymentbEmitCallToEventHandler =========================================
+%% Abstract:
+%function SLibDeploymentGetNumEventHandlerTasks(ehIdx)
+  %assign retVal = ::CompiledModel.EventHandler[ehIdx].NumTasks
+  %return retVal
+%endfunction  
+  
+%% SLibDeploymentGetTaskSampleTimeIndex =========================================
+%% Abstract:
+%function SLibDeploymentGetTaskSampleTimeIndex(ehIdx, taskId)
+  %assign stId = -1
+  %assign eventHandler = ::CompiledModel.EventHandler[ehIdx]
+  %if ISEQUAL(eventHandler.Periodicity.Type, "PeriodicTrigger")
+    %assign period = eventHandler.Task[taskId].Period
+    %foreach st = NumSampleTimes
+      %if ISEQUAL(::CompiledModel.SampleTime[st].PeriodAndOffset[0], period)
+        %assign stId = st
+        %break %% break foreach
+      %endif
+    %endforeach
+  %endif
+  %return stId
+%endfunction
+
+%% SLibDeploymentGetTaskCoreAffinity ===========================================
+%% Abstract:
+%function SLibDeploymentGetTaskCoreAffinity(ehIdx, taskId)
+  %assign affinity = -1
+  %assign eventHandler = ::CompiledModel.EventHandler[ehIdx]
+  %if ISEQUAL(eventHandler.Periodicity.Type, "PeriodicTrigger")
+    %assign affinity = eventHandler.Task[taskId].Affinity
+    %if ISEMPTY(affinity)
+      %assign affinity = -1
+    %elseif SIZE(affinity,1) == 1
+      %assign affinity = affinity[0]
+    %endif
+  %endif
+  %return affinity
+%endfunction
+
+%% SLibDeploymentGetTaskSchedulingConstraint ===================================
+%% Abstract:
+%function SLibDeploymentGetTaskSchedulingConstraint(ehIdx, taskId)
+  %return ::CompiledModel.EventHandler[ehIdx].Task[taskId].SchedulingConstraint
+%endfunction
+
+%% SLibDeploymentDeclareTaskNamesArray =========================================
+%% Abstract: 
+%%    Helper function to declare an array of task names used when creating the 
+%%    profile report
+%function SLibDeploymentDeclareTaskNamesArray(numPeriodicMappedEntities)
+  %assign comma   = "" 
+  %openfile retBuf 
+  const char *taskNames[%<numPeriodicMappedEntities>] = {
+  %% First, add names of periodic tasks
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)  
+    %if ISEQUAL(evType, "PeriodicTrigger")  
+      %foreach taskIdx = LibGetNumTriggerTasks(ehIdx)   
+        %if ISEMPTY(LibGetTaskName(ehIdx,taskIdx))  
+          %assign task = LibDeploymentGetTask(taskIdx, ehIdx)
+          %<comma>"%<task.FunctionName>"
+        %else
+          %<comma>"%<LibGetTaskName(ehIdx,taskIdx)>"
+        %endif
+        %assign comma = ","
+      %endforeach 
+    %endif
+  %endforeach
+  
+  %% Then, add names of periodic triggers
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)  
+    %if ISEQUAL(evType, "PeriodicTrigger")  
+      %if ISEQUAL(LibGetNumTriggerTasks(ehIdx), 0)
+        %<comma>"%<LibGetTriggerName(ehIdx)>"
+        %assign comma = ","
+      %endif
+    %endif
+  %endforeach
+  }; 
+  
+  %assign comma   = "" 
+  int isSynthesizedTask[%<numPeriodicMappedEntities>] = {   
+  %% First, add synthesized flag for periodic tasks 
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)  
+    %if ISEQUAL(evType, "PeriodicTrigger")  
+      %foreach taskIdx = LibGetNumTriggerTasks(ehIdx)   
+        %if ISEMPTY(LibGetTaskName(ehIdx,taskIdx))
+          %<comma>1
+        %else
+          %<comma>0
+        %endif
+        %assign comma = ","
+      %endforeach 
+    %endif
+  %endforeach
+
+  %% Then, add synthesized flag for periodic triggers 
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)  
+    %if ISEQUAL(evType, "PeriodicTrigger")   
+      %if ISEQUAL(LibGetNumTriggerTasks(ehIdx), 0) 
+        %% PeriodicTrigger triggers cannot be synthesized
+        %<comma>0 
+        %assign comma = ","
+      %endif
+    %endif
+  %endforeach
+  }; 
+  
+  %assign comma   = "" 
+  const char *parentTriggerNames[%<numPeriodicMappedEntities>] = {
+  %% First, add name of parent triggers for tasks
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)  
+    %if ISEQUAL(evType, "PeriodicTrigger")  
+      %foreach taskIdx = LibGetNumTriggerTasks(ehIdx)   
+        %if ISEMPTY(LibGetTaskName(ehIdx,taskIdx))  
+          %assign task = LibDeploymentGetTask(taskIdx, ehIdx)
+          %<comma>""
+        %else
+          %<comma>"%<LibGetTriggerName(ehIdx)>"
+        %endif
+        %assign comma = ","
+      %endforeach 
+    %endif
+  %endforeach
+  
+  %% Then, add empty strings for periodic triggers
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)  
+    %if ISEQUAL(evType, "PeriodicTrigger")  
+      %if ISEQUAL(LibGetNumTriggerTasks(ehIdx), 0)
+        %<comma>""
+        %assign comma = ","
+      %endif
+    %endif
+  %endforeach
+  };
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%% SLibDeploymentDeclareSampleTimeHitIndexArrayForProfiling ====================
+%% Abstract: 
+%%    Helper function to declare an array of sample time indexes for periodic 
+%%    mapped entities
+%function  SLibDeploymentDeclareSampleTimeHitIndexArrayForProfiling()
+  %% Declare list of sample time indexes for tasks
+  %assign initStr = ""
+  %assign comma   = ""
+  %assign numPeriodicEntities = 0
+  
+  %% First add the sample time indexes for tasks
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)
+    %if ISEQUAL(evType, "AperiodicTrigger")
+      %continue
+    %endif
+    %assign nTasks = LibGetNumTriggerTasks(ehIdx)
+    %foreach taskIdx = nTasks
+      %assign baseRateTid = 1-LibGetTID01EQ()    
+      %assign stId = LibGetTriggerTaskSampleTimeIndex(ehIdx, taskIdx) 
+      %assign taskTickId = FcnComputeTaskTickLimit(stId)
+      %assign initStr = initStr +"%<comma>%<taskTickId>"
+      %assign comma = ","  
+    %endforeach
+    %assign numPeriodicEntities = numPeriodicEntities + nTasks
+  %endforeach
+  
+  %% Then add the sample time indexes for periodic triggers
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)
+    %if ISEQUAL(evType, "AperiodicTrigger")
+      %continue
+    %endif
+    %if ISEQUAL(LibGetNumTriggerTasks(ehIdx), 0)
+      %assign triggerRate = LibGetTriggerBaseRate(ehIdx)  
+      %assign stepSize = FundamentalStepSize
+      
+      %% Currently, sample time parameterization does not support periodic triggers for concurrent
+      %% execution.      
+      %assert !SLibModelParameterizeDiscreteRates()
+      
+      %if ISEQUAL(triggerRate, stepSize)
+        %assign taskTickId = 1
+      %else
+        %assign taskTickId = triggerRate/stepSize + 0.5
+        %assign taskTickId = CAST("Number",FEVAL("floor", taskTickId))
+      %endif
+      %assign initStr = initStr +"%<comma>%<taskTickId>"
+      %assign comma = ","
+      %assign numPeriodicEntities = numPeriodicEntities + 1
+    %endif
+  %endforeach
+  
+  %openfile retBuf
+  int sthId[%<numPeriodicEntities>] = {%<initStr>};  
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%% SLibDeploymentWriteProfilingDataToHtml ======================================
+%% Abstract: 
+%%    Helper function to generate function which write the profiling data to html
+%function SLibDeploymentWriteProfilingDataToHtml(numPeriodicMappedEntities, isWin)
+  %assign periodicTriggerName= ""
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)
+    %if ISEQUAL(evType, "PeriodicTrigger")  
+      %assign periodicTriggerName = LibGetTriggerName(ehIdx)
+      %break
+    %endif
+  %endforeach
+  %assign baseRateTid = LibGetTID01EQ()
+  %assign doublePercentage = "%%"
+  %assign unitSec = "microseconds"
+ 
+  %assign MATLAB_ROOT_TMP = FEVAL("matlabroot")
+  %assign MATLAB_ROOT = FEVAL("strrep", MATLAB_ROOT_TMP, "\\", "/")
+  %assign PATH_SEP = "/" 
+  %assign isMac = FEVAL("ismac")
+
+  %openfile retBuf 
+  void writeProfileDataToHTMLFile(void) {
+    FILE *fptr;
+    int i, j, numCores;
+    time_t timeVar;  
+    char timeStr[32];
+    char comma; 
+    %if isWin
+    LARGE_INTEGER ul;
+    SYSTEM_INFO sysinfo; 
+    %endif
+    %if isMac
+    mach_timebase_info_data_t timebase;
+    mach_timebase_info(&timebase);
+    double conversion_factor = (double)timebase.numer / (double)timebase.denom;
+    %endif
+    
+    %<SLibDeploymentDeclareTaskNamesArray(numPeriodicMappedEntities)>     
+    %<SLibDeploymentDeclareSampleTimeHitIndexArrayForProfiling()>  
+    
+    %if isWin
+    CHECK_STATUS(QueryPerformanceFrequency(&ul) == %<GET_TYPE_ID_REPLACEMENT("false")>,"QueryPerformanceFrequency"); 
+    GetSystemInfo(&sysinfo);
+    numCores = sysinfo.dwNumberOfProcessors;  
+    %else
+    numCores = sysconf(_SC_NPROCESSORS_ONLN);
+    %endif
+    
+    if ((fptr=fopen("%<FcnMdlName()>_ProfileReport.html","w")) == NULL) {
+      (void)fprintf(stderr,"*** Error opening profileData.m");
+      return;
+    }
+    
+    %assign CSS_PATH = "%<MATLAB_ROOT>%<PATH_SEP>toolbox%<PATH_SEP>simulink%<PATH_SEP>simulink%<PATH_SEP>+Simulink%<PATH_SEP>+SoftwareTarget%<PATH_SEP>profiling.css"
+    
+    fprintf(fptr, "<!DOCTYPE html>\n<html>\n");
+    fprintf(fptr, "<link rel=\"stylesheet\" type = \"text/css\" href = \"file:%<PATH_SEP>%<PATH_SEP>%<PATH_SEP>%<CSS_PATH>\"/>\n");
+    
+    %% Remove trailing newline from representation of time
+    timeVar = time(NULL);
+    sprintf(timeStr, "%s", ctime(&timeVar));
+    timeStr[strlen(timeStr)-1] = 0;
+    %% Dump javascript variables
+    fprintf(fptr, "<script>var data = { \n"...
+      "\"model\":\"%<FcnMdlName()>\",\n"...
+      "\"timeStamp\"      : \"%s\",\n" ...
+      "\"simulationTime\" : %f,\n" ...
+      "\"nCores\"         : %d,\n" ...
+      "\"unitSec\"        : \"%<unitSec>\",\n", ...
+      timeStr, ...
+      (%<::CompiledModel.ConcurrentExecutionProfileNumSamples>-1)*%<LibGetSampleTimePeriodAndOffset(baseRateTid, 0)>, ...
+      numCores);
+
+    fprintf(fptr, "\"tasks\": [");
+    comma = ' ';
+    for (i = 0; i < %<numPeriodicMappedEntities>; i++) {  
+      fprintf(fptr, "%c {\"name\" : \"%s\", \"synthesized\" : %d, \"parentTrigger\" : \"%s\"}", comma, taskNames[i], isSynthesizedTask[i], parentTriggerNames[i]);
+      comma = ',';
+    }
+    fprintf(fptr, "],\n");
+
+    fprintf(fptr, "\"execTimes\": [");
+    comma = ' ';
+    for (i = 0; i < %<numPeriodicMappedEntities>; i++) {
+      char comma2 = ' ';
+      fprintf(fptr, "%c [", comma);  
+      for (j = 0; j < profileData[i].numSamples; j++) {   
+        double locExecTime;
+        %if isWin
+          locExecTime = (profileData[i].endTime[j] - profileData[i].startTime[j])/((double)ul.QuadPart) * 1000000; %% microseconds
+        %elseif isMac 
+          locExecTime = (double)(profileData[i].endTime[j] - profileData[i].startTime[j]) * conversion_factor / 1000; %% nanoseconds
+        %else
+          locExecTime = (double)(profileData[i].endTime[j] - profileData[i].startTime[j]) / 1000; %% microseconds
+        %endif 
+        fprintf(fptr, "%c %f", comma2, locExecTime);
+        comma2 = ',';
+      }
+      fprintf(fptr, "]");
+      comma = ',';
+    }
+    
+    %if !isMac  
+    fprintf(fptr, "],\n");
+    fprintf(fptr, "\"coreIDs\": [");
+    comma = ' ';
+    for (i = 0; i < %<numPeriodicMappedEntities>; i++) {
+      char comma2 = ' ';
+      fprintf(fptr, "%c [", comma);  
+      for (j = 0; j < %<::CompiledModel.ConcurrentExecutionProfileNumSamples>; j++) {
+        if (j % sthId[i] == 0) {
+          int sample = j / sthId[i];
+          if (sample < profileData[i].numSamples) {
+            fprintf(fptr, "%c %d", comma2, profileData[i].coreID[sample]);   
+          } 
+        } else if (j / sthId[i] < profileData[i].numSamples) {   
+          fprintf(fptr, "%c -1", comma2);   
+        }
+        comma2 = ',';
+      }
+      fprintf(fptr, "]");
+      comma = ',';
+    }
+    %endif
+    fprintf(fptr, "]};\n");
+    fprintf(fptr, "</script>\n");
+  
+    %assign JS_PATH = "%<MATLAB_ROOT>%<PATH_SEP>toolbox%<PATH_SEP>simulink%<PATH_SEP>simulink%<PATH_SEP>+Simulink%<PATH_SEP>+SoftwareTarget%<PATH_SEP>concurrentExecutionProfiling.js"
+    fprintf(fptr, "<script type = \"text/javascript\" src = \"file:%<PATH_SEP>%<PATH_SEP>%<PATH_SEP>%<JS_PATH>\">\n");
+    fprintf(fptr, "</script>\n</html>");
+    (void)fclose(fptr); 
+  } 
+  %closefile retBuf
+  %return retBuf
+%endfunction
+%% [EOF] paralleldeploymentlib.tlc

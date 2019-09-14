@@ -1,0 +1,1055 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   Library that holds the functions which determine if certain
+%%   rtModel fields are required for a given model
+%%
+
+%if EXISTS("_RTMISREQFCNS_") == 0
+%assign _RTMISREQFCNS_ = 1
+
+%% Function: RTMAlwaysReqIsReqFcn ==============================================
+%% Abstract:
+%%   This "isRequired" function is used for rtModel fields that are always 
+%%   required.
+%%
+%function RTMAlwaysReqIsReqFcn() void
+  %return TLC_TRUE
+%endfunction %% RTMAlwaysReqIsReqFcn
+
+%% Function: RTMCGTypeReqIsReqFcn ==============================================
+%% Abstract:
+%%   This "isRequired" function always returns false it is meant to act as a
+%%   record placeholder to keep the RTM's cgType fields consistent with the TLC
+%%   record
+%%
+%function RTMNeverReqIsReqFcn() void
+  %return TLC_FALSE
+%endfunction
+
+%% Function: RTMModelPtrsForNonERTIsReqFcn =========================================
+%% Abstract:
+%%   This "isRequired" function is called for various rtModel fields to figure out
+%%   if they are required. In particular, this is used for a handful of fields
+%%   that are only needed in non-ERT format.
+%%
+%function RTMModelPtrsForNonERTIsReqFcn() void
+  %if !SLibIsERTCodeFormat() || GenerateGRTWrapper
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %% RTMModelPtrsForNonERTIsReqFcn
+
+
+%% Function: RTMModelPtrsToInstanceDataIsReqFcn =====================================
+%% Abstract:
+%%   This "isRequired" function is called for various rtModel fields 
+%%   to figure out if they are required. In particular, it is used for
+%%   fields that are pointers to per-instance data. Specifically:
+%%     DWork,BlockIO, ConstBlockIO, DefaultParam, PrevZCSigState,
+%%     ZCSignalValues, ExternalInputs, ExternalOutputs, xpcData
+%%   These pointers are required to support multiple instances of the model, 
+%%   in particular in the case where a function is only passed a 
+%%   pointer to the RT_MODEL (for this instance) and it needs to 
+%%   get at the right instance of one of the above structs.
+%%
+%function RTMModelPtrsToInstanceDataIsReqFcn() void
+  %if RTMModelPtrsToSharedDataIsReqFcn()
+    %return TLC_TRUE
+  %elseif ::GenerateClassInterface
+    %% For C++ Encapsulation, which must be ERT format,
+    %% we don't support the Cross flag and hence never need
+    %% these extra RT_MODEL fields
+    %return TLC_FALSE
+  %else
+    %% Otherwise, we return true if the model is reusable but there
+    %% are non-reusable subsystems. The CrossNoArgFcnBound flag
+    %% is what indicates this, and the AnyCross global indicates
+    %% whether we've seen that flag for any subsystem.
+    %return ::AnyCross
+  %endif
+%endfunction %% RTMModelPtrsToInstanceDataIsReqFcn
+
+%% Function: RTMModelPtrsToSharedDataIsReqFcn =====================================
+%% Abstract:
+%%   This "isRequired" function is called for various rtModel fields 
+%%   to figure out if they are required. In particular, it is used for
+%%   fields that are pointers to shared data. Specifically:
+%%     DefaultParam
+%%   These pointers are required to support multiple instances of the model, 
+%%   in particular in the case where a function is only passed a 
+%%   pointer to the RT_MODEL (for this instance) and it needs to 
+%%   get at the right instance of one of the above structs.
+%%
+%function RTMModelPtrsToSharedDataIsReqFcn() void
+  %if !SLibIsERTCodeFormat() || GenerateGRTWrapper
+    %% Non-ERT formats expect to get BlockIO, DWork, etc, through
+    %% the RTModel, so we return true for these.
+    %return TLC_TRUE
+  %else
+    %% Otherwise, we return false
+    %return TLC_FALSE
+  %endif
+%endfunction %% RTMModelPtrsToInstanceDataIsReqFcn
+
+%function AccessDataUseRTM(sysIdx, fcnType,cross)
+  %if sysIdx != (NumSystems-1) && LibSystemIsReusedFcn(System[sysIdx])
+    %return TLC_FALSE 
+  %elseif ::CompiledModel.HasSimStructVars 
+    %return TLC_TRUE
+  %elseif GenerateClassInterface
+    %return TLC_FALSE
+  %elseif isGRTMallocOnERT() 
+    %return cross || sysIdx != (NumSystems-1)
+  %else
+    %return (cross && MultiInstanceERTCode   )
+  %endif
+%endfunction
+
+%% Function: RTMContTimeErtIsReqFcn ============================================
+%% Abstract:
+%%   Returns true if
+%%    - non-ERT target
+%% OR
+%%    - ERT and there is a continuous TID and not modelref sim target
+%%
+%function RTMContTimeErtIsReqFcn() void
+  %if !SLibIsERTCodeFormat() || GenerateGRTWrapper
+    %return TLC_TRUE
+  %else
+    %if LibIsContinuous(0) && !IsModelReferenceForASimstructBasedTarget()
+      %return TLC_TRUE
+    %else
+      %return TLC_FALSE
+    %endif
+  %endif
+%endfunction %% RTMContTimeErtIsReqFcn
+
+%% Function: RTMContStateErtNoMdlRefIsReqFcn ========================================
+%% Abstract:
+%%   Returns true if
+%%    - non-ERT target
+%% OR
+%%    - ERT with continuous states and not a modelref target.
+%%
+%function RTMContStateErtNoMdlRefIsReqFcn() void
+  %if !SLibIsERTCodeFormat() || GenerateGRTWrapper
+    %return TLC_TRUE
+  %else
+    %if NumContStates > 0 && !IsModelReferenceTarget()
+      %return TLC_TRUE
+    %else
+      %return TLC_FALSE
+    %endif
+  %endif
+%endfunction %% RTMContStateErtNoMdlRefIsReqFcn
+
+
+%% Function: RTMChildSfunctionIsReqFcn =========================================
+%% Abstract:
+%%   This "isRequired" function is used for the 'ChildSfunction' field
+%%
+%function RTMChildSfunctionIsReqFcn() void
+  %if !SLibIsERTCodeFormat() || GenerateGRTWrapper
+    %return TLC_TRUE
+  %else
+    %if RTMNonInlinedSFcnsIsReqFcn()
+      %return TLC_TRUE
+    %else
+      %return TLC_FALSE
+    %endif
+  %endif
+%endfunction %% RTMChildSfunctionIsReqFcn
+
+%function RTMTimingBridgeIsInstanceBased() void
+  %return IsModelReferenceTarget() && ::CompiledModel.OkToMultiInstanceModelref
+%endfunction
+
+
+%% Function: RTMTimingBridgeIsReqFcn =========================================
+%% Abstract:
+%%   This "isRequired" function is used for the 'TimingBridge' field
+%%
+%function RTMTimingBridgeIsReqFcn() void
+  %return RTMTimingBridgeIsInstanceBased() && ::tMdlRefTimingBridgeAccessed || ...
+          (!IsModelReferenceTarget() && MultiInstanceERTCode && ::tMdlRefTimingBridgeAccessed)
+%endfunction %% RTMTimingBridgeIsReqFcn
+
+%% Function: RTMNonInlinedSFcnsIsReqFcn =========================================
+%% Abstract:
+%%   This "isRequired" function is used for the 'NonInlinedSFcns' field. 
+%% Used for either the top model in a hieararchy that contains non-inlined
+%% s-functions, or for any model that directly contains non-inlined s-functions.
+%%
+%function RTMNonInlinedSFcnsIsReqFcn() void 
+  %if ::CompiledModel.NumChildSFunctions > 0 || ...
+    (::CompiledModel.ModelBlocksHaveNonInlinedSfcns && !IsModelReferenceTarget())
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %% RTMNonInlinedSFcnsIsReqFcn
+
+
+%% Function: RTMSolverYIsReqFcn ================================================
+%% Abstract:
+%%   This "isRequired" function is used for the 'Y' field (ERT Continuous)
+%%
+%function RTMSolverYIsReqFcn() void
+  %if !SLibIsERTCodeFormat()
+    %% return false for now
+    %return TLC_FALSE
+  %else
+    %if (NumContStates > 0) && (::CompiledModel.solverOrder > 1) && !IsModelReferenceTarget()
+      %return TLC_TRUE
+    %else
+      %return TLC_FALSE
+    %endif
+  %endif
+%endfunction %% RTMSolverYIsReqFcn
+
+
+%% Function: RTMContainerErtIsReqFcn ===========================================
+%% Abstract:
+%%   This function is called for various rtModel fields to figure out
+%%   if they are required.  This function is for objects that we want to store
+%%   in the RT_Model.  For now, this is integration data, but in the future may
+%%   be Block I/O, Parameters, etc.  This currently is ERT-only fields, as
+%%   ERT and GRT unify, the {RTMContainerErtIsReqFcn, RTMContainerGrtIsReqFcn}
+%%   functions will collapse into one.
+%%
+%function RTMContainerErtIsReqFcn() void
+  %if !SLibIsERTCodeFormat()
+    %return TLC_FALSE
+  %else
+    %if NumContStates > 0 && !IsModelReferenceTarget()
+      %return TLC_TRUE
+    %else
+      %return TLC_FALSE
+    %endif
+  %endif
+%endfunction %% RTMContainerErtIsReqFcn
+
+%% Function: RTMContTimeErtOnlyIsReqFcn ========================================
+%% Abstract:
+%%   This can only be used for Embedded-C code formats.  It returns true if
+%% there is a continuous tid unless it's a modelref sim target.
+%%
+%function RTMContTimeErtOnlyIsReqFcn() void
+  %assert SLibIsERTCodeFormat()
+  %if LibIsContinuous(0) && !IsModelReferenceForASimstructBasedTarget()
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %% RTMContTimeErtOnlyIsReqFcn
+
+%% Function: RTMErrorStatusIsReqFcn ============================================
+%% Abstract:
+%%   This "isRequired" function is used for the error status field
+%%
+%function RTMErrorStatusIsReqFcn() void
+  %return (::CompiledModel.SuppressErrorStatus==1) ? TLC_FALSE : TLC_TRUE
+%endfunction %% RTMErrorStatusIsReqFcn
+
+
+%% Function: RTMErrorStatusMustVolatile ============================================
+%% Abstract:
+%%   Returns true if ErrorStatus must be volatile to prevent aggressive compiler 
+%% optimization. 
+%%
+%function RTMErrorStatusMustVolatile() void
+  %assign retVal =  ConfigSet.IsERTTarget && ...
+    !IsModelReferenceTarget() && ...
+    GenerateSampleERTMain && ...
+    ((TargetOS == "BareBoardExample") || (TargetOS == "NativeThreadsExample")) && ...
+    ::CompiledModel.NumContStates == 0 && !MatFileLogging && !ExtMode && !EXISTS("ForceSimulatedRTOneStep")  %% Not running OneStep
+  
+  %return retVal
+%endfunction %% RTMErrorStatusMustVolatile
+
+%% Function: RTMMdlMthIsReqFcn =================================================
+%% Abstract:
+%%   This function is called for various rtModel model method fields to figure 
+%%   out if they are required.
+%%
+%function RTMMdlMthIsReqFcn() void
+  %if UsingMalloc && GenerateGRTWrapper
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %% RTMMdlMthIsReqFcn
+
+
+%% Function: RTMMdlStopReqIsReqFcn =============================================
+%% Abstract:
+%%   This function is called to determine if the stopRequested field is needed
+%%
+%function RTMMdlStopReqIsReqFcn() void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %return TLC_FALSE
+  %endif
+  %assign retVal = TLC_FALSE %% assume
+  %if CodeFormat == "Embedded-C" && !GenerateGRTWrapper
+    %if (ExtMode || MatFileLogging || RTMStopReqAccessed())
+      %assign retVal = TLC_TRUE
+    %endif
+  %else
+    %assign retVal = TLC_TRUE
+  %endif
+  
+  %return retVal
+%endfunction %% RTMMdlStopReqIsReqFcn
+
+%% Function: RTMNumSampleTimesReqFcn ===========================
+%%
+%%
+%function RTMNumSampleTimesReqFcn() void
+  %return RTMContStateErtNoMdlRefIsReqFcn() || ...
+    RTMChildSfunctionIsReqFcn() || ...
+    (GenerateGRTWrapper && ExtMode)
+%endfunction  %% RTMNumSampleTimesReqFcn
+    
+%% Function: RTMStepSizeIsReqFcn ===============================================
+%% Abstract:
+%%   Is the StepSize field required?
+%% 
+%function RTMStepSizeIsReqFcn() void
+  %assign retVal = TLC_FALSE %% assume
+  %if !SLibIsERTCodeFormat() || GenerateGRTWrapper || ...
+      (MatFileLogging && UsingMalloc && !GenerateSampleERTMain)
+    %assign retVal = TLC_TRUE
+  %endif
+  %return retVal
+%endfunction %% RTMStepSizeIsReqFcn
+
+
+%% Function: RTMStepSizeForTIDIsReqFcn ==================================
+%% Abstract:
+%%   Is the StepSize%<tid> field required?
+%% 
+%function RTMStepSizeForTIDIsReqFcn(tid) void
+  %if IsModelReferenceForASimstructBasedTarget() && (LibIsContinuous(tid) || ...
+    (::CompiledModel.SolverType == "VariableStep" && LibIsZOHContinuous(tid)))
+    %return TLC_FALSE
+  %endif
+  %if !SLibIsERTCodeFormat()
+    %return TLC_FALSE
+  %else
+    %return SampleTime[tid].NeedFloatTime == "yes" ...
+      && !PurelyIntegerCode
+  %endif
+%endfunction %% RTMStepSizeForTIDIsReqFcn
+
+%% Function: RTMIsVarStepSolver ==========================================
+%% Abstract:
+%%   Is the solver variable step?
+%% 
+%function RTMIsVarStepSolver() void
+  %return ::CompiledModel.SolverType == "VariableStep"
+%endfunction %% RTMIsVarStepSolver
+
+%% Function: RTMNeedsNonContDerivSigs ==========================================
+%% Abstract:
+%%   Does the model need to track noncontinuous deriv signals?
+%% 
+%function RTMNeedsNonContDerivSigs() void
+  %return  RTMIsVarStepSolver() && ...
+    IsModelReferenceForASimstructBasedTarget() && ...
+    SolverResetInfo.NumNonContDerivSignals > 0
+%endfunction %% RTMNeedsNonContDerivSigs
+
+%% Function: ClockTickForTIDIsReqFcn =====================================
+%% Abstract:
+%%   Is the ClockTick%<tid> field required in the rtModel?
+%% 
+%function ClockTickForTIDIsReqFcn(tid) void
+  %assign retVal = TLC_FALSE %% assume
+  
+  %if IsModelReferenceForASimstructBasedTarget() && (LibIsContinuous(tid) || ...
+    (::CompiledModel.SolverType == "VariableStep" && LibIsZOHContinuous(tid)))
+    %assign retVal =  TLC_FALSE
+  %elseif ((SLibIsERTCodeFormat()) && (SLibNeedAbsoluteTimeForTID(tid))) || ...
+    ((tid < NumRuntimeExportedRates) && ...
+    ::CompiledModel.ModelBlocksReqClockTicks[tid])
+    %assign retVal = TLC_TRUE
+  %endif
+  
+  %return retVal
+
+%endfunction %% ClockTickForTIDIsReqFcn
+
+%% Function: LongClockTickForTIDIsReqFcn ======================================
+%% Abstract:
+%%   Is the ClockTickH%<tid> field required in the rtModel?
+%% 
+%function LongClockTickForTIDIsReqFcn(tid) void
+  %assign retVal = TLC_FALSE %% assume
+  
+  %if ((SLibIsERTCodeFormat()) && (SLibNeedAbsoluteTimeForTID(tid))...
+    && SLibClockTickIsUnit32Pair(tid)) || ...
+    ((tid < NumRuntimeExportedRates) && ...
+      ::CompiledModel.ModelBlocksReqLongClockTicks[tid])
+    %assign retVal = TLC_TRUE
+  %endif
+  
+  %return retVal
+%endfunction %% LongClockTickForTIDIsReqFcn
+
+
+%function RTMAbsTimeNeedTransProtection(tid)
+  %return  SLibIsERTCodeFormat() && ...
+    ::CompiledModel.SampleTime[tid].Asynchronous == "yes" && ...
+    SLibNeedAbsoluteTimeForTID(tid) && ...
+    ::CompiledModel.SampleTime[tid].TimeSource == "BaseRate" && ...
+    !::CompiledModel.SampleTime[tid].ClockTickDataTypeAtomic
+
+%endfunction
+
+
+%% Function: RTMAbsTimeNeedH2LTrans ========================
+%% Abstract:
+%%   Return true if Embedded-C and this tid is 
+%%     1. asynchronous tid, and
+%%     2. need absolute time, and 
+%%     3. dose not manage own timer, need use 
+%%        timer of fundamental rate, and
+%%     4. has lower priority than fundamental rate.
+%%
+%%   When all of above are true, Absolute time of base rate
+%%   will be read by async task that has lower priority. 
+%%   Time data need trasnfer from High priority task (base rate)
+%%   to low priority task (async rate)
+%function RTMAbsTimeNeedH2LTrans(tid) 
+  %assign retVal = TLC_FALSE %% assume
+  
+  %if  RTMAbsTimeNeedTransProtection(tid) && ...
+    SLibComparePriority(tid, 0) == 2
+    %assign retVal = TLC_TRUE
+  %endif
+  
+  %return retVal
+%endfunction %% RTMAbsTimeNeedH2LTrans
+
+
+%% Function: RTMAbsTimeNeedNoPriorityTrans ========================
+%% Abstract:
+%%   Return true if Embedded-C and this tid is 
+%%     1. asynchronous tid, and
+%%     2. need absolute time, and 
+%%     3. dose not manage own timer, need use 
+%%        timer of fundamental rate, and
+%%     4. no prioirity is assigned 
+%%
+%function RTMAbsTimeNeedNoPriorityTrans(tid) 
+  %assign retVal = TLC_FALSE %% assume
+  
+  %if  RTMAbsTimeNeedTransProtection(tid) && ...
+    SLibComparePriority(tid, 0) == -1
+    %assign retVal = TLC_TRUE
+  %endif
+  
+  %return retVal
+%endfunction %% RTMAbsTimeNeedH2LTrans
+
+
+%% Function: RTMClockTick0H2LIsReqFcn(tid) ======================
+%% Return true if there is the low priority tasks need read
+%% time from base rate task, and ClockTikcDataTypeId of this 
+%% task is not tSS_DOUBLE
+%%
+%function RTMClockTick0H2LIsReqFcn(tid) 
+  %assign retVal = RTMAbsTimeNeedH2LTrans(tid) && ...
+    ::CompiledModel.SampleTime[tid].ClockTickDataTypeId != tSS_DOUBLE
+
+  %return retVal 
+%endfunction %%RTMClockTick0H2LIsReqFcn() 
+
+
+%% Function: RTMContTH2LIsReqFcn(tid) =======================
+%% Return true if there is the low priority tasks need read
+%% time from base rate task, and ClockTikcDataTypeId of this 
+%% task is tSS_DOUBLE
+%%
+%function RTMContTH2LIsReqFcn(tid)
+  %assign retVal = RTMAbsTimeNeedH2LTrans(tid) && ...
+        !SLibConcurrentTasks() && ...
+        ::CompiledModel.SampleTime[tid].ClockTickDataTypeId == tSS_DOUBLE
+  
+  %return retVal 
+%endfunction %%RTMContTH2LIsReqFcn()
+
+
+%% Function: RTMClockTick0DbBufIsReqFcn(tid) ======================
+%%
+%function RTMClockTick0DbBufIsReqFcn(tid) 
+  %assign retVal = RTMAbsTimeNeedNoPriorityTrans(tid) && ...
+    ::CompiledModel.SampleTime[tid].ClockTickDataTypeId != tSS_DOUBLE
+
+  %return retVal 
+%endfunction %%RTMClockTick0DbBufIsReqFcn() 
+
+
+%% Function: RTMContTDbBufIsReqFcn(tid) =======================
+%%
+%function RTMContTDbBufIsReqFcn(tid)
+  %assign retVal = RTMAbsTimeNeedNoPriorityTrans(tid) && ...
+        !SLibConcurrentTasks() && ...
+      ::CompiledModel.SampleTime[tid].ClockTickDataTypeId == tSS_DOUBLE
+  
+  %return retVal 
+%endfunction %%RTMContTDbBufIsReqFcn()
+
+%% Function: RTMAbsTimeNeedL2HTrans ========================
+%% Abstract:
+%%   Return true if Embedded-C and this tid is 
+%%     1. asynchronous tid, and
+%%     2. need absolute time, and 
+%%     3. dose not manage own timer, need use 
+%%        timer of fundamental rate, and
+%%     4. has higher priority than fundamental rate.
+%%
+%%   When all of above are true, Absolute time of base rate
+%%   will be read by async task that has higher priority. 
+%%   Time data need trasnfer from low priority task (base rate)
+%%   to high priority task (async rate)
+%function RTMAbsTimeNeedL2HTrans(tid) 
+  %assign retVal = TLC_FALSE %% assume
+  
+  %if RTMAbsTimeNeedTransProtection(tid) && ...
+    !SLibConcurrentTasks() && ...
+    SLibComparePriority(tid, 0) == 1
+    %assign retVal = TLC_TRUE
+  %endif
+  
+  %return retVal
+%endfunction %% RTMAbsTimeNeedL2HTrans
+
+%% Function: RTMClockTick0L2HIsReqFcn() ======================
+%% Return true if there is any higher priority tasks need read
+%% time from base rate task, and ClockTikcDataTypeId of this 
+%% task is the same as ClockTick0
+%%
+%function RTMClockTick0L2HIsReqFcn() 
+  %assign retVal = TLC_FALSE %% assume
+  
+  %foreach tid = NumSampleTimes
+    %if RTMAbsTimeNeedL2HTrans(tid) && ...
+      ::CompiledModel.SampleTime[tid].ClockTickDataTypeId != tSS_DOUBLE
+      %assign retVal = TLC_TRUE
+      %break
+    %endif
+  %endforeach
+
+  %return retVal 
+%endfunction %%RTMClockTick0L2HIsReqFcn
+
+%% Function: RTMContTL2HIsReqFcn() =======================
+%% Return true if there is any high priority tasks need read
+%% time from base rate task, and ClockTikcDataTypeId of this 
+%% task is tSS_DOUBLE
+%%
+%function RTMContTL2HIsReqFcn()
+  %assign retVal = TLC_FALSE %% assume
+  
+  %foreach tid = NumSampleTimes
+    %if RTMAbsTimeNeedL2HTrans(tid) && ...
+      ::CompiledModel.SampleTime[tid].ClockTickDataTypeId == tSS_DOUBLE
+      %assign retVal = TLC_TRUE
+      %break
+    %endif
+  %endforeach
+      
+  %return retVal 
+%endfunction %%RTMContTL2HIsReqFcn()
+
+
+%% Function: RTMTaskTimeIsReqFcnForTID() ===============================
+%% Abstract:
+%%   Is the TaskTimeForTID# field required?
+%% 
+%function RTMTaskTimeIsReqFcnForTID(tid) void
+  %assert !IsModelReferenceTarget()
+  %assign retVal = TLC_FALSE %% assume
+  %if SLibIsERTCodeFormat()
+    %if SampleTime[tid].NeedFloatTime == "yes"
+      %assign retVal = !RTMTimePtrIsReqFcn()
+    %endif
+  %endif
+  
+  %return retVal
+%endfunction %% RTMTaskTimeIsReqFcnForTID
+
+
+%% Function: RTMTFinalIsReqFcn ==============================================
+%% Abstract:
+%%   Is the TFinal field required?
+%% 
+%function RTMTFinalIsReqFcn() void
+  %return (RTMTUseStopTimeAsTFinal() || (NumChildSFunctions > 0))
+
+%endfunction %% RTMTFinalIsReqFcn
+
+%% Function: RTMTUseStopTimeAsTFinal =======================
+%% Abstract:
+%%    Is the TFinal field honors stop time. 
+%%    The logic is Similar with RTMTFinalIsReqFcn, except that
+%%    non-inlined sfcn function won't force honoring stop time
+%%
+%function RTMTUseStopTimeAsTFinal() void 
+  %assign retVal = TLC_FALSE
+  
+  %if !IsModelReferenceTarget()
+    %if SLibIsERTCodeFormat()
+      %assign retVal =  GenerateGRTWrapper || ...
+        MatFileLogging || (ExtMode && !PurelyIntegerCode)
+    %else
+      %assign retVal = TLC_TRUE
+    %endif
+  %endif
+  %return retVal
+%endfunction %% RTMTUseStopTimeAsTFinal
+  
+%% Function: RTMFirstInitCondFlagIsReqFcn ======================================
+%% Abstract:
+%%   Is the FirstInitCondFlag field required?
+%% 
+%function RTMFirstInitCondFlagIsReqFcn() void
+  %if IsModelReferenceTarget() || (UsingMalloc && GenerateGRTWrapper)
+    %return TLC_FALSE
+  %endif
+  
+  %assign retVal = TLC_FALSE %% assume
+  %if (SLibIsERTCodeFormat()) 
+     %if SLibGetIsFirstInitCondAccessed()
+      %assign retVal = TLC_TRUE
+    %endif
+  %endif
+  
+  %return retVal
+%endfunction %% RTMFirstInitCondFlagIsReqFcn
+
+
+%% Function: RTMTaskCountersIsReqFcn ===========================================
+%% Abstract:
+%%   Are some of the multirate ERT timing fields required?
+%% 
+%function RTMTaskCountersIsReqFcn() void
+  %if IsModelReferenceTarget() || SLibIsExportFcnDiagram()
+    %return TLC_FALSE
+  %endif
+  %assign retVal = TLC_FALSE %% assume
+ 
+  %if SLibIsERTCodeFormat() && ...
+    (LibIsDeploymentDiagram() || ...
+     (!LibIsDeploymentDiagram() && (LibNumDiscreteSampleTimes() > 1 || ::CompiledModel.NumControllableSampleTimes > 0)))
+     %assign retVal = !::CompiledModel.SuppressMultiTaskScheduler || ...
+       !(InlineSetEventsForThisBaseRateFcn || SuppressSetEventsForThisBaseRateFcn) || ...
+       (!GenerateSampleERTMain && !SLibAutosarActive()) || ...
+       GenerateGRTWrapper || SLibConcurrentTasks() || ...
+       ::CompiledModel.NumControllableSampleTimes > 0
+  %endif
+
+  %return retVal
+%endfunction %% RTMERTMultiRateIsReqFcn
+
+%% Function: RTMCtrlRateMdlRefTimingIsReqFcn ===========================================
+%% Abstract:
+%%   Is CtrlRateMdlRefTiming required?
+%%
+%function RTMCtrlRateMdlRefTimingIsReqFcn() void
+  %assign retVal = TLC_FALSE %% assume
+  %if !IsModelReferenceTarget() && ...
+      SLibIsERTCodeFormat() && ... 
+      !LibIsDeploymentDiagram()
+      %assign retVal = (::CompiledModel.ContainsModelBlockWithCtrlRate == "yes")    
+  %endif  
+  %return retVal
+%endfunction %% RTMCtrlRateMdlRefTimingIsReqFcn  
+
+%% Function: RTMCtrlRateMdlRefTimingIsReqFcn ===========================================
+%% Abstract:
+%%   Is the pointer to CtrlRateMdlRefTiming required?
+%%
+%function RTMCtrlRateMdlRefTimingPtrIsReqFcn() void
+  %assign retVal = TLC_FALSE %% assume
+  %if IsModelReferenceRTWTarget()
+    %assign retVal = SLibModelHasControllableRate()
+  %endif  
+  %return retVal
+%endfunction %% RTMCtrlRateMdlRefTimingPtrIsReqFcn
+
+%% Function: RTMCtrlRateNumTicksToNextHitIsReqFcn ===========================================
+%% Abstract:
+%%   Is CtrlRateNumTicksToNextHit required?
+%%
+%function RTMCtrlRateNumTicksToNextHitIsReqFcn() void  
+  %return SLibModelHasControllableRate() && RTMTaskCountersIsReqFcn()
+%endfunction %% RTMCtrlRateNumTicksToNextHitIsReqFcn 
+
+%% Function: RTMERTPerTaskSampleHitsIsReqFcn ===================================
+%% Abstract:
+%%   Is the perTaskSampleHits field needed in the rtModel
+%% 
+%function RTMERTPerTaskSampleHitsIsReqFcn() void
+  %if IsModelReferenceTarget() && !SuppressMultiTaskScheduler
+    %return TLC_FALSE
+  %endif
+
+  %return ERTPerTaskSampleHitsIsReqFcn()
+%endfunction %% RTMERTPerTaskSampleHitsIsReqFcn
+
+%% Function: ERTPerTaskSampleHitsIsReqFcn ===================================
+%% Abstract:
+%%   Is the perTaskSampleHits field needed for ERT
+%% 
+%function ERTPerTaskSampleHitsIsReqFcn() void
+  %assign retVal = TLC_FALSE %% assume
+
+  %if (SLibIsERTCodeFormat()) && ...
+    !RootSystemIsSingleRate && !SLibSingleTasking() 
+    %assign retVal = SuppressMultiTaskScheduler ? ...
+      RequireRateInteraction : RequireMultiRateSampleHits
+  %endif
+
+  %return retVal
+%endfunction %% ERTPerTaskSampleHitsIsReqFcn
+
+%% Function: RTMTimePtrIsReqFcn ==================================
+%%
+%%
+%function RTMTimePtrIsReqFcn()
+  %return !IsModelReferenceTarget() && ...
+    ( RTMContTimeErtIsReqFcn() || ...
+      RTMChildSfunctionIsReqFcn() || ...
+      GenerateGRTWrapper )
+%endfunction %% RTMTimePtrIsReqFcn
+
+
+%% Function: RTMLogInfoIsReqFcn ================================================
+%% Abstract:
+%%   Is the loginfo field required?
+%% 
+%function RTMLogInfoIsReqFcn() void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %return TLC_FALSE
+  %endif
+  %assign retVal = TLC_FALSE %% assume
+
+  %if (SLibIsERTCodeFormat())
+    %if MatFileLogging
+      %assign retVal = TLC_TRUE
+    %endif
+  %else
+    %assign retVal = TLC_TRUE
+  %endif
+
+  %return retVal
+%endfunction %% RTMLogInfoIsReqFcn
+
+
+%% Function: RTMExtModeInfoIsReqFcn ============================================
+%% Abstract:
+%%   Is the ext mode field required?
+%% 
+%function RTMExtModeInfoIsReqFcn() void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %return TLC_FALSE
+  %endif
+  %assign retVal = TLC_FALSE %% assume
+
+  %if (SLibIsERTCodeFormat() && !GenerateGRTWrapper) 
+    %if ExtMode == 1
+      %assign retVal = TLC_TRUE
+    %endif
+  %else
+    %assign retVal = TLC_TRUE
+  %endif
+
+  %return retVal
+%endfunction %% RTMExtModeInfoIsReqFcn
+
+%% Function: RTMMappingInfoIsReqFcn ============================================
+%% Abstract:
+%%   Is the mapping info field required?
+%% 
+%function RTMMappingInfoIsReqFcn() void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %return TLC_FALSE
+  %endif
+  %assign retVal = TLC_FALSE %% assume
+
+  %if (SLibIsERTCodeFormat()) && !GenerateGRTWrapper
+    %if ExtMode == 1
+      %assign retVal = TLC_TRUE
+    %endif
+  %else
+    %assign retVal = TLC_TRUE
+  %endif
+
+  %return retVal
+%endfunction %% RTMMappingInfoIsReqFcn
+
+%% Function: RTMDataMapInfoIsReqFcn ===========================================
+%% Abstract:
+%%   Is the Data Map Info substruct required? This substruct is required when 
+%%   generating CAPI for Signal monitoring and Parameter tuning
+%% 
+%function RTMDataMapInfoIsReqFcn() void
+  %return RTWCAPI
+%endfunction
+
+%endif %% _RTMISREQFCNS_
+
+%% Function: RTMMdlRefGlobalTIDIsReqFcn ========================================
+%% Abstract:
+%%   Do we have to declare a GlobalTID variable in the rtModel?  We only do
+%% this if the model has an inherited sample time and code is generated 
+%%  that needed the GlobalTID
+%function RTMMdlRefGlobalTIDIsReqFcn() void
+  %assign retVal = RTMMdlRefGlobalTIDIsInstanceBased() && ...
+    ::tMdlRefGlobalTIDMapAccessed  
+  %return retVal
+  
+%endfunction %% RTMMdlRefGlobalTIDIsReqFcn
+
+%% Function: RTMMdlRefGlobalTIDIsInstanceBased =================================
+%% Abstract:
+%%   Is the global TID map for model reference in the rtModel or a global
+%% variable?  Only non-constant inherited submodels have it in the rtModel.
+%% If nobody accessed the globalTID during code generation, we will not
+%% declare it in either place, see RTMMdlRefGlobalTIDIsReqFcn
+%function RTMMdlRefGlobalTIDIsInstanceBased() void
+  %assign retVal = IsModelReferenceTarget() && ...
+    (::CompiledModel.OkToMultiInstanceModelref || ...
+     ::CompiledModel.MdlRefGlobalTIDMapIsInstanceBased == "yes")
+  %return retVal
+  
+%endfunction %% RTMMdlRefGlobalTIDIsInstanceBased
+
+%% Function: RTMMdlRefTriggerTIDIsReqFcn =======================================
+%% Abstract:
+%%   Did the model access the TriggerTID field during code generation?
+%function RTMMdlRefTriggerTIDIsReqFcn() void
+  %assign retVal =  RTMMdlRefTriggerTIDMayBeRequired() && ...
+    ::tMdlRefGlobalTIDMapAccessed
+  %return retVal
+  
+%endfunction %% RTMMdlRefTriggerTIDIsReqFcn
+
+%% Function: RTMMdlRefTriggerTIDMayBeRequired===================================
+%% Abstract:
+%%   Do we require a TriggerTID to be passed in to this model during model
+%%   reference? This is true only if this model is a root triggered model
+%%   for which the GlobalTID is passed in as '-1'.  If nobody accessed the
+%%   globalTID during code generation, we will not declare it.  See
+%%   RTMMdlReTriggerTIDIsReqFcn to determine if it is actually declared.
+%function RTMMdlRefTriggerTIDMayBeRequired() void
+  %assign retVal = IsModelReferenceTarget() && ...
+    ::CompiledModel.MdlRefTriggerTIDMayBeRequired == "yes"
+  %return retVal
+  
+%endfunction %% RTMMdlRefTriggerTIDMayBeRequired
+
+%% Function: RTMParamIsMallocedIsReqFcn ========================================
+%% Abstract:
+%%   Does the address of the statically declared parameter structure need to be
+%%   saved in rtModel. This is needed for grt_malloc.tlc target to know which
+%%   instance(s) of rtModel are using malloc'ed copies of the structure.
+%function RTMParamIsMallocedIsReqFcn() void
+  %if LibParametersStructIsEmpty() && !GenerateGRTWrapper
+    %return TLC_FALSE  
+  %endif
+  %return isGRTMallocOnERT() && (::CompiledModel.ParametersInRTMForMultiInstanceERT > 0)
+  
+%endfunction %% RTMParamIsMallocedIsReqFcn
+
+%% Function: RTMModelPtrsToDefaultParamIsReqFcn ================================
+%% Abstract:
+%%   Does the address of the statically declared parameter structure need to be
+%%   saved in rtModel. This is conditionally saved for simplified reusable call
+%%   interface and always saved for classic call interface.
+%function RTMModelPtrsToDefaultParamIsReqFcn() void
+  %if SLibGetUseRTMcgType()
+    %return TLC_FALSE
+  %endif
+   %if !LibParametersStructIsEmpty() && !FcnParamsAreGlobalStruct() && ... 
+     !GenerateClassInterface && !SLibUseBackwardCompatibleReusableInterface()
+      %return TLC_TRUE
+   %endif
+   %if FcnParamsAreGlobalStruct()
+     %return RTMModelPtrsToSharedDataIsReqFcn()
+   %else
+     %return RTMModelPtrsToInstanceDataIsReqFcn()
+   %endif
+  
+%endfunction %% RTMModelPtrsToDefaultParamIsReqFcn
+
+%% Function: RTMModelPtrsToConstBlockIOIsReqFcn ================================
+%% Abstract:
+%%   Does the address of the statically declared const blockIO structure need to
+%%   be saved in rtModel. This is always saved for grt_malloc.tlc target.
+%function RTMModelPtrsToConstBlockIOIsReqFcn() void
+  %if SLibGetUseRTMcgType()
+    %return TLC_FALSE
+  %endif
+  %if isGRTMalloc
+      %return TLC_TRUE 
+   %endif
+   %return RTMModelPtrsToInstanceDataIsReqFcn()
+  
+%endfunction %% RTMModelPtrsToConstBlockIOIsReqFcn
+
+%% Function: RTMModelPtrsToBlockIOIsReqFcn ====================================
+%% Abstract:
+%%   Does the address of the statically declared blockIO structure need to be 
+%%   saved in rtModel. This is conditionally saved for simplified reusable call
+%%   interface and always saved for classic call interface.
+%% xxx: Assumes root system
+%function RTMModelPtrsToBlockIOIsReqFcn() void
+  %if SLibGetUseRTMcgType()
+    %return TLC_FALSE
+  %endif
+   %assign rootSystem = System[NumSystems-1]
+   %assign reqInsts   = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+   %if !reqInsts.BlockIOInst && LibGetFieldSet(rootSystem, "HasBlockIOArg") == 1 ...
+     && !LibBlockIOStructIsEmpty() && MultiInstanceERTCode ...
+     && !GenerateClassInterface && !SLibUseBackwardCompatibleReusableInterface()
+     %return TLC_TRUE
+   %endif   
+   %return RTMModelPtrsToInstanceDataIsReqFcn()
+
+%endfunction %% RTMModelPtrsToBlockIOIsReqFcn
+
+%% Function: RTMModelPtrsToPrevZcSigStateIsReqFcn ==============================
+%% Abstract:
+%%   Does the address of the statically declared PrevZCSigState structure need to be 
+%%   saved in rtModel. This is conditionally saved for simplified reusable call
+%%   interface and always saved for classic call interface.
+%% xxx: Assumes root system
+%function RTMModelPtrsToPrevZcSigStateIsReqFcn() void
+  %if SLibGetUseRTMcgType()
+    %return TLC_FALSE
+  %endif
+  %assign rootSystem = System[NumSystems-1]
+   %assign reqInsts   = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+   %if !reqInsts.PrevZCStatesInst && LibGetFieldSet(rootSystem, "HasZCEventArg") == 1 ... 
+     && !LibPrevZCStatesStructIsEmpty() && MultiInstanceERTCode && ...
+       !GenerateClassInterface && !SLibUseBackwardCompatibleReusableInterface()
+     %return TLC_TRUE
+   %endif
+  %return RTMModelPtrsToInstanceDataIsReqFcn()
+  
+%endfunction %% RTMModelPtrsToPrevZcSigStateIsReqFcn
+ 
+%% Function: RTMModelPtrsToZCSignalValuesIsReqFcn ==============================
+%% Abstract:
+%%   Does the address of the statically declared PrevZCSigSigValue structure need to be 
+%%   saved in rtModel. This is conditionally saved for simplified reusable call
+%%   interface and always saved for classic call interface.
+%% xxx: Assumes root system
+%function RTMModelPtrsToZCSignalValuesIsReqFcn() void
+  %if SLibGetUseRTMcgType()
+    %return TLC_FALSE
+  %endif
+  %assign baseSysIdx = GetBaseSystemIdx()   
+   %if LibGetFieldSet(System[baseSysIdx], "HasZCSignalValueArg") && ...
+     !LibZCSignalValueStructIsEmpty() && MultiInstanceERTCode && ...
+     !GenerateClassInterface && !SLibUseBackwardCompatibleReusableInterface()
+      %return TLC_TRUE
+   %endif
+  %return RTMModelPtrsToInstanceDataIsReqFcn()
+  
+%endfunction %% RTMModelPtrsToZCSignalValuesIsReqFcn
+
+
+%% Function: RTMModelPtrsToInputsIsReqFcn ======================================
+%% Abstract:
+%%   Does the address of the statically declared ExternalInputs structure need to be 
+%%   saved in rtModel. This is conditionally saved for simplified reusable call
+%%   interface and always saved for classic call interface.
+%function RTMModelPtrsToInputsIsReqFcn() void
+   %if TYPE(ExternalInputsStructDefn) != "Number" ...
+     && !LibExternalInputsStructIsEmpty() ...
+     && MultiInstanceERTCode && !GenerateClassInterface && ...
+     (::CompiledModel.RootIOFormat == "Part of model data structure")
+     %return TLC_TRUE
+   %elseif (::CompiledModel.NumModelInputs == 0 || ...
+     (TYPE(ExternalInputsStructDefn) != "Number" && LibExternalInputsStructIsEmpty())) && ...
+     SLibIsERTCodeFormat() && !GenerateGRTWrapper
+     %return TLC_FALSE
+   %endif
+  %return RTMModelPtrsToInstanceDataIsReqFcn()
+  
+%endfunction %% RTMModelPtrsToInputsIsReqFcn
+
+%% Function: RTMModelPtrsToOutputsIsReqFcn =====================================
+%% Abstract:
+%%   Does the address of the statically declared ExternalOutputs structure need to be 
+%%   saved in rtModel. This is conditionally saved for simplified reusable call
+%%   interface and always saved for classic call interface.
+%function RTMModelPtrsToOutputsIsReqFcn() void
+   %if TYPE(ExternalOutputsStructDefn) != "Number" ...
+     && !LibExternalOutputsStructIsEmpty() ... 
+     && MultiInstanceERTCode && !GenerateClassInterface && ...
+     (::CompiledModel.RootIOFormat == "Part of model data structure")
+     %return TLC_TRUE
+   %elseif (::CompiledModel.NumModelOutputs == 0 || ...
+      (TYPE(ExternalOutputsStructDefn) != "Number" && LibExternalOutputsStructIsEmpty())) && ...
+      SLibIsERTCodeFormat() && !GenerateGRTWrapper
+     %return TLC_FALSE
+   %endif
+  %return RTMModelPtrsToInstanceDataIsReqFcn()
+  
+%endfunction %% RTMModelPtrsToOutputsIsReqFcn
+
+%% Function: RTMModelPtrsToRootDWorkIsReqFcn ===================================
+%% Abstract:
+%%   Does the address of the statically declared DWork structure need to be 
+%%   saved in rtModel. This is conditionally saved for simplified reusable call
+%%   interface and always saved for classic call interface.
+%function RTMModelPtrsToRootDWorkIsReqFcn() void
+  %if SLibGetUseRTMcgType()
+    %return TLC_FALSE
+  %endif
+  %if !SLibModelDWorkStructIsEmpty() && ...
+    MultiInstanceERTCode && !GenerateClassInterface && ...
+    !SLibUseBackwardCompatibleReusableInterface()
+    %return TLC_TRUE
+  %endif
+  %return RTMModelPtrsToInstanceDataIsReqFcn()
+  
+%endfunction %%  RTMModelPtrsToRootDWorkIsReqFcn
+
+%% Function: RTMModelPtrsToReservedForXPCIsReqFcn ==============================
+%% Abstract:
+%%   Does the address of the xPC data structure need to be saved in rtModel. 
+%%   This is saved only for xPC targets or for targets with classic call interface
+%function RTMModelPtrsToReservedForXPCIsReqFcn() void
+   %if !EXISTS("xPC") || (xPC!=1 && !GenerateGRTWrapper)
+     %return TLC_FALSE  
+   %endif
+   
+   %return RTMModelPtrsToInstanceDataIsReqFcn()
+  
+%endfunction %% RTMModelPtrsToReservedForXPCIsReqFcn
+
+%% Function: RTMMdlRefCPPInstIsReqFcn ========================================
+%% Abstract:
+%%   Does rt_model need to have pointers to C++ model block instance variables
+%%   contained in a non-virtual subsystem.
+%function RTMMdlRefCPPInstIsReqFcn() void
+  %if GenerateClassInterface
+    %return TLC_TRUE  
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %% RTMMdlRefCPPInstIsReqFcn
+
+%% [EOF] rtmisreqfcns.ttlc

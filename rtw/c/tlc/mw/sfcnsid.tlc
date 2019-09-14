@@ -1,0 +1,116 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%   This system file creates model_sid.h for generated S-Function code format
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%% ============================================================================
+%% The S-Function file model_sid.h is created as follows:
+%%
+%% /* File banner */
+%%
+%% {
+%%   #undef _RTW_HEADER_FILE_model_sf_
+%%   #include "model_sf.h"
+%%   
+%%   extern model_Parameters model_DefaultParameters;
+%%   
+%%   {
+%%     Necessary declarations
+%%     Declare accessed SimStruct variables
+%%     
+%%     Decalare and setup local SimStruct
+%%     Non-finite assignments
+%%     Register embedded S-Functions
+%%     Block instance data
+%%     {
+%%       User declarations ..... LibMdlRegCustomCode(buffer, "declaration")
+%%       User entry code ....... LibMdlRegCustomCode(buffer, "execution")
+%%       User exit code ........ LibMdlRegCustomCode(buffer, "trailer")
+%%     }
+%%   }
+%% }
+%%
+%% /* [EOF] model_sid.h */
+
+%if EXISTS("_SFCNSID_") == 0
+%assign _SFCNSID_ = 1
+
+%realformat "CONCISE"
+
+%openfile bannerBuf
+/*
+* %<LibGetModelName()>_sid.h
+*
+%<SLibCommonHeaderInfo()>\
+*
+  %<SLibGenSourcesComment()>
+*/
+%closefile bannerBuf
+%<SLibCacheCodeToFile("sfcnsid_hdr_ban", bannerBuf)>
+%undef bannerBuf
+
+%openfile fcnsBuf
+/* statically allocated instance data for model: %<LibGetModelName()> */
+{
+  %if !LibParametersStructIsEmpty()
+    extern %<::tParametersType> %<::tDefaultParameters>;
+  %endif
+  %if !LibConstBlockIOStructIsEmpty()         
+    %assign qualifiers = ""
+    %if SLibCanConstBlockIOBeConst()
+      %assign qualifiers = "const "
+    %endif
+    extern %<qualifiers> %<::tConstBlockIOType> %<::tInvariantSignals>;
+  %endif
+  {
+    %<SIDLocalSDeclarations>\
+    %<SIDLocalSRegistration>\
+    %%
+    %% Buffer up register code, and declare any accessed simstruct variables
+    %%
+    %openfile tmpBuffer
+    %<LibDumpNonFiniteAssignmentCache()>\
+    %<SIDSFunctionRegistration>\
+    %<SIDBlockInstanceData>\
+    %if !LibRegFcnUserDeclarationIsEmpty()
+      %<"{">
+      %<LibDumpRegFcnUserDeclarationCode()>
+    %endif
+    %<LibDumpRegFcnUserEntryCode()>\
+    %<LibDumpRegFcnUserExitCode()>\
+    %if !LibRegFcnUserDeclarationIsEmpty()
+      %<"}">
+    %endif
+    %closefile tmpBuffer
+    %if !WHITE_SPACE(tmpBuffer)
+      {
+	%<tmpBuffer>\
+      }
+    %endif
+  }
+}
+%closefile fcnsBuf
+
+%<SLibCacheCodeToFile("sfcnsid_hdr_init_data", fcnsBuf)>
+
+%with ::CompiledModel
+  %undef SIDLocalSDeclarations
+  %undef SIDLocalSRegistration
+  %undef SIDSFunctionRegistration
+  %undef SIDBlockInstanceData
+%endwith
+%undef tmpBuffer
+%undef fcnsBuf
+
+%selectfile NULL_FILE
+
+%endif  %% _SFCNSID_
+
+%% [EOF] sfcnsid.tlc

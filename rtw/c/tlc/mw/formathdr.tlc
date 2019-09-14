@@ -1,0 +1,784 @@
+%% ============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   This file formats header information into CompiledModel.ModelFiles fields
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%% 
+%selectfile NULL_FILE
+
+%% ============================================================================
+%% Create the header files for the model.
+%% ============================================================================
+
+
+%if EXISTS("_FORMATHDR_") == 0
+%include "formatrtm.tlc"
+
+%assign _FORMATHDR_ = 1
+
+%assert !IsModelReferenceTarget()
+
+%realformat "CONCISE"
+
+%% Function: SLibFormatHdr =====================================================
+%% Abstract:
+%%   Function to create and cache definitions and defines in model.h
+%%   and model_private.h file sections.
+%%
+%function SLibFormatHdr() void
+  %% ============================================================================
+  %% Non-virtual, Non-Inlined subsystems 
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Dump all system headers excluding root")>
+  %assign nonVirtSubsbys = DumpAllSystemHeadersExcludingRootSystem()
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Dump all system headers excluding root")>
+  
+  %assign rootIdx    = NumSystems-1
+  %assign rootSystem = System[rootIdx]
+  
+  
+  %% ============================================================================
+  %% Common Includes
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h common includes")>
+  %<LibRegCommonIncludes(rootIdx)>
+  %openfile rtwCommonIncludesBuffer
+  %<GetHideChildDefineSymbol("ifndef")>\
+  %<LibDumpSharedTypeIncludes(rootSystem)>
+
+  %<LibDumpSystemIncludes(rootSystem)>
+  
+  
+  %if !WHITE_SPACE(nonVirtSubsbys)
+    %<nonVirtSubsbys>\
+  %endif
+  %undef nonVirtSubsbys
+  %<GetHideChildDefineSymbol("endif")>\
+  %closefile rtwCommonIncludesBuffer
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h common includes")>
+
+  %% ============================================================================
+  %% Defines
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h defines")>
+  %if RootHdrGenericDefines
+    %openfile rtwDefinesBuffer
+      
+    %<LibDeclareGenericModelDefines()>
+    %<LibDeclareNCSTATES()>
+    
+    %closefile rtwDefinesBuffer
+  %endif
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h defines")>
+
+  
+  %% ========================================================================
+  %% Code Identifier bridge for grt interface
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h code identifier bridge for grt interface")>
+  %openfile tmpBuf
+  %if GenerateGRTWrapper && PrefixModelToStructs && !UsingMalloc
+    %if !LibBlockIOStructIsEmpty()
+      #define rtB              %<LibGetBlockIOStruct()>
+      #define BlockIO          %<::tBlockIOType>
+    %endif
+    %%
+    %if !LibExternalInputsStructIsEmpty()
+      #define rtU              %<LibGetExternalInputStruct()>
+      #define ExternalInputs   %<::tInputType>
+    %endif
+    %%
+    %if !LibContStatesStructIsEmpty()
+      #define rtX              %<LibGetContinuousStateStruct()>
+      #define ContinuousStates %<::tContStateType>
+    %endif
+    %%
+    %if !LibCStatesDerivStructIsEmpty()
+      #define rtXdot           %<LibGetDotContinuousStateStruct()>
+      #define StateDerivatives %<::tXdotType>
+    %endif
+    %%
+    %if !LibContStatesDisabledStructIsEmpty()
+      #define tXdis            %<LibGetContinuousStateDisabledStruct()>
+      #define StateDisabled    %<::tXdisType>
+    %endif
+    %%
+    %if !LibContStatesAbsoluteToleranceStructIsEmpty()
+      #define tXAbsTol            %<LibGetContinuousStateAbsoluteToleranceStruct()>
+      #define CStateAbsTol        %<::tXAbsTolType>
+    %endif
+    %%
+    %if !LibExternalOutputsStructIsEmpty()
+      #define rtY              %<LibGetExternalOutputStruct()>
+      #define ExternalOutputs  %<::tOutputType>
+    %endif
+    %%
+    %if !LibParametersStructIsEmpty()
+      #define rtP              %<LibGetParametersStruct()>
+      #define Parameters       %<::tParametersType>
+    %endif
+    %%
+    %if !LibDWorkStructIsEmpty()
+      #define rtDWork          %<LibGetDWorkStruct()>
+      #define D_Work           %<::tDWorkType>
+    %endif
+    %%
+    %if !LibConstBlockIOStructIsEmpty()
+      #define tConstBlockIOType %<::tConstBlockIOType>
+      #define rtC               %<::tConstBlockIOStruct>
+    %endif
+    %%
+    %if !SLibPrmBufferIsEmpty("Const", "Typedef")
+      #define ConstParam        %<::tConstParamType>
+      #define rtcP              %<::tConstParamStruct>
+    %endif
+    %%
+    %if !SLibPrmBufferIsEmpty("ConstWithInit", "Typedef")
+      #define ConstParamWithInit %<::tConstParamWithInitType>
+      #define rtcWithInitP       %<::tConstParamWithInitStruct>
+    %endif
+    %%
+    %if !LibPrevZCStatesStructIsEmpty()
+      #define rtPrevZCSigState   %<LibGetPreviousZCStruct()>
+      #define PrevZCSigStates    %<::tPrevZCStateType>
+    %endif
+    %%    
+    %if !LibZCSignalValueStructIsEmpty()
+      #define rtZCSignalValue     %<LibGetZCSignalValueStruct()>
+      #define ZCSignalValues      %<::tZCSignalValueType>
+    %endif    
+    %%adzc
+    %%    
+  %endif
+  %closefile tmpBuf
+  
+  %openfile rtwGRTIdentifierBridgeBuffer
+  %if !WHITE_SPACE(tmpBuf)
+  
+    /* Backward compatible GRT Identifiers */
+    %<GetHideChildDefineSymbol("ifndef")>\
+    %<tmpBuf>\
+    %<GetHideChildDefineSymbol("endif")>\
+  %endif
+  %closefile rtwGRTIdentifierBridgeBuffer
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h code identifier bridge for grt interface")>
+  
+  %% ============================================================================
+  %% typedef's
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h typedefs")>
+  %openfile intgDataTypedefsBuf
+  %if (NumContStates > 0) && (SLibIsERTCodeFormat())
+    %<GetHideChildDefineSymbol("ifndef")>\
+    %<SLibCacheIntgStructDef()>\
+    %<GetHideChildDefineSymbol("endif")>\
+  %endif
+  %closefile intgDataTypedefsBuf
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h typedefs")>
+  
+  
+  %% ============================================================================
+  %% Const params
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h const params")>
+  %openfile constParamsBuffer
+  %if !SLibPrmBufferIsEmpty("Const", "Typedef")
+  
+    /* Constant parameters (%<::AutoOrDefaultStorageClass> storage) */
+    %<GetHideChildDefineSymbol("ifndef")>\
+    %<SLibGetPrmBuffer("Const", "Typedef")>\
+    %<GetHideChildDefineSymbol("endif")>\
+  %endif
+  %%
+  %if !SLibPrmBufferIsEmpty("ConstWithInit", "Typedef")
+  
+    /* Constant parameters with dynamic initialization (%<::AutoOrDefaultStorageClass> storage) */
+    %<GetHideChildDefineSymbol("ifndef")>\
+    %<SLibGetPrmBuffer("ConstWithInit", "Typedef")>\
+    %<GetHideChildDefineSymbol("endif")>\
+  %endif
+  %closefile constParamsBuffer
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h const params")>
+  
+  
+  
+  %% ============================================================================
+  %% External inputs structure
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h external inputs structure")>
+  %openfile rtwExternalInputsBuffer
+  %if (!LibExternalInputsStructIsEmpty() || !LibExternalInputSizesStructIsEmpty() )&& ...
+    (!MultiInstanceERTCode || RootIOStructures || SLibHasGlobalExternalInputsWithFPC())
+    
+    %assign tmpNeedsExtI = TLC_TRUE
+    
+    %if GenerateClassInterface
+      %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+      %if !classConfObj.hasGlobalAccessForInport && ...
+          !classConfObj.forcesGlobalAccessForInport
+        %assign tmpNeedsExtI = TLC_FALSE
+      %endif
+    %endif
+    
+    %if tmpNeedsExtI
+      %<GetHideChildDefineSymbol("ifndef")>\
+      %if !LibExternalInputsStructIsEmpty()
+        /* External inputs (root inport signals with %<::AutoOrDefaultStorageClass> storage) */
+        %assign align = LibDumpExternalIOStructAlignment(::tInputType, ... 
+                        ExternalInputs.StructAlignment)
+        %if align != ""
+          %switch(structDAFlag.position)
+            %case "DATA_ALIGNMENT_PREDIRECTIVE"
+              typedef %<align> struct {
+                %<LibDumpExternalInputsStructDefinition()>\
+              } %<::tInputType>;
+              %break
+            %case "DATA_ALIGNMENT_POSTDIRECTIVE"
+              typedef struct {
+                %<LibDumpExternalInputsStructDefinition()>\
+              } %<::tInputType> %<align>;
+              %break
+            %case "DATA_ALIGNMENT_PRECEDING_STATEMENT"
+              %<align>
+              typedef struct {
+                %<LibDumpExternalInputsStructDefinition()>\
+              } %<::tInputType>;
+              %break
+            %case "DATA_ALIGNMENT_FOLLOWING_STATEMENT"
+              typedef struct {
+                %<LibDumpExternalInputsStructDefinition()>\
+              } %<::tInputType>;
+              %<align>
+              %break
+            %default
+              %assert TLC_FALSE
+              %break
+          %endswitch
+        %else
+            typedef struct {
+              %<LibDumpExternalInputsStructDefinition()>\
+            } %<::tInputType>;
+        %endif
+      %endif
+      
+      %if !LibExternalInputSizesStructIsEmpty()
+      /* External input sizes (for root inport signals with variable sizes) */
+      typedef struct {
+        %<LibDumpExternalInputSizesStructDefinition()>\
+      } %<::tInputSizeType>;
+      %endif
+      %<GetHideChildDefineSymbol("endif")>\
+    %endif
+  %endif
+  %closefile rtwExternalInputsBuffer
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h external inputs structure")>
+  
+  %% ============================================================================
+  %% External outputs structure
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h external outputs structure")>
+  %openfile rtwExternalOutputsBuffer
+  %if (!LibExternalOutputsStructIsEmpty() || !LibExternalOutputSizesStructIsEmpty()) && ...
+    (!MultiInstanceERTCode || RootIOStructures || SLibHasGlobalExternalOutputsWithFPC())
+    %assign tmpNeedsExtO = TLC_TRUE
+    
+    %if GenerateClassInterface
+      %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+      %if (!classConfObj.hasGlobalAccessForOutport) && ...
+          (!classConfObj.forcesGlobalAccessForOutport)
+        %assign tmpNeedsExtO = TLC_FALSE
+      %endif
+    %endif
+    
+    %if tmpNeedsExtO
+      %<GetHideChildDefineSymbol("ifndef")>\
+      %if !LibExternalOutputsStructIsEmpty()
+        /* External outputs (root outports fed by signals with %<::AutoOrDefaultStorageClass> storage) */
+        %assign align = LibDumpExternalIOStructAlignment(::tOutputType, ...
+                        ExternalOutputs.StructAlignment)
+        %if align != ""
+          %switch(structDAFlag.position)
+            %case "DATA_ALIGNMENT_PREDIRECTIVE"
+              typedef %<align> struct {
+                %<LibDumpExternalOutputsStructDefinition()>\
+              } %<::tOutputType>;
+              %break
+            %case "DATA_ALIGNMENT_POSTDIRECTIVE"
+              typedef struct {
+                %<LibDumpExternalOutputsStructDefinition()>\
+              } %<::tOutputType> %<align>;
+              %break
+            %case "DATA_ALIGNMENT_PRECEDING_STATEMENT"
+              %<align>
+              typedef struct {
+                %<LibDumpExternalOutputsStructDefinition()>\
+              } %<::tOutputType>;
+              %break
+            %case "DATA_ALIGNMENT_FOLLOWING_STATEMENT"
+              typedef struct {
+                %<LibDumpExternalOutputsStructDefinition()>\
+              } %<::tOutputType>;
+              %<align>
+              %break
+          %endswitch
+        %else
+            typedef struct {
+              %<LibDumpExternalOutputsStructDefinition()>\
+            } %<::tOutputType>;
+        %endif
+      %endif
+      
+      %if !LibExternalOutputSizesStructIsEmpty()
+      /* External output sizes (for root outports fed by signals with variable sizes) */
+      typedef struct {
+        %<LibDumpExternalOutputSizesStructDefinition()>\
+      } %<::tOutputSizeType>;
+      %endif
+      %<GetHideChildDefineSymbol("endif")>\
+    %endif
+  %endif
+  %closefile rtwExternalOutputsBuffer
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h external outputs structure")>
+  
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h rsim data info map")>
+  %openfile rsimDataInfoMap
+  %if isRSim && RTWCAPI && !IsModelReferenceTarget()
+    
+    /* RTWCAPI data structure for RSIM */ 
+    typedef struct {
+      rtwCAPI_ModelMappingInfo mmi;  
+      %if HasModelReferenceBlocks()
+	%assign nMdlRefBlks = SIZE(::CompiledModel.ModelReferenceBlocks,0)
+	rtwCAPI_ModelMappingInfo* childMMI[%<nMdlRefBlks>];
+      %endif 	
+    } %<RSimRTWCAPIType>;
+  %endif  
+  %closefile rsimDataInfoMap
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h rsim data info map")>
+  
+  %% ============================================================================
+  %% Externs
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h externs")>
+  %openfile tmpBuf
+  
+  %<LibDumpGroundExterns()>\
+  %if isRSim || (UsingMalloc && CodeFormat != "S-Function")
+    %if ::GenCPP
+    #ifdef __cplusplus
+    extern "C" {
+    #endif
+    %endif
+    extern const char *RT_MEMORY_ALLOCATION_ERROR; 
+    %if ::GenCPP
+    #ifdef __cplusplus
+    }
+    #endif
+    %endif
+  %endif  
+  %assign rootSystem = System[NumSystems-1]
+  %assign reqInsts   = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  %if HaveSeparateSourceFiles
+    %if CodeFormat == "RealTime"
+      %if !LibBlockIOStructIsEmpty()
+        extern %<::tBlockIOType> %<LibGetBlockIOStruct()>; /* block i/o */
+      %endif
+      %if !LibContStatesStructIsEmpty()
+        extern %<::tContStateType> %<LibGetContinuousStateStruct()>; /* states (continuous) */
+      %endif
+      %if !LibDWorkStructIsEmpty()
+        extern %<::tDWorkType> %<LibGetDWorkStruct()>; /* states (dwork) */
+      %endif
+      %if !LibPrevZCStatesStructIsEmpty()
+	extern %<::tPrevZCStateType> %<LibGetPreviousZCStruct()>; /* prev zc states*/
+      %endif
+      %if !LibZCSignalValueStructIsEmpty() && !isRSimWithSolverModule
+        extern %<::tZCSignalValueType> %<LibGetZCSignalValueStruct()>; /* zero crossings */
+      %endif
+      %if !LibExternalInputsStructIsEmpty()
+        extern %<::tInputType> %<LibGetExternalInputStruct()>; /* external inputs */
+      %endif
+      %if !LibExternalOutputsStructIsEmpty()
+        extern %<::tOutputType> %<LibGetExternalOutputStruct()>; /* external outputs */
+      %endif
+      %if ModelIsLinearlyImplicit == "yes"
+        extern %<::tMassMatrixGlobalType> %<::tMassMatrixGlobal>; /* global MassMatrix */
+      %endif
+      %% Emit Extern declarations for exported coder data groups
+      %createrecord groupFilter { \
+        Static TLC_TRUE \
+        Dynamic TLC_TRUE \
+        AccessStandalone TLC_TRUE \
+        AccessThroughSelf TLC_TRUE \
+        Exported TLC_TRUE \
+        Imported TLC_FALSE \
+        ModelData TLC_FALSE \
+      }
+      %<SLibDeclareCoderDataGroupInstances(::CompiledModel.System[GetBaseSystemIdx()],"extern",groupFilter)>\
+     %elseif SLibIsERTCodeFormat()
+      %if reqInsts.PrevZCStatesInst && !LibPrevZCStatesStructIsEmpty()
+  
+        /* Zero-crossing (trigger) state */
+        %openfile decls
+        %<::tPrevZCStateType> %<LibGetPreviousZCStruct()>;
+        %closefile decls
+        %<SLibApplyMemSecToDataDecl(decls, "MemSecDataInternal", LibGetPreviousZCStruct())>
+      %endif
+    %endif
+  %endif
+  
+  %% Extern declarations for profiler
+  %<SLibGenProfGlbExtData()>\
+  
+  %closefile tmpBuf
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h externs")>
+  
+  %openfile rtwExternsBuffer
+  %if !WHITE_SPACE(tmpBuf)
+  
+    /* External data declarations for dependent source files */
+    %<tmpBuf>\
+  %endif
+  %undef tmpBuf
+  %closefile rtwExternsBuffer
+  
+  %% Parameters and const blockio is defined in model_data.c
+  %% so it must always be externed if it exists.
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h externs")>
+  %openfile reqrtwExternsBuffer
+    %%
+    %% rtP parameter structures
+    %%
+    %if !LibParametersStructIsEmpty()
+      %<GetHideChildDefineSymbol("ifndef")>\
+      %openfile decls
+      %if (CodeFormat == "RealTime") || ... 
+        (SLibIsERTCodeFormat() && UsingMalloc && !isGRTMalloc)
+        %if SLibAutosarCompilerAbstractionRequired()
+          %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tParametersType, TLC_FALSE, TLC_FALSE, LibGetParametersStruct(), "DataGlobal")>; /* parameters */
+        %else
+          %<::tParametersType> %<LibGetParametersStruct()>; /* parameters */
+        %endif
+      %elseif Accelerator
+        %<::tParametersType> %<::tDefaultParameters>; /* parameters */
+      %endif
+      %closefile decls
+      %if !ISEMPTY(decls)
+        %<SLibApplyMemSecToDataDecl(decls, "MemSecDataParameters", ::tDefaultParameters)>
+      %endif
+      %<GetHideChildDefineSymbol("endif")>\
+    %endif  
+    %%
+    %% Constant BlockIO
+    %%
+    %if !LibConstBlockIOStructIsEmpty()
+      %<GetHideChildDefineSymbol("ifndef")>\
+      %if (((CodeFormat == "RealTime") || (SLibIsERTCodeFormat())) && !isGRTMalloc)
+        %openfile decls
+        %if SLibAutosarCompilerAbstractionRequired()
+          %assign canBeConst = SLibCanConstBlockIOBeConst()
+          %<SLibAutosarCompilerAbstractionForDataDecl(canBeConst, ::tConstBlockIOType, TLC_FALSE, TLC_FALSE, ::tConstBlockIOStruct, "DataGlobal")>; /* constant block i/o */
+        %else          
+          %assign qualifiers = SLibGetConstBlockIOQualifiers()      
+          %<qualifiers> %<::tConstBlockIOType> %<::tConstBlockIOStruct>; /* constant block i/o */
+        %endif
+        %closefile decls
+        %<SLibApplyMemSecToDataDecl(decls, "MemSecDataConstants", ::tConstBlockIOStruct)>
+      %elseif Accelerator
+        %openfile decls
+        %assign qualifiers = SLibGetConstBlockIOQualifiers()
+        %<qualifiers> %<::tConstBlockIOType> %<::tInvariantSignals>; /* constant block i/o */
+        %closefile decls
+        %<SLibApplyMemSecToDataDecl(decls, "MemSecDataConstants", ::tInvariantSignals)>
+      %endif
+      %<GetHideChildDefineSymbol("endif")>\
+    %endif    
+    %%  
+    %% - Constant parameters
+    %% ===> ALL CODE FORMATS
+    %%
+    %if !SLibPrmBufferIsEmpty("Const", "Typedef")
+      %<GetHideChildDefineSymbol("ifndef")>\
+      /* Constant parameters (%<::AutoOrDefaultStorageClass> storage) */
+      %openfile decls
+      %if SLibAutosarCompilerAbstractionRequired()
+        %<SLibAutosarCompilerAbstractionForDataDecl(TLC_TRUE, ::tConstParamType, TLC_FALSE, TLC_FALSE, ::tConstParamStruct, "DataGlobal")>;
+      %else
+        %assign qualifiers = SLibGetConstParamQualifiers()        
+        %<qualifiers> %<::tConstParamType> %<::tConstParamStruct>;
+      %endif
+      %closefile decls
+      %<SLibApplyMemSecToDataDecl(decls, "MemSecDataConstants", ::tConstParamStruct)>
+      %<GetHideChildDefineSymbol("endif")>\
+    %endif
+    %%
+    %% - Constant parameters (with initialization)
+    %% ===> ALL CODE FORMATS
+    %%
+    %if !SLibPrmBufferIsEmpty("ConstWithInit", "Typedef")
+      %<GetHideChildDefineSymbol("ifndef")>\
+      /* Constant parameters with dynamic initialization (%<::AutoOrDefaultStorageClass> storage) */
+      %openfile decls
+      %if SLibAutosarCompilerAbstractionRequired()
+        %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tConstParamWithInitType, TLC_FALSE, TLC_FALSE, ::tConstParamWithInitStruct, "DataGlobal")>; /* constant parameters */
+      %else
+        %assign qualifiers = SLibGetConstParamWithInitQualifiers()
+        %<qualifiers> %<::tConstParamWithInitType> %<::tConstParamWithInitStruct>; /* constant parameters */
+      %endif
+      %closefile decls
+      %<SLibApplyMemSecToDataDecl(decls, "MemSecDataConstants", ::tConstParamWithInitStruct)>
+      %<GetHideChildDefineSymbol("endif")>\
+    %endif
+  %closefile reqrtwExternsBuffer
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h externs")>
+  
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h embedded-c externs")>
+  %openfile publicExternGblStructs
+  %if SLibIsERTCodeFormat()
+    %% ============================================================================
+    %% Embedded-C exports more symbols - Externs
+    %%
+    %<GetHideChildDefineSymbol("ifndef")>\
+    
+    %% Declare Coder data groups in model.h
+    %if ::CompiledModel.NumCoderDataGroups > 0
+      %% Emit declarations for exported coder data groups except InSelf or InParent
+      %% for multi-instance ERT
+      %createrecord groupFilter { \
+        Static TLC_TRUE \
+        Dynamic TLC_TRUE \
+        AccessStandalone TLC_TRUE \
+        AccessThroughSelf !MultiInstanceERTCode \
+        Exported TLC_TRUE \
+        Imported TLC_FALSE \
+        ModelData TLC_FALSE \
+      }
+      %<SLibDeclareCoderDataGroupInstances(::CompiledModel.System[GetBaseSystemIdx()],"extern",groupFilter)>\
+    %endif
+    %if reqInsts.ParamsInst && !LibParametersStructIsEmpty() && !GenerateClassInterface
+
+      /* Block parameters (%<::AutoOrDefaultStorageClass> storage) */
+      %if ::GenCPP && !SLibAutosarCompilerAbstractionRequired()
+        #ifdef __cplusplus
+        extern "C" {
+        #endif
+      %endif
+      %openfile decls
+      %if SLibAutosarCompilerAbstractionRequired()
+        %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tParametersType, TLC_FALSE, TLC_FALSE, LibGetParametersStruct(), "DataGlobal")>;
+      %else
+        %<::tParametersType> %<LibGetParametersStruct()>;
+      %endif
+      %closefile decls
+      %<SLibApplyMemSecToDataDecl(decls, "MemSecDataParameters", LibGetParametersStruct())>
+      %if ::GenCPP && !LibParametersStructIsEmpty()
+        #ifdef __cplusplus
+        }
+        #endif
+      %endif
+    %endif
+    %if reqInsts.BlockIOInst && !LibBlockIOStructIsEmpty()
+      
+      /* Block signals (%<::AutoOrDefaultStorageClass> storage) */
+      %openfile decls
+      %if SLibAutosarCompilerAbstractionRequired()
+        %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tBlockIOType, TLC_FALSE, TLC_FALSE, LibGetBlockIOStruct(), "DataGlobal")>;
+      %else
+        %<::tBlockIOType> %<LibGetBlockIOStruct()>;
+      %endif
+      %closefile decls
+      %<SLibApplyMemSecToDataDecl(decls, "MemSecDataInternal", LibGetBlockIOStruct())>
+    %endif
+    %if reqInsts.ContStatesInst && !LibContStatesInstanceIsEmpty()
+  
+      /* Continuous states (%<::AutoOrDefaultStorageClass> storage) */
+      %openfile decls
+      %if SLibAutosarCompilerAbstractionRequired()
+        %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tContStateType, TLC_FALSE, TLC_FALSE, LibGetContinuousStateStruct(), "DataGlobal")>;
+      %else
+        %<::tContStateType> %<LibGetContinuousStateStruct()>;
+      %endif
+      %closefile decls
+      %<SLibApplyMemSecToDataDecl(decls, "MemSecDataInternal", LibGetContinuousStateStruct())>
+    %endif    
+    %if reqInsts.MassMatricesInst && !LibMassMatricesInstanceIsEmpty()
+
+      /* global MassMatrix */
+      %openfile decls
+      %if SLibAutosarCompilerAbstractionRequired()
+        %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tMassMatrixGlobalType, TLC_FALSE, TLC_FALSE, LibGetMassMatrixGlobal(), "DataGlobal")>;
+      %else
+        %<::tMassMatrixGlobalType> %<::tMassMatrixGlobal>; 
+      %endif
+      %closefile decls
+      %<SLibApplyMemSecToDataDecl(decls, "MemSecDataInternal", LibGetMassMatrixGlobal())>         
+    %endif    
+    %if reqInsts.DworkInst && !LibDWorkStructIsEmpty()
+      
+      %if ::CompiledModel.DWorkAndBlockIOCombined
+        /* Block signals and states (%<::AutoOrDefaultStorageClass> storage) */
+      %else
+        /* Block states (%<::AutoOrDefaultStorageClass> storage) */
+      %endif
+      %openfile decls
+      %if SLibAutosarCompilerAbstractionRequired()
+        %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ::tDWorkType, TLC_FALSE, TLC_FALSE, LibGetDWorkStruct(), "DataGlobal")>;
+      %else
+        %<::tDWorkType> %<LibGetDWorkStruct()>;
+      %endif
+      %closefile decls
+      %<SLibApplyMemSecToDataDecl(decls, "MemSecDataInternal", LibGetDWorkStruct())>
+    %endif
+    %if !SLibAutosarActive()
+      %assign tmpbuff = ""
+      %openfile tmpbuff
+      %if reqInsts.ExtInpsInst && (!LibExternalInputsStructIsEmpty() || !LibExternalInputSizesStructIsEmpty())
+        %if !LibExternalInputsStructIsEmpty()
+          /* External inputs (root inport signals with %<::AutoOrDefaultStorageClass> storage) */
+          %openfile decls
+          %<::tInputType> %<LibGetExternalInputStruct()>;
+          %closefile decls
+          %assign decls = SLibApplyMemSecToDataDecl(decls, "MemSecDataInputs", LibGetExternalInputStruct())
+	  %if !WHITE_SPACE(decls)
+            %<decls>
+          %endif
+        %endif
+        %if !LibExternalInputSizesStructIsEmpty()
+          /* External inputs size (variable-sizing root inport signals with %<::AutoOrDefaultStorageClass> storage) */
+          %openfile decls
+          %<::tInputSizeType> %<::tInputSize>;
+          %closefile decls
+ 	  %assign decls = SLibApplyMemSecToDataDecl(decls, "MemSecDataInputs", ::tInputSize)
+	  %if !WHITE_SPACE(decls)
+            %<decls>
+          %endif
+        %endif
+      %endif
+      %if reqInsts.ExtOutputsInst && (!LibExternalOutputsStructIsEmpty() || !LibExternalOutputSizesStructIsEmpty())
+        %if !LibExternalOutputsStructIsEmpty()
+          /* External outputs (root outports fed by signals with %<::AutoOrDefaultStorageClass> storage) */
+          %openfile decls
+          %<::tOutputType> %<LibGetExternalOutputStruct()>;
+          %closefile decls
+          %assign decls = SLibApplyMemSecToDataDecl(decls, "MemSecDataOutputs", LibGetExternalOutputStruct())
+	  %if !WHITE_SPACE(decls)
+            %<decls>
+          %endif
+        %endif
+
+        %if !LibExternalOutputSizesStructIsEmpty()
+        /* External outputs size (variable-sizing root outport signals with %<::AutoOrDefaultStorageClass> storage) */
+          %openfile decls
+          %<::tOutputSizeType> %<::tOutputSize>;
+          %closefile decls
+          %assign decls = SLibApplyMemSecToDataDecl(decls, "MemSecDataOutputs", ::tOutputSize)
+	  %if !WHITE_SPACE(decls)
+            %<decls>
+          %endif
+        %endif
+      %endif
+      %closefile tmpbuff
+      %if !WHITE_SPACE(tmpbuff)
+        %if ::GenCPP
+          #ifdef __cplusplus
+          extern "C" {
+            #endif
+          %endif
+          %<tmpbuff>
+          %if ::GenCPP
+            #ifdef __cplusplus
+          }
+          #endif
+        %endif
+      %endif
+    %endif
+    %<GetHideChildDefineSymbol("endif")>\
+  %endif
+  %closefile publicExternGblStructs
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h embedded-c externs")>
+
+  %% ============================================================================
+  %% Dump buffers to output file
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Generate model.h")>
+  
+  %openfile bannerBuf
+  /*
+  * %<Name>.h
+  *
+  %<SLibCommonHeaderInfo()>\
+  */
+  %closefile bannerBuf
+  
+  %<SLibCacheCodeToFile("baseMdl_hdr_ban", bannerBuf)>
+  %undef bannerBuf
+  %if EXISTS(rtwDefinesBuffer)
+    %<SLibCacheCodeToFile("baseMdl_hdr_define", rtwDefinesBuffer)>
+    %undef rtwDefinesBuffer
+  %endif
+  
+  %% ===========================================================================
+  %% Information related to the rtModel
+  %%
+  %openfile commIncludes
+  %<SLibDumpCommonIncludes(rootSystem)>
+  %closefile commIncludes
+  
+  %<SLibCacheCodeToFile("baseMdl_hdr_common_incl", commIncludes)>
+  %undef commIncludes
+
+  %assign mdlTypesHdrFileName = SLibGetFileNameForCode("mdl_types_hdr")
+  %if !WHITE_SPACE(mdlTypesHdrFileName)
+    %openfile typesIncludesBuf
+    #include "%<mdlTypesHdrFileName>.h"    
+    %closefile typesIncludesBuf
+    %<SLibCacheCodeToFile("baseMdl_hdr_common_incl", typesIncludesBuf)>
+    %undef typesIncludesBuf
+  %endif    
+  
+  %% changing the tag to mdl_data_typedef so that the includes are moved after the variant definitions
+  %% in the model header file
+  %<SLibCacheCodeToFile("baseMdl_hdr_child_system_incl", rtwCommonIncludesBuffer)>
+
+  %undef rtwCommonIncludesBuffer
+  
+  %% Primitive types
+  %<SLibCacheCodeToFile("baseMdl_hdr_primitive_typedef", ...
+    SLibDeclarePrimitiveTypedefs())>
+  
+  %<SLibCacheCodeToFile("baseMdl_data_typedef", intgDataTypedefsBuf)>
+  %undef intgDataTypedefsBuf
+  %<SLibCacheCodeToFile("mdl_constParam_typedef", constParamsBuffer)>
+  %undef constParamsBuffer
+  %<SLibCacheCodeToFile("mdl_externalInputs_typedef", rtwExternalInputsBuffer)>
+  %undef rtwExternalInputsBuffer
+  %<SLibCacheCodeToFile("mdl_externalOutputs_typedef", rtwExternalOutputsBuffer)>
+  %undef rtwExternalOutputsBuffer
+  %<SLibCacheCodeToFile("baseMdl_data_typedef", rtwGRTIdentifierBridgeBuffer)>
+  %undef rtwGRTIdentifierBridgeBuffer
+  %<SLibCacheCodeToFile("baseMdl_data_typedef", rsimDataInfoMap)>
+  %undef rsimDataInfoMap
+  
+  %if SLibIsERTCodeFormat()
+    %<SLibCacheCodeToFile("mdl_extern_data_decl", publicExternGblStructs)>
+    %undef publicExternGblStructs
+  %endif
+
+  %if SLibFcnProtoCtrlActive() && !IsModelReferenceTarget()
+    %<SLibWriteCustomModelStepFunction()>
+  %endif
+
+  %<SLibCacheCodeToFile("mdl_extern_data_decl", rtwExternsBuffer)>
+  %undef rtwExternsBuffer
+  %<SLibCacheCodeToFile("mdl_public_extern_data_decl", reqrtwExternsBuffer)>
+  
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Generate model.h")>
+%endfunction
+
+%endif %% _FORMATHDR_
+
+%% [EOF] formathdr.tlc

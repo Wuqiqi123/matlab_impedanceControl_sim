@@ -1,0 +1,83 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+%% This file defines information about the target compiler/hardware.
+%% This information is required by Simulink Coder in order to
+%% properly generate code. 
+%% 
+%selectfile NULL_FILE
+
+%%
+%% Set choice for having comments included with a function or macro "call"
+%%
+%assign FixPtIncludeCallComment = 0
+
+%%
+%% Set choice for having comments included with each block that describes any
+%% parameters for example gives the real world values and data type info.
+%% The parameters can contain many elements so the comments can get huge.
+%%
+%assign FixPtIncludeParameterComment = 0
+
+%%
+%% Host computer architecture
+%%
+%% This is the default target used in generating the fixed point code.  This
+%% is valid for self target with grt and ert.
+%%
+%assign FixedPointComputer = FEVAL("eval","computer")
+
+%%
+%% Set code generation mode for Fixed Point Utilities.  Valid choices are:
+%%   "macro"
+%%   "function"
+%%
+%switch FixedPointComputer
+  %case "SGI64"
+  %case "SGI"
+  %case "ALPHA"
+    %% 
+    %% Currently, the SGI64 and the ALPHA must use function mode.  This option
+    %% is not overridable from these low volume target platforms.
+    %%
+    %assign FixPtUtilType = "function"
+    %break
+  %default
+    %%
+    %% other platforms and targets can select either mode
+    %% macro mode eliminates the overhead of functions calls
+    %% which gives generated code that runs faster
+    %% function mode gives code that is easier to debug
+    %%
+    %% code size advantages of one mode over the other depends on
+    %% the model
+    %%
+    %if !EXISTS("FixPtUtilType")
+      %assign FixPtUtilType = "macro"
+    %endif
+%endswitch
+
+%% Word sizes for integer data types (i.e., long, int, short, char).  Not
+%% setting these values correclty will result in a compile time error due
+%% to built in safety checks in the model_private.h header file (this is
+%% a good thing).
+
+%% Following FEVAL calls expect Name to be the actual model name
+%assign IntegerSizes = FEVAL("rtwprivate", "rtwwordlengths", LibGetModelName())
+
+%% define the bits per Largest integer
+%if IntegerSizes.LongLongMode == 1
+    %assign LargestIntegerNumBits = IntegerSizes.LongLongNumBits
+%else
+    %assign LargestIntegerNumBits = IntegerSizes.LongNumBits
+%endif
+  
+%% Implementation specific properties:
+%%   See toolbox/rtw/rtwdemos/example_rtw_info_hook.m for details
+
+%assign CTargetSpecific = FEVAL("rtwprivate", "rtw_implementation_props", ...
+  LibGetModelName())
+

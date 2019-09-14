@@ -1,0 +1,184 @@
+%% =============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   Invokes Embedded Coder source file templates
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%function SLibERTWriteSource() void
+
+  %assign needGenerateSampleERTMain = SLibIsERTTarget() && GenerateSampleERTMain
+  %if needGenerateSampleERTMain
+    %% Add ert_main into source file list so that the cgt tokens are expanded.
+    %assign ertmainFile = SLibGetFileRecForCode("main_src")
+  %endif
+
+  %% Template processing hook:
+  %%
+  %%   o Any TLC variables created outside function scope appear in
+  %%     the ERT templates.
+  %%   o To guard against this, place code inside SLibERTTemplateSetup()
+  %%
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"ERT template setup")>
+  %if SLibIsERTTarget()
+    %include "erttemplatesetup.tlc"
+    %<SLibERTTemplateSetup()>
+  %endif
+  %assign ModelName = Name
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"ERT template setup")>
+  
+  %% Create sample main
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE, "Create sample ERT main")>
+  %if SLibGenerateNativeThreads() &&  ...
+    (::CompiledModel.ConfigSet.SystemTargetFile == "grt.tlc")
+    %<SLibCreateMainForGRTWrapper()> 
+  %elseif LibIsDeploymentDiagram() && ...
+    (::CompiledModel.ConfigSet.SystemTargetFile == "grt.tlc")
+    %<SLibDeploymentGenerateGRTMain()>
+  %elseif needGenerateSampleERTMain
+    %assert(!IsModelReferenceTarget())
+    %if GenerateGRTWrapper
+      %<SLibCreateMainForGRTWrapper()>
+    %elseif ExportFunctionsMode != 0 || SLibIsExportFcnDiagram()
+      %<SLibCreateSampleMainForExportFcns()>
+    %else
+      %<SLibCreateSampleMain()>
+    %endif
+  %endif
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Create sample ERT main")>
+  
+  %% Write source files to disk
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Write source file to disk")>
+  %foreach fileIdx = LibGetNumSourceFiles()
+    %assign FileName  = LibGetSourceFileSection(fileIdx,"Name")
+
+    %if FcnSkipModelFile(fileIdx)
+      %if ::CompiledModel.SharedTypesInIR
+        %assign filter  = LibGetModelFileAttribute(fileIdx, "Filter")
+        %assign isSharedType = LibGetSourceFileSharedType(fileIdx)
+        %assign isWrittenToDisk = LibGetModelFileAttribute(fileIdx, "WrittenToDisk")
+
+        %if isWrittenToDisk
+          %assign FileGroup = LibGetModelFileAttribute(fileIdx,"Group")
+          %assign outputDir = LibGetModelFileAttribute(fileIdx,"OutputDirectory")
+          %<SLibAddGeneratedFileToList(FileName,FileGroup,"header",outputDir)>
+        %elseif (filter == 1 || isSharedType)
+          %<SLibAddGeneratedFileToList(FileName,"custom","header","")>
+        %endif
+      %endif
+      %continue
+    %endif
+   
+    %assign FileType  = LibGetSourceFileSection(fileIdx,"Type") == "SystemBody" ? "source" : "header"
+    %assign FileTag   = LibGetSourceFileTag(fileIdx)
+    %assign indent    = LibGetSourceFileIndent(fileIdx)
+    %assign outputDir = LibGetModelFileAttribute(fileIdx,"OutputDirectory")
+    %assign FileGroup = LibGetModelFileAttribute(fileIdx,"Group")
+    
+    %<SLibAddGeneratedFileToList(FileName,FileGroup,FileType,outputDir)>  
+    
+    %assign indentFile = TLC_FALSE
+    %if ISEMPTY(outputDir)
+      %assign outputFileName = FileName
+    %else
+      %assign outputFileName = FEVAL("fullfile",outputDir,FileName)
+      %assign indentFile = TLC_TRUE
+    %endif
+    
+    %<LibWriteToStandardOutput("### Writing %<FileType> file %<FileName>")>
+
+    %if SLibIsERTTarget()
+      %assign codeTemplate     = LibGetModelFileAttribute(fileIdx,"CodeTemplate")
+      %assign codeTemplateInfo = FEVAL("rtw_fileparts",codeTemplate)
+      
+      %% Validate the template
+      %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Validate the code template")>
+      %if codeTemplateInfo.Ext == ".cgt" || !FILE_EXISTS(codeTemplate)
+      %%%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"feval rtw_expand_template_from_tlc")>
+	%assign errMsg = FEVAL("rtw_expand_template_from_tlc",codeTemplate, ...
+	  ::CompiledModel.Name)
+      %%%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"feval rtw_expand_template_from_tlc")>
+	%switch errMsg
+	  %case "success"
+	    %% Success (just continue)
+	    %break
+	  %case "file not found"
+	    %% File not on MATLAB path (note that this error message check is
+	    %% coupled to rtw_cgt_name_conv)
+	    %if ISEMPTY(FEVAL("regexp",codeTemplate,"_cgt.tlc"))
+	      %assign actFile = codeTemplate
+	    %else
+	      %assign actFile = FEVAL("rtw_cgt_name_conv",codeTemplate,"tlc2cgt")
+	    %endif
+	    %assign errTxt = "The code generation template file is not found: "...
+              "%<actFile>.\nVerify that the file is on the Matlab path or specify a different file " ...
+              "in the Code Generation > Templates pane in the Configuration Parameters dialog box."
+	    %<LibReportError(errTxt)>
+	  %default
+	    %% Error expanding template.
+	    %assign errTxt = "Error expanding code template " ...
+	      "file: %<codeTemplate>\n\n" ...
+	      "%<errMsg>"  
+	    %<LibReportError(errTxt)>
+	%endswitch
+      %%%<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"feval rtw_cgt_name_conv")>
+	%if codeTemplateInfo.Ext == ".cgt"
+	  %assign codeTemplate = FEVAL("rtw_cgt_name_conv",codeTemplate,"cgt2tlc")
+	%endif
+      %%%<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"feval rtw_cgt_name_conv")>
+      %endif
+      %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Validate the code template")>
+    
+      %% do not include CodeGenSettings in shared utils
+      %<SLibAddTLCCompileStatsCheckPoint(TLC_TRUE,"Execute the code template and commit to disk")>
+      %assign shared = (GenUtilsSrcInSharedLocation && ...
+        outputDir == GenUtilsPath) || LibGetSourceFileShared(fileIdx)
+      %assign reusedLib = GenReusedLibsOutsideModel
+      %if shared || reusedLib
+        %assign tmp = CodeGenSettings
+        %assign CodeGenSettings = ""
+      %endif
+      %assign FileNameField = FileName
+      %assign FileName  = LibGetSourceFileSection(fileIdx,"BaseName")
+      %% Execute the template, and commit it to disk
+      %openfile outputFile = outputFileName
+      %include codeTemplate
+      %closefile outputFile
+      %assign FileName = FileNameField
+      %if shared || reusedLib
+        %assign CodeGenSettings = tmp
+      %endif
+      %if indent
+        %<SLibIndentFile(outputFileName,::CompiledModel.Name)>
+      %endif
+      %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Execute the code template and commit to disk")>
+    %else
+      %openfile outputFile = outputFileName
+      %include "rtw_code.tlc"
+      %closefile outputFile
+      %if indent 
+        %<SLibIndentFile(outputFileName,::CompiledModel.Name)>
+      %endif
+    %endif
+    %if indentFile 
+      %<SLibIndentFile(outputFileName,::CompiledModel.Name)>
+    %endif
+    
+    %<LibSetSourceFileSection(fileIdx, "WrittenToDisk", TLC_TRUE)>
+  %endforeach
+  %<SLibAddTLCCompileStatsCheckPoint(TLC_FALSE,"Write source file to disk")>
+  
+%endfunction
+
+
+%function FcnSkipModelFile(fileIdx) void
+  %assign filter  = LibGetModelFileAttribute(fileIdx,"Filter")
+  %assign isEmpty = LibGetModelFileAttribute(fileIdx,"IsEmpty")
+  %assign isWrittenToDisk = LibGetModelFileAttribute(fileIdx, "WrittenToDisk")
+  %return (filter == 1 || isEmpty || isWrittenToDisk)
+%endfunction

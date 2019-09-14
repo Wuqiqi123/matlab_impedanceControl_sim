@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<config
+    Name="lcc-win64"
+	ShortName = "lcc64"
+    Manufacturer="lcc"
+    Version=""
+    Language="C"
+    Priority="E"
+    Location="$LCCROOT" >
+    <Details
+        CompilerExecutable="$COMPILER"
+        CompilerDefines="$COMPDEFINES"
+        CompilerFlags="$COMPFLAGS"
+        OptimizationFlags="$OPTIMFLAGS"
+        DebugFlags="$DEBUGFLAGS"
+        IncludeFlags="$INCLUDE"
+        LinkerExecutable="$LINKER"
+        LinkerFlags="$LINKFLAGS"
+        LinkerLibraries="$LINKLIBS"
+        LinkerOptimizationFlags="$LINKOPTIMFLAGS"
+	LinkerDebugFlags="$LINKDEBUGFLAGS"
+        CommandLineShell="set LCCINSTALLDIR=$MATLABROOT\sys\lcc64\lcc64"
+		CommandLineShellArg=""
+        CompilerDefineFormatter="-D%s"
+        LinkerLibrarySwitchFormatter="lib%s.lib;%s.lib"
+        LinkerPathFormatter="/LIBPATH:%s"
+		LibrarySearchPath="$$LIB;$$LIBPATH;$$PATH;$$INCLUDE;$MATLABROOT\extern\lib\$ARCH\microsoft"
+    />
+    <vars
+          CMDLINE100 ="echo LIBRARY $EXE> mexFunction.def"
+          CMDLINE101 ="echo EXPORTS>> mexFunction.def"
+          CMDLINE102 ="echo mexFunction>> mexFunction.def"
+
+          CMDLINE103 ="copy mexFunction.def mexFunctionVer.def"
+          CMDLINE104 ="echo mexfilerequiredapiversion>> mexFunctionVer.def"
+          
+          CMDLINE200="$COMPILER -c $COMPFLAGS $SRC $OPTIM $COMPDEFINES $INCLUDE /Fo$OBJ"
+		  CMDLINE201="$COMPILER $COMPFLAGS -I&quot;$MATLABROOT\sys\lcc64\lcc64\include64&quot; $MATLABMEX &quot;$MATLABROOT\sys\lcc64\lcc64\mex\lccstub.c&quot; /Fo&quot;$TEMPNAMElib2.obj&quot;"
+          CMDLINE300="$LINKER $LINKFLAGS $LINKEXPORTVER $LINKLIBPATH &quot;$TEMPNAMElib2.obj&quot; $LINKOPTIM $OBJS $LINKLIBS $LLIBS "
+          CMDLINE400="del $OBJ" 
+          CMDLINE401="IF EXIST $DEF (del $DEF)" 
+          CMDLINE402="IF EXIST &quot;$TEMPNAMElib2.obj&quot; (del &quot;$TEMPNAMElib2.obj&quot;)" 
+          CMDLINE403="IF EXIST $LIB (del $LIB)"
+          CMDLINE404="IF EXIST $EXP (del $EXP)"
+          CMDLINE405="IF EXIST mexFunction.def (del mexFunction.def)"
+          CMDLINE406="IF EXIST mexFunctionVer.def (del mexFunctionVer.def)"
+          
+          COMPILER="lcc64"
+          COMPFLAGS="-nodeclspec -Zp8 -dll -c -noregistrylookup"
+          COMPDEFINES="$MATLABMEX" 
+		  MATLABMEX=" -DMATLAB_MEX_FILE" 
+          OPTIMFLAGS=""
+          INCLUDE="-I&quot;$MATLABROOT\sys\lcc64\lcc64\include64&quot; -I&quot;$MATLABROOT\extern\include&quot; -I&quot;$MATLABROOT\simulink\include&quot; -I&quot;$MATLABROOT\sys\lcc64\lcc64\mex&quot; "
+          DEBUGFLAGS=""
+          
+          LINKER="lcclnk64"
+          LINKFLAGS="-entry LibMain -o $EXE "
+          LINKEXPORT="-dll mexFunction.def"
+          LINKEXPORTVER="-dll mexFunctionVer.def"
+          LINKLIBS=""
+		  LLIBS="libmx.lib libmex.lib libmat.lib "
+		  LINKLIBPATH="-L&quot;$MATLABROOT\sys\lcc64\lcc64\lib64&quot; -L&quot;$MATLABROOT\extern\lib\$ARCH\microsoft&quot; -L&quot;$MATLABROOT\lib\$ARCH&quot;"
+          LINKDEBUGFLAGS=""
+          LINKOPTIMFLAGS="-s"
+
+          OBJEXT=".obj"
+          LDEXT=".mexw64"
+		SETENV="set COMPILER=$COMPILER 
+				set COMPFLAGS=-c $COMPFLAGS $COMPDEFINES $MATLABMEX 
+				set OPTIMFLAGS=$OPTIMFLAGS 
+				set DEBUGFLAGS=$DEBUGFLAGS 
+				set LINKER=$LINKER 
+				set LINKFLAGS=$LINKFLAGS mexFunction.def $LINKTYPE $LINKLIBS $LINKEXPORT 
+				set LINKDEBUGFLAGS= 
+				set NAME_OUTPUT=/out:&quot;%OUTDIR%%MEX_NAME%%MEX_EXT%&quot;"
+    />
+    <client>
+		<engine
+          LINKLIBS="$LINKLIBS libeng.lib"
+          LINKEXPORT=""
+          LINKEXPORTVER=""
+          LDEXT=".exe" 
+		  LINKTYPE=""
+		  MATLABMEX=""
+		/>
+	</client>
+    <locationFinder>
+		<LCCROOT>
+			<and>
+				<dirExists name="$MATLABROOT\sys\lcc64\lcc64" />
+			</and>
+		</LCCROOT>
+    </locationFinder>
+    <env
+		PATH = "$MATLABROOT\sys\lcc64\lcc64\bin;$MATLABROOT\sys\lcc64\lcc64\include64;$MATLABROOT\sys\lcc64\lcc64\mex;$MATLABROOT\extern\lib\$ARCH\microsoft;$MATLABROOT\extern\include\$ARCH\;$MATLABROOT\extern\include;$MATLABROOT\simulink\include"
+        INCLUDE="$MATLABROOT\extern\include;"
+        LIB="$MATLABROOT\extern\lib\$ARCH\microsoft;"
+        LIBPATH="$MATLABROOT\extern\lib\$ARCH\microsoft;"
+	/>
+</config>

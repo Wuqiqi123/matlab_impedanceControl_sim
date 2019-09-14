@@ -1,0 +1,877 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%% Abstract:
+%%    Returns the appropriate variable string for a given access to
+%%    SimStruct structure.
+
+%if EXISTS("_FCNIOLIB_") == 0
+%assign _FCNIOLIB_ = 1
+
+%%
+%% (1) Global Library Functions (Lib functions)
+%%
+
+%%===-----------------------------------------------------------------------===
+%%
+%% All accesses to SimStruct variables should be done through these accessor
+%% methods. This will return the correct version for the specified target.
+%% For example: GRT-Malloc no longer accesses the SimStruct variables through
+%% a local variable, but accesses them directly. The "HasSimStructVars"
+%% variable in the CompiledModel structure is defined if this direct access
+%% is used.
+%%
+%%===-----------------------------------------------------------------------===
+
+%% Function: SLibGetElementIdxFromVarGroup =====================================
+%% Abstract:
+%%    Returns a element index for a given vargroup and element source or index
+%%
+%function SLibGetElementIdxFromVarGroup(aVarGroupIdx, aElementSrcOrIndex) void
+  %if TYPE(aElementSrcOrIndex) == "String"
+    %assign numElement = SLibVarGroupNumElements(aVarGroupIdx)
+    %foreach mIdx = numElement
+      %if SLibVarGroupElementSource(aVarGroupIdx, mIdx) == aElementSrcOrIndex
+        %return mIdx
+      %endif
+    %endforeach
+    %return -1
+  %endif
+  %assert TYPE(aElementSrcOrIndex) == "Number"
+  %return aElementSrcOrIndex
+%endfunction
+
+%% Function: SLibGetGlobalInstanceNameForBlocksSelf
+%% Abstract:
+%%   Returns true if and only if we access the child block self
+%%   instance through a coder group pointer in self. For example:
+%%   "self->anotherCoderGroup->childSelfInst1"
+%function SLibIsBlockInstanceAccessedViaPointerInSelf(aBlock)
+  %assign childSelfCoderGroupIndex = SLibGetChildSelfCoderGroupIndex(aBlock)
+  %if childSelfCoderGroupIndex != -1
+    %assign blockInterface = GetModelrefInterface(aBlock)
+    %assign childCoderGroupsRecord = blockInterface.CoderDataGroups.CoderDataGroup
+    %assign numChildCoderGroups = SIZE(childCoderGroupsRecord, 1)
+    %if numChildCoderGroups > 1
+      %assign childSelfCoderGroup = childCoderGroupsRecord[childSelfCoderGroupIndex]
+    %else
+      %assign childSelfCoderGroup = childCoderGroupsRecord
+    %endif
+    %assign groupIndexWithChildSelfNameInCurrentModel = ...
+      SLibCoderDataGroupIndex(childSelfCoderGroup.Name)      
+    %assign childSelfGroupNameRegisteredInCurrentModel = ...
+      groupIndexWithChildSelfNameInCurrentModel != -1
+    %assign childSelfGroupIsInParent = ...
+      ISFIELD(childSelfCoderGroup, "AsStructure") && ...
+      childSelfCoderGroup.AsStructure == "InParent"
+    
+    %if SLibGetDoesSelfHasCoderDataGroup()
+      %assign currentModelSelfGroup = ::CompiledModel.CoderDataGroup[SLibGetSelfCoderDataGroupIndex()]
+      %assign childAndParentHaveDifferentSelfGroups = ...
+        currentModelSelfGroup.Name != childSelfCoderGroup.Name  
+      %if childSelfGroupIsInParent && ...
+        childSelfGroupNameRegisteredInCurrentModel && ...
+        childAndParentHaveDifferentSelfGroups
+        %return TLC_TRUE
+      %endif
+    %endif
+    
+  %endif
+
+  %return TLC_FALSE
+%endfunction
+
+%% Function: SLibGetPathToInstanceFromSelf
+%% Abstract:
+%%   Returns the path to child block's self instance through
+%%   a coder group pointer. For example:
+%%   "self->anotherCoderGroup->childSelfInst1"
+%function SLibGetPathToInstanceFromSelf(aBlock)
+  %assign path = ""
+  
+  %assign childSelfCoderGroupIndex = SLibGetChildSelfCoderGroupIndex(aBlock)
+  %assign blockInterface = GetModelrefInterface(aBlock)
+  %assign childCoderGroupsRecord = blockInterface.CoderDataGroups.CoderDataGroup
+  %assign numChildCoderGroups = SIZE(childCoderGroupsRecord, 1)
+  %if numChildCoderGroups > 1
+    %assign childSelfCoderGroup = childCoderGroupsRecord[childSelfCoderGroupIndex]
+  %else
+    %assign childSelfCoderGroup = childCoderGroupsRecord
+  %endif
+  
+  %assign selfVarGroup = ::CompiledModel.VarGroups.VarGroup[SLibGetSelfVarGroupIndex()]
+        
+  %foreach vgElementId = selfVarGroup.NumVarGroupElements
+    %assign vgElement = selfVarGroup.VarGroupElements[vgElementId]
+    %assign idNumElement = IDNUM(vgElement)
+    %if idNumElement[0] == "RCDG"
+      %assign coderGroupIndex = idNumElement[1]
+      %assign coderGroup = ::CompiledModel.CoderDataGroup[coderGroupIndex]
+      %if coderGroup.Name == childSelfCoderGroup.Name
+        %assign path = tSimStruct + "->" + LibCGTypeMemberName(selfVarGroup.CGTypeIdx, vgElementId) + "->" + aBlock.Identifier
+        %break
+      %endif
+    %endif
+  %endforeach
+
+  %return path
+%endfunction
+
+%% Function: SLibGetFieldPointerFromSelf ==========================================
+%% Abstract:
+%%    Returns a pointer to a RTM VarGroup Generated through the cgType
+%%
+%function SLibGetFieldPointerFromSelf(eleNameOrIndex,addTypeCast) void
+  %if !SLibGetUseRTMcgType() || !SLibGetDoesSelfHasCoderDataGroup()
+    %return ""
+  %endif
+  %assign retStr = ""
+  %% If we are here, we should either have mapped Self (Coder Group) or unmapped Self (RTM)
+  %assert SLibGetDoesSelfHasCoderDataGroup()
+
+  %assign selfVarGroupIdx = SLibGetSelfVarGroupIndex()
+  %assign elIdx = SLibGetElementIdxFromVarGroup(selfVarGroupIdx, eleNameOrIndex)
+  %assign ptr = ""
+  %if elIdx > -1
+    %if SLibVarGroupIsStruct(selfVarGroupIdx)
+      %if IsModelRefScalableBuild()
+        %assign selfVar = IsModelReferenceSimTarget() ? FcnGetSFcnDWorkRTM() : ::CompiledModel.GlobalScope.tRTM
+      %else
+        %assign selfVar = tSimStruct
+        %if SLibSynthesizedRTM()
+          %<SLibCG_AccessRTM()>
+        %endif
+      %endif
+      %assign deref =  IsModelRefScalableBuild() ? "." : "->"
+      %assign retStr = selfVar + deref
+    %endif
+    %assign retStr = retStr + SLibVarGroupElementName(selfVarGroupIdx, elIdx)
+    %assign typeIdx = SLibVarGroupElementType(selfVarGroupIdx, elIdx)
+    %if !LibCGTypeIsPointer(typeIdx)
+      %assign ptr  = "*"
+      %assign retStr = "&("+ retStr +")"
+    %endif
+    %if addTypeCast
+      %assign retStr = "((" + SLibGetTypeNameFromCGType(typeIdx) + ptr + ")" + retStr + ")"
+    %endif
+  %endif
+  %return retStr
+%endfunction
+
+%% Function: SLibGetBlockIOPointerFromRTM ======================================
+%% Abstract:
+%%    Returns a pointer to the BlockIO structure from the RTM.
+%%
+%function SLibGetBlockIOPointerFromRTM(addTypeCast)
+  %if Accelerator
+    %assign retStr = RTMuGet("ModelBlockIO") 
+  %elseif CodeFormat == "S-Function"
+    %assign retStr = RTMGet("LocalBlockIO")
+  %else
+    %assign retStr = RTMuGet("BlockIO") 
+  %endif
+  %if addTypeCast
+    %assign retStr = "((%<::tBlockIOType> *) %<retStr>)"
+  %endif
+  %return retStr
+%endfunction %% SLibGetBlockIOPointerFromRTM
+
+%% Function: SLibGetBlockIOStruct ==============================================
+%% Abstract:
+%%    Returns the variable for the block I/O. This function is similar with 
+%%    LibGetBlockIOStruct, except this function can control whether add type
+%%    cast. 
+%%
+%function SLibGetBlockIOStruct(addTypeCast) void
+  %if ::CompiledModel.HasSimStructVars == 1
+    %return SLibGetBlockIOPointerFromRTM(addTypeCast)
+  %elseif IsModelRefScalableBuild() && !GenerateClassInterface
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+    %return FcnSysVarGroupNonreusedName(baseSystem, "BlockIO")
+  %else
+    %return ::tBlockIO 
+  %endif
+%endfunction %% SLibGetBlockIOStruct
+
+%% Function: LibGetBlockIOStruct ==============================================
+%% Abstract:
+%%    Returns the variable for the block I/O.
+%%
+%function LibGetBlockIOStruct() void
+  %return SLibGetBlockIOStruct(TLC_TRUE)
+%endfunction %% LibGetBlockIOStruct
+
+%% Function: SLibGetConstBlockIOPointerFromRTM =================================
+%% Abstract:
+%%    Returns a pointer to the const BlockIO structure from the RTM.
+%%
+%function SLibGetConstBlockIOPointerFromRTM() void
+  %return "((%<::tConstBlockIOType> *) %<RTMGet("ConstBlockIO")>)"
+%endfunction %% SLibGetConstBlockIOPointerFromRTM
+
+%% Function: SLibGetSelfPointerFromRTM =================================
+%% Abstract:
+%%    Returns a pointer to the context data structure from the RTM.
+%%
+%function SLibGetSelfPointerFromRTM() void
+  %return tSimStruct
+%endfunction %% SLibGetSelfPointerFromRTM
+
+%% Function: SLibGetSelfStruct ================================================
+%% Abstract:
+%%    Returns the variable for the DWork variable.
+%%
+%function SLibGetSelfStruct(addTypeCast) void
+    %return tSimStruct
+%endfunction %% SLibGetDWorkStruct
+
+%% Function: LibGetSelfStruct ================================================
+%% Abstract:
+%%    Returns the variable for the DWork variable.
+%%
+%function LibGetSelfStruct() void
+  %return SLibGetSelfStruct(TLC_TRUE) 
+%endfunction %% LibGetDWorkStruct
+
+
+%% Function: LibGetConstBlockIOStruct ==========================================
+%% Abstract:
+%%    Returns the variable for the const block I/O.
+%%
+%function LibGetConstBlockIOStruct() void
+  %if isGRTMalloc
+    %return SLibGetConstBlockIOPointerFromRTM()
+  %else
+    %return ::tConstBlockIOStruct
+  %endif
+%endfunction %% LibGetConstBlockIOStruct
+
+%% Function: SLibGetExternalInputStructHelper
+%% Abstract:
+%%  Helper for SLibGetExternalInputStructForRecord and SLibGetExternalInputStruct
+%function SLibGetExternalInputStructHelper(addTypeCast,isCallSite, cross, typeName, varName) void
+  %assign retStr = "" 
+  %if isCallSite && ...
+    (::CompiledModel.HasSimStructVars || ...
+    ((cross || ThisSubsysCross) && MultiInstanceERTCode && !GenerateClassInterface))
+    %if UsingMalloc || Accelerator || ...
+      ((cross || ThisSubsysCross) && MultiInstanceERTCode && !GenerateClassInterface)
+      %assign retStr = RTMGet("U")
+    %elseif CodeFormat == "S-Function"
+      %assign retStr =  RTMGetIdxed("InputPortSignalPtrs", 0)
+    %else
+      %assign retStr = ::tInput
+    %endif
+    %assert(!WHITE_SPACE(retStr))
+    %if addTypeCast
+      %assign retStr = "((%<typeName> *) %<retStr>)"
+    %endif
+  %else  
+    %assign retStr = varName
+  %endif
+  %return retStr
+%endfunction
+
+%% Function: SLibGetExternalInputStructForRecord
+%% Abstract:
+%%  Returns coder group structure name for record, otherwise fallbacks to default routine SLibGetExternalInputStruct
+%function SLibGetExternalInputStructForRecord(extInp) void  
+  %assign coderGroupId = ...
+    SLibGetCoderGroupIdForDataRecord(extInp)
+  %if coderGroupId != -1
+    %assign coderGroup = ::CompiledModel.CoderDataGroup[coderGroupId]
+    %assign typeName = SLibCoderDataGroupType(coderGroup)
+    %assign varName = SLibCoderDataGroupInstance(coderGroup)
+
+    %return SLibGetExternalInputStructHelper(TLC_TRUE, TLC_FALSE, TLC_FALSE, typeName, varName)
+  %else
+    %% default group
+    %return LibGetExternalInputStruct()
+  %endif
+%endfunction
+
+%% Function: SLibGetExternalInputStruct ========================================
+%% Abstract:
+%%    Returns the variable for the external input signal.
+%%
+%function SLibGetExternalInputStruct(addTypeCast,isCallSite,cross) void
+    %assign typeName = ::tInputType
+    %assign varName = ::tInput
+
+    %return SLibGetExternalInputStructHelper(addTypeCast,isCallSite,cross, typeName, varName)
+%endfunction %% SLibGetExternalInputStruct
+
+%% Function: LibGetExternalInputStruct ========================================
+%% Abstract:
+%%    Returns the variable for the external input signal.
+%%
+%function LibGetExternalInputStruct() void
+  %return SLibGetExternalInputStruct(TLC_TRUE, TLC_FALSE, TLC_FALSE)
+%endfunction %% LibGetExternalInputStruct
+
+%% Function: SLibGetExternalOutputStructHelper
+%% Abstract:
+%%  Helper for SLibGetExternalOutputStructForRecord and SLibGetExternalOutputStruct
+%function SLibGetExternalOutputStructHelper(addTypeCast, isCallSite, cross, typeName, varName) void
+  %assign retStr = ""
+
+    %if isCallSite && ...
+      (::CompiledModel.HasSimStructVars || ...
+      ((cross || ThisSubsysCross) && MultiInstanceERTCode && !GenerateClassInterface))
+    %assert(!Accelerator)
+    %if UsingMalloc || ((cross || ThisSubsysCross) && MultiInstanceERTCode && !GenerateClassInterface)
+      %assign retStr = RTMGet("Y")
+    %elseif CodeFormat == "S-Function"
+      %assign retStr = RTMGetIdxed("OutputPortSignal", 0)
+    %else
+      %assign retStr =  varName
+    %endif
+    %assert(!WHITE_SPACE(retStr))
+    %if addTypeCast
+      %assign retStr =  "((%<typeName> *) %<retStr>)"
+    %endif
+  %else
+     %assign retStr =  varName
+  %endif
+  %return retStr
+%endfunction
+
+%% Function: SLibGetExternalOutputStructForRecord
+%% Abstract:
+%%   Returns coder group structure name for record, otherwise fallbacks to default routine SLibGetExternalOutputStruct
+%function SLibGetExternalOutputStructForRecord(extOutp) void
+  %assign coderGroupId = ...
+    SLibGetCoderGroupIdForDataRecord(extOutp)
+  %if coderGroupId != -1
+    %assign coderGroup = ::CompiledModel.CoderDataGroup[coderGroupId]
+    %assign typeName = SLibCoderDataGroupType(coderGroup)
+    %assign varName = SLibCoderDataGroupInstance(coderGroup)
+    
+    %return SLibGetExternalOutputStructHelper(TLC_TRUE, TLC_FALSE, TLC_FALSE, typeName, varName)
+  %else      
+    %% default group
+    %return LibGetExternalOutputStruct()
+  %endif
+%endfunction
+
+%% Function: SLibGetExternalOutputStruct =======================================
+%% Abstract:
+%%    Returns the variable for the external output signal.
+%%
+%function SLibGetExternalOutputStruct(addTypeCast,isCallSite,cross) void
+    %assign typeName = ::tOutputType
+    %assign varName = ::tOutput
+    
+  %return SLibGetExternalOutputStructHelper(addTypeCast,isCallSite,cross, typeName, varName)
+%endfunction %% SLibGetExternalOutputStruct
+
+
+%% Function: LibGetExternalOutputStruct =======================================
+%% Abstract:
+%%    Returns the variable for the external output signal.
+%%
+%function LibGetExternalOutputStruct() void
+  %return SLibGetExternalOutputStruct(TLC_TRUE, TLC_FALSE, TLC_FALSE)
+%endfunction %% LibGetExternalOutputStruct
+
+%% Function: SLibGetContStatesPointerFromRTM ==================================
+%% Abstract:
+%%    Returns a pointer to the continues states structure from the RTM.
+%%
+%function SLibGetContStatesPointerFromRTM(addTypeCast) void
+  %assign retStr = RTMGet("ContStates")
+  %if addTypeCast
+    %assign retStr =  "((%<::tContStateType> *) %<retStr>)"
+  %endif
+  %return retStr
+%endfunction %% SLibGetContStatesPointerFromRTM
+
+%% Function: SLibGetContinuousStateStruct ======================================
+%% Abstract:
+%%    Returns the variable for the continuous state variable.
+%%
+%function SLibGetContinuousStateStruct(addTypeCast) void
+  %if ::CompiledModel.HasSimStructVars == 1
+    %return SLibGetContStatesPointerFromRTM(addTypeCast)
+  %else
+    %return ::tContState
+  %endif
+%endfunction %% LibGetContinuousStateStruct
+
+
+%% Function: LibGetContinuousStateStruct ======================================
+%% Abstract:
+%%    Returns the variable for the continuous state variable.
+%%
+%function LibGetContinuousStateStruct() void
+  %return SLibGetContinuousStateStruct(TLC_TRUE)
+%endfunction %% LibGetContinuousStateStruct
+
+
+%% Function: LibGetPeriodicStateIndicesPtrFromRTM ==================================
+%% Abstract:
+%%    Returns a pointer to the periodic state indices from the RTM.
+%%
+%function SLibGetPeriodicStateIndicesPtrFromRTM(addTypeCast) void
+  %assign retStr = RTMGet("PeriodicContStateIndices")
+  %if addTypeCast
+    %assign retStr =  "((%<::tPeriodicStateIndType>*) %<retStr>)"
+  %endif
+  %return retStr
+%endfunction %% SLibGetPeriodicStateIndicesPtrFromRTM
+
+
+%% Function: LibGetPeriodicContStateIndices
+%% Abstract:
+%%    Returns the variable for the index of the global periodic continuous state.
+%%
+%function LibGetPeriodicContStateIndices() Output
+  %assert (!IsModelReferenceTarget())   
+  %return tPeriodicStateInd
+%endfunction %% LibGetPeriodicContStateIndices
+
+
+%% Function: SLibGetPeriodicStateRangesPtrFromRTM ==================================
+%% Abstract:
+%%    Returns a pointer to the periodic state ranges from the RTM.
+%%
+%function SLibGetPeriodicStateRangesPtrFromRTM(addTypeCast) void
+  %assign retStr = RTMGet("PeriodicContStateRanges")
+  %if addTypeCast
+    %assign retStr =  "((%<tPeriodicStateRngType>*) %<retStr>)"
+  %endif
+  %return retStr
+%endfunction %% SLibGetPeriodicStateRangesPtrFromRTM
+
+
+%% Function: LibGetPeriodicContStateRanges
+%% Abstract:
+%%    Returns the variable for the range of the global periodic continuous state.
+%%
+%function LibGetPeriodicContStateRanges() Output
+  %assert (!IsModelReferenceTarget())   
+  %return tPeriodicStateRng
+%endfunction %% LibGetPeriodicContStateRanges
+
+
+%% Function: SLibGetContStateDerivativesStructFromRTM =========================
+%% Abstract:
+%%    Returns a pointer to the continues state derivatives structure
+%%    from the RTM.
+%%
+%function SLibGetContStateDerivativesStructFromRTM() void
+  %if SLibIsPartitionGrouping()
+    %assert EXISTS(::GlobalCurrentPID)
+    %if SLibPartitionNeedContFcnDecl(::GlobalCurrentPID)
+      %return "((%<::tXdotType> *) %<RTMGet("dX")>)"
+    %else
+      %return SLibPartitionGetContStateDerivativeStruct()
+    %endif
+  %else
+    %return "((%<::tXdotType> *) %<RTMGet("dX")>)"
+  %endif
+%endfunction %% SLibGetContStateDerivativesStructFromRTM
+
+%% Function: LibGetDotContinuousStateStruct ===================================
+%% Abstract:
+%%    Returns the variable for the dot continuous state variable.
+%%
+%function LibGetDotContinuousStateStruct() void
+  %assign isDeriv = (::BlockFcn == "Derivative")
+  %assign isForcingFunction = (::BlockFcn == "ForcingFunction")
+  %if ::CompiledModel.HasSimStructVars == 1 || isDeriv || isForcingFunction
+    %return SLibGetContStateDerivativesStructFromRTM()
+  %else
+    %return ::tXdot
+  %endif
+%endfunction %% LibGetDotContinuousStateStruct
+
+%% Function: SLibGetContStateDisabledsStructFromRTM =========================
+%% Abstract:
+%%    Returns a pointer to the continues state disabled structure
+%%    from the RTM.
+%%
+%function SLibGetContStateDisabledStructFromRTM() void
+  %return "((%<::tXdisType> *) %<RTMGet("ContStateDisabled")>)"
+%endfunction %% SLibGetContStateDisabledStructFromRTM
+
+%% Function: LibGetContinuousStateDisabledStruct ==============================
+%% Abstract:
+%%    Returns the variable for the continuous state disabled variable.
+%%
+%function LibGetContinuousStateDisabledStruct() void
+  %assign isDeriv = (::BlockFcn == "Derivative")
+  %assign isForcingFunction = (::BlockFcn == "ForcingFunction")
+  %if ::CompiledModel.HasSimStructVars == 1 || ::isRSimWithSolverModule || isDeriv || isForcingFunction
+    %return SLibGetContStateDisabledStructFromRTM()
+  %else
+    %return ::tXdis
+  %endif
+%endfunction %% LibGetContinuousStateDisabledStruct
+
+%% Function: SLibGetContStateAbsoluteToleranceStructFromRTM =================
+%% Abstract:
+%%    Returns a pointer to the continuous state absolute tolerance
+%%    from the RTM.
+%%
+%function SLibGetContStatesAbsoluteToleranceStructFromRTM() void
+  %return "((%<::tXAbsTolType> *) %<RTMGet("AbsTolVector")>)"
+%endfunction %% SLibGetContStateAbsoluteToleranceStructFromRTM
+
+%% Function: LibGetContinuousStateAbsoluteToleranceStruct ==============================
+%% Abstract:
+%%    Returns the variable for the continuous state absolute tolerance variable.
+%%
+%function LibGetContinuousStateAbsoluteToleranceStruct() void
+  %if ::CompiledModel.HasSimStructVars == 1 || ::isRSimWithSolverModule 
+    %return SLibGetContStatesAbsoluteToleranceStructFromRTM()
+  %else
+    %return ::tXAbsTol
+  %endif
+%endfunction %% LibGetContinuousStateAbsoluteToleranceStruct
+
+
+%% Function: LibGetMassMatrixGlobal ======================================
+%% Abstract:
+%%    Returns the variable for the global Mass Matrix.
+%%
+%function LibGetMassMatrixGlobal() Output
+  %if ::CompiledModel.HasSimStructVars == 1
+    %return ""
+  %elseif SLibIsPartitionGrouping() && ...
+    EXISTS(::GlobalCurrentPID) && ...
+    TYPE(::GlobalCurrentPID) == "Number" && ...
+    ::GlobalCurrentPID >= 0
+    %return SLibPartitionGetMassMatricesVarName(::GlobalCurrentPID)
+  %else
+    %return ::tMassMatrixGlobal
+  %endif
+%endfunction %% LibGetMassMatrixGlobal
+
+
+%% Function: LibGetMassMatrixGlobalIr ======================================
+%% Abstract:
+%%    Returns the variable for the Ir of the global Mass Matrix.
+%%
+%function LibGetMassMatrixGlobalIr() Output
+  %assert (!IsModelReferenceTarget())   
+  %if Accelerator
+    %return RTMGet("MassMatrixIr")
+  %else  
+    %return LibGetMassMatrixGlobal()+".ir"
+  %endif
+%endfunction %% LibGetMassMatrixGlobalIr
+
+%% Function: LibGetMassMatrixGlobalJc ======================================
+%% Abstract:
+%%    Returns the variable for the Jc of the global Mass Matrix.
+%%
+%function LibGetMassMatrixGlobalJc() Output
+  %assert (!IsModelReferenceTarget()) 
+  %if Accelerator
+    %return RTMGet("MassMatrixJc")
+  %else  
+    %return LibGetMassMatrixGlobal()+".jc"
+  %endif
+%endfunction %% LibGetMassMatrixGlobalJc
+
+%% Function: LibGetMassMatrixGlobalPr ======================================
+%% Abstract:
+%%    Returns the variable for the Pr of the global Mass Matrix.
+%%
+%function LibGetMassMatrixGlobalPr() Output
+  %if IsModelReferenceTarget() 
+    %return RTMGet("MassMatrixBasePr")
+  %elseif Accelerator
+    %return RTMGet("MassMatrixPr")
+  %else  
+    %return LibGetMassMatrixGlobal()+".pr"
+  %endif
+%endfunction %% LibGetMassMatrixGlobalPr
+
+%% Function: SLibGetDWorkPointerFromRTM ========================================
+%% Abstract:
+%%    Returns a pointer to the DWork structure from the RTM.
+%%
+%function SLibGetDWorkPointerFromRTM(addTypeCast) void
+  %assign retStr = RTMGet("RootDWork") 
+  %if addTypeCast
+    %assign retStr = "((%<::tDWorkType> *) %<retStr>)"
+  %endif
+  %return retStr
+%endfunction %% SLibGetDWorkPointerFromRTM
+
+%% Function: SLibGetCoderDataGroupPointerFromRTM ==============================
+%% Abstract:
+%%    Returns a pointer to the CoderDataGroup structure from the RTM.
+%%
+%function SLibGetCoderDataGroupPointerFromRTM(group, addTypeCast) void
+  %assign rootSystem = ::CompiledModel.System[NumSystems-1]
+  %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+  %assign fieldName = "HasCoderDataGroup" + group.Name + "Arg"
+  %assign baseSystem.%<fieldName> = TLC_TRUE
+  %assign varGroupIndex = SLibGetRootVarGroupIdxForCoderGroup(group)
+
+  %if SLibAccessViaPointerInSelf(group)
+    %assign elem = "RCDG" + STRING(group.GroupIndex)
+  %else
+    %assign elem = "VG" + STRING(varGroupIndex)
+  %endif
+  
+  %if (group.GroupIndex == SLibGetSelfCoderDataGroupIndex())
+    %assign retStr = ::tSimStruct
+  %elseif (SLibGetUseRTMcgType())
+    %assign retStr = SLibGetFieldPointerFromSelf(elem, addTypeCast)
+  %else
+    %assign retStr = RTMGet(SLibCoderDataGroupRTMFieldName(group))
+    %if group.AsStructure == "InSelf"
+      %assign retStr = "&(%<retStr>)"
+    %endif
+  %endif
+
+  %if addTypeCast
+    %assign typeString = SLibCoderDataGroupType(group)
+    %assign retStr = "((%<typeString> *) %<retStr>)"
+  %endif
+
+  %return retStr
+%endfunction %% SLibGetCoderDataGroupPointerFromRTM
+
+%% Function: SLibGetDWorkStruct ================================================
+%% Abstract:
+%%    Returns the variable for the DWork variable.
+%%
+%function SLibGetDWorkStruct(addTypeCast) void
+  %if ::CompiledModel.HasSimStructVars == 1
+    %return SLibGetDWorkPointerFromRTM(addTypeCast)
+  %elseif IsModelRefScalableBuild() && !GenerateClassInterface
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+    %return FcnSysVarGroupNonreusedName(baseSystem, "DWork")
+  %else
+    %return ::tDWork
+  %endif
+%endfunction %% SLibGetDWorkStruct
+
+%% Function: LibGetDWorkStruct ================================================
+%% Abstract:
+%%    Returns the variable for the DWork variable.
+%%
+%function LibGetDWorkStruct() void
+  %return SLibGetDWorkStruct(TLC_TRUE) 
+%endfunction %% LibGetDWorkStruct
+
+%% Function: SLibGetCoderDataGroupStruct ================================================
+%% Abstract:
+%%    Returns the variable for the CoderDataGroup variable.
+%%
+%function SLibGetCoderDataGroupStruct(group, addTypeCast) void
+  %if ::CompiledModel.HasSimStructVars == 1
+    %return SLibGetCoderDataGroupPointerFromRTM(group,0)
+  %elseif IsModelRefScalableBuild() && !GenerateClassInterface
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+    %return FcnSysVarGroupNonreusedName(baseSystem, "CoderDataGroup" + group.Name)
+  %else
+    %return SLibCoderDataGroupInstance(group)
+  %endif
+%endfunction %% SLibGetCoderDataGroupStruct
+
+%% Function: LibGetCoderDataGroupStruct ================================================
+%% Abstract:
+%%    Returns the variable for the CoderDataGroup variable.
+%%
+%function LibGetCoderDataGroupStruct(group) void
+  %return SLibGetCoderDataGroupStruct(group, TLC_TRUE) 
+%endfunction %% LibGetCoderDataGroupStruct
+
+%% Function: LibGetContStatesStruct ==========================================
+%% Abstract:
+%%    Returns the variable for the ContStates variable.
+%%
+%function LibGetContStatesStruct() void
+  %return LibGetContinuousStateStruct()
+%endfunction %% LibGetContStatesStruct
+
+%% Function: LibGetContStatesDisabledStruct ==================================
+%% Abstract:
+%%    Returns the variable for the ContStatesDisabled variable.
+%%
+%function LibGetContStatesDisabledStruct() void
+  %return LibGetContinuousStateDisabledStruct()
+%endfunction %% LibGetContStatesDisabledStruct
+
+%% Function: LibGetContStatesAbsoluteToleranceStruct ========================= 
+%% Abstract:      
+%%    Returns the variable for the ContStatesAbsoluteTolerance variable.
+%%         
+%function LibGetContStatesAbsoluteToleranceStruct() void                        
+  %return LibGetContinuousStateAbsoluteToleranceStruct() 
+%endfunction %% LibGetContStatesAbsoluteToleranceStruct 
+    
+%% Function: LibGetContStatesDerivativeStruct ================================
+%% Abstract:
+%%    Returns the variable for the ContStatesDerivative variable.
+%%
+%function LibGetContStatesDerivativeStruct() void
+  %return LibGetDotContinuousStateStruct()
+%endfunction %% LibGetContStatesDerivativeStruct
+
+
+%% Function: SLibGetPreviousZCStructFromRTM ===================================
+%% Abstract:
+%%    Returns the variable for the previous zero crossings variable from RTM.
+%%
+%function SLibGetPreviousZCStructFromRTM(addTypeCast) void
+  %if CodeFormat == "S-Function"
+    %assign retStr = RTMuGet("PrevZCSigState")
+  %else
+    %assign retStr = RTMGet("PrevZCSigState")
+  %endif
+  %if addTypeCast
+    %assign retStr = "((%<::tPrevZCStateType> *) %<retStr>)"
+  %endif
+  %return retStr
+%endfunction %% SLibGetPreviousZCStructFromRTM
+
+%% Function: SLibGetPreviousZCStruct ===========================================
+%% Abstract:
+%%    Returns the variable for the previous zero crossings variable.
+%%
+%function SLibGetPreviousZCStruct(addTypeCast) void
+  %if ::CompiledModel.HasSimStructVars == 1
+    %return SLibGetPreviousZCStructFromRTM(addTypeCast)
+  %elseif IsModelRefScalableBuild() && !GenerateClassInterface
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+    %return FcnSysVarGroupNonreusedName(baseSystem, "ZCEvent")
+  %else
+    %return ::tPrevZCState
+  %endif
+%endfunction %% SLibGetPreviousZCStruct
+
+%% Function: LibGetPreviousZCStruct ===========================================
+%% Abstract:
+%%    Returns the variable for the previous zero crossings variable.
+%%
+%function LibGetPreviousZCStruct() void
+  %return SLibGetPreviousZCStruct(TLC_TRUE)
+%endfunction %% LibGetPreviousZCStruct
+
+%% Function: LibGetZCEventStruct ===========================================
+%% Abstract:
+%%    Returns the variable for the previous zero crossings variable.
+%%    Called by opaquelib.tlc:SLibCGIRVarGroupPath().
+%%
+%function LibGetZCEventStruct() void
+  %return LibGetPreviousZCStruct()
+%endfunction %% LibGetZCEventStruct
+
+%% Function: LibGetParameterStruct ===========================================
+%% Abstract:
+%%    Returns the variable for the parameters variable.
+%%
+%function LibGetParameterStruct() void
+  %return LibGetParametersStruct()
+%endfunction
+
+%% Function: SLibGetParamPointerFromRTM ========================================
+%% Abstract:
+%%    Returns a pointer to the parameter structure from the RTM.
+%%
+%function SLibGetParamPointerFromRTM(addTypeCast) void
+  %if Accelerator
+    %assign retStr = RTMGet("ModelRtp")
+  %elseif CodeFormat == "S-Function"
+    %assign retStr = RTMGet("LocalDefaultParam")
+  %else
+    %assign retStr = RTMGet("DefaultParam")
+  %endif
+  %if addTypeCast
+    %assign retStr = "((%<::tParametersType> *) %<retStr>)"
+  %endif
+  %return retStr
+%endfunction %% SLibGetParamPointerFromRTM
+
+%% Function: SLibGetParametersStruct ===========================================
+%% Abstract:
+%%    Returns the variable for the parameters variable.
+%%
+%function SLibGetParametersStruct(addTypeCast) void
+  %if ::CompiledModel.HasSimStructVars == 1
+    %return SLibGetParamPointerFromRTM(addTypeCast)
+  %elseif IsModelRefScalableBuild() && !GenerateClassInterface
+    %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+    %return FcnSysVarGroupNonreusedName(baseSystem, "Parameter")
+  %else
+    %assign paramStructVarName = ::tParameters
+    %if ::CompiledModel.ParametersInRTMForMultiInstanceERT > 0
+      %assign paramStructNonEmpty = ISFIELD(::CompiledModel,"NumPrmStructElements") && (::CompiledModel.NumPrmStructElements > 0)
+      %if paramStructNonEmpty && ISFIELD(::CompiledModel, "UsingMalloc") && ::CompiledModel.UsingMalloc
+        %assign paramStructVarName = ::CompiledModel.GlobalScope.tParametersWithMalloc
+      %endif    
+    %endif
+    %return paramStructVarName
+  %endif
+%endfunction %% SLibGetParametersStruct
+
+%% Function: LibGetParametersStruct ===========================================
+%% Abstract:
+%%    Returns the variable for the parameters variable.
+%%
+%function LibGetParametersStruct() void
+  %return SLibGetParametersStruct(TLC_TRUE) 
+%endfunction %% LibGetParametersStruct
+
+
+%% Function: SLibGetZCSignalValueStructFromRTM ================================
+%% Abstract:
+%%    Returns the variable for the non-sampled zero crossings from RTM.
+%%
+%function SLibGetZCSignalValueStructFromRTM(addTypeCast) void
+  %if ::CodeFormat == "S-Function" && !::Accelerator
+    %assign retStr = RTMGet("NonsampledZCs")
+  %else
+    %assign retStr = RTMGet("SolverZcSignalVector")
+  %endif
+  %if addTypeCast
+    %assign retStr = "((%<::tZCSignalValueType> *) %<retStr>)"
+  %endif
+  %return retStr
+%endfunction %% SLibGetZCSignalValueStructFromRTM
+
+%% Function: SLibGetZCSignalValueStruct ========================================
+%% Abstract:
+%%    Returns the variable for the non-sampled zero crossings.
+%%
+%function SLibGetZCSignalValueStruct(addTypeCast) void
+  %if ::CompiledModel.HasSimStructVars == 1 || ::isRSimWithSolverModule
+    %return SLibGetZCSignalValueStructFromRTM(addTypeCast)
+  %else
+    %return ::tZCSignalValue
+  %endif
+%endfunction %% SLibGetZCSignalValueStruct
+
+%% Function: LibGetZCSignalValueStruct ========================================
+%% Abstract:
+%%    Returns the variable for the non-sampled zero crossings.
+%%
+%function LibGetZCSignalValueStruct() void
+  %return SLibGetZCSignalValueStruct(TLC_TRUE)
+%endfunction %% LibGetZCSignalValueStruct
+
+%function LibGetZCSVStruct() void
+  %return LibGetZCSignalValueStruct()
+%endfunction
+%%
+%% (2) Local Library Functions (Fcn Functions)
+%%
+
+
+%%
+%% End of library code
+%%
+
+%endif %% _FCNIOLIB_
+
+%% [EOF] fcniolib.tlc

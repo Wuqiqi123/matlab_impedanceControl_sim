@@ -1,0 +1,929 @@
+%% 
+%%
+%% Copyright 1994-2016 The MathWorks, Inc.
+%%
+%% Abstract: 
+%%  This library implements access function and additional fields
+%%  for the system vector.
+%%
+
+%if EXISTS("_SYSBODLIB_") == TLC_FALSE
+%assign _SYSBODLIB_ = TLC_TRUE
+
+%% Function: LibAddToSystem ====================================================
+%% Abstract:
+%%    Addes a field to the current instance of a system record
+%%    
+%function LibAddToSystem(system, fieldname, value) void
+  %if ISFIELD(system.InstanceCache, fieldname)
+    %assign args = ["LibAddToSystem", %<fieldname>]
+    %<SLibReportErrorWithIdAndArgs("RTW:tlc:DuplicateField", args)>
+  %else
+    %addtorecord system.InstanceCache  %<fieldname> value
+  %endif
+%endfunction
+
+%% Function: LibSetSystemField =================================================
+%% Abstract:
+%%    Sets the value of an existing field in the system record
+%%
+%function LibSetSystemField(system, fieldname, value) void
+  %if ISFIELD(system.InstanceCache, fieldname)
+    %assign prevVal = GETFIELD(system.InstanceCache, fieldname)
+    %if (prevVal != value)
+    %<SETFIELD(system.InstanceCache, fieldname, value)>
+    %endif
+  %else
+    %assign args = ["LibSetSystemField", %<fieldname>]
+    %<SLibReportErrorWithIdAndArgs("RTW:tlc:FieldNotFound", args)>
+  %endif
+%endfunction
+
+%% Function: LibSetSystemFieldForTID===============================================
+%% Abstract:
+%%    Sets the value of an existing field(s) (more than one if 
+%% rate/partition grouping code style) in the system record.
+%%   If value passed is a vector, 
+%%       - Rate grouping: set field corresponding to each async tid by 
+%%         value[asyncTid]; partition grouping: set field corresponding to
+%%         each async partition with proper indexing to value array
+%%       - Rate grouping: set field corresponding to each sync tid by 
+%%         value[syncTid] when SLibSystemFcnPeriodicRateGrouping(system) is ture, 
+%%         otherwise, set non-rate-grouped field of the system 
+%%         by value[0]; partition grouping: SLibSystemFcnPeriodicRateGrouping(system)
+%%         is always true, follow the indexing scheme used for caching
+%%         local var access and fcn body
+%%         
+%%   If value passed in is not a vector, 
+%%       set nor-rate-grouped field of the system by value.
+%%
+%function LibSetSystemFieldForTID(system, fieldname1, fieldname2, value) void
+  %assign ListofTIDhasNoEmptyCode =""
+  %if TYPE(value) == "Vector" 
+    %if SLibIsPartitionGrouping()
+      %assert SIZE(value, 1) == SLibGetNumPartitions()
+    %else
+      %assert SIZE(value, 1) == NumSampleTimes
+    %endif
+    %assign numAsyncTasks = LibGetNumAsyncTasks() + SLibGetNumExplictTasksInUnion()
+    %foreach idx = numAsyncTasks
+      %assign Tid = idx + NumRuntimeExportedRates
+      %if SLibIsPartitionGrouping()
+        %assign content = value[SLibGetNumPartitions() - numAsyncTasks + idx]
+        %if !WHITE_SPACE(content)
+          %assign pidVec = SLibGetPidFromTid(Tid)
+          %assert SIZE(pidVec, 1) == 1
+          %assign FieldName = "Cached" + fieldname1 + "%<Tid>%<pidVec[0]>" + fieldname2
+          
+          %assign ListofTIDhasNoEmptyCode = ListofTIDhasNoEmptyCode ...
+            + " TID%<Tid>PID%<pidVec[0]> "
+          %<LibSetSystemField(system, FieldName, content)>
+        %endif
+      %else
+        %if !WHITE_SPACE(value[Tid])
+          %assign FieldName = "Cached" + fieldname1 + "%<Tid>" + fieldname2
+	
+          %assign ListofTIDhasNoEmptyCode = ListofTIDhasNoEmptyCode ...
+            + " TID%<Tid> "
+          %<LibSetSystemField(system, FieldName,  value[Tid])>
+        %endif
+      %endif
+    %endforeach
+
+    %assign fcnType = fieldname1
+    %if SLibSystemFcnPeriodicRateGrouping(system, fcnType)
+      %if SLibIsPartitionGrouping()
+        %assign bufIdx = 0
+        %foreach Tid = NumRuntimeExportedRates
+          %assign pidVec = SLibGetPidFromTid(Tid)
+          %foreach i = SIZE(pidVec, 1)
+            %if !WHITE_SPACE(value[bufIdx])
+              %assign FieldName = "Cached" + fieldname1 + "%<Tid>" + "%<pidVec[i]>" + fieldname2
+              %assign ListofTIDhasNoEmptyCode = ListofTIDhasNoEmptyCode ...
+              + " TID%<Tid>PID%<pidVec[i]> "
+              %<LibSetSystemField(system, FieldName, value[bufIdx])>
+            %endif
+            %assign bufIdx = bufIdx + 1
+          %endforeach
+        %endforeach
+      %else
+        %foreach Tid = NumRuntimeExportedRates
+          %if !WHITE_SPACE(value[Tid])
+            %assign FieldName = "Cached" + fieldname1 + "%<Tid>" + fieldname2
+            %assign ListofTIDhasNoEmptyCode = ListofTIDhasNoEmptyCode ...
+              + " TID%<Tid> "
+            
+            %<LibSetSystemField(system, FieldName,  value[Tid])>
+          %endif
+        %endforeach
+      %endif
+    %elseif !WHITE_SPACE(value[0])
+      %assign FieldName = "Cached" + fieldname1 + fieldname2
+      %<LibSetSystemField(system, FieldName,  value[0])>
+      %assign ListofTIDhasNoEmptyCode = ListofTIDhasNoEmptyCode ...
+	+ " TID0 "
+    %endif
+
+    %assign FieldName = "Cached" + fieldname1 + fieldname2
+    %if TYPE(LibGetSystemField(system, FieldName)) == "Number"
+      %if !WHITE_SPACE(ListofTIDhasNoEmptyCode)
+        %<LibSetSystemField(system, FieldName, "/* Subsystem subrate code is not empty */")>
+      %else
+        %<LibSetSystemField(system, FieldName, "")>
+      %endif
+    %endif
+  %else
+    %assign FieldName = "Cached" + fieldname1 + fieldname2
+    %<LibSetSystemField(system, FieldName,  value)>
+  %endif
+
+%endfunction
+
+%% Function: LibAddToSystemField ===============================================
+%% Abstract:
+%%    Adds (string) value to existing system field
+%%
+%function LibAddToSystemField(system, fieldname, value) void
+  %if ISFIELD(system.InstanceCache, fieldname)
+    %assign system.InstanceCache.%<fieldname> = ...
+      system.InstanceCache.%<fieldname> + value
+  %else
+    %assign args = ["LibAddToSystemField", %<fieldname>]
+    %<SLibReportErrorWithIdAndArgs("RTW:tlc:FieldNotFound", args)>
+  %endif
+%endfunction
+
+%% Function: LibGetSystemField =================================================
+%% Abstract:
+%%    Gets the value of an existing field in the system record
+%%
+%function LibGetSystemField(system, fieldname) void
+  %if ISFIELD(system.InstanceCache, fieldname)
+    %assign value = GETFIELD(system.InstanceCache, fieldname)
+  %else
+    %assign args = ["LibGetSystemField", %<fieldname>]
+    %<SLibReportErrorWithIdAndArgs("RTW:tlc:FieldNotFound", args)>
+  %endif
+  %return value
+%endfunction
+
+%% Function: LibIsSystemField ==================================================
+%% Abstract:
+%%    Returns TLC_TRUE is field exists in system record TLC_FALSE otherwise
+%%
+%function LibIsSystemField(system, fieldname) void
+  %return ISFIELD(system.InstanceCache, fieldname)
+%endfunction
+
+%% Function: LibSetSubSystemField ==============================================
+%% Abstract:
+%%    Sets the value of an existing field in the system record related to
+%%    the subsystem block
+%%
+%function LibSetSubSystemField(subsysblk, fieldname) void
+  %error "LibSetSubSystemField is not implemented yet"
+%endfunction
+
+%% Function: LibGetSubSystemField ==============================================
+%% Abstract:
+%%    Gets the value of an existing field in the system record related to
+%%    the subsystem block
+%%
+%function LibGetSubSystemField(subsysblk, fieldname) void
+  %error "LibGetSubSystemField is not implemented yet"
+%endfunction
+
+%% Function: SLibGenCachedSystemFcnCallWithArgs ================================
+%% Abstract:
+%%    Generates function call to nonempty cached function, with the optional 
+%%    function arguments passed in as a vector.
+%%
+%function SLibGenCachedSystemFcnCallWithArgs(system, fcnType, csIdx, argVec) Output
+  %if (!WHITE_SPACE(LibGetSystemField(system, "Cached" + fcnType + "Fcn")))
+    %if LibSystemIsInlined(system)
+      %assign buffer = SLibGetBody%<fcnType>FcnCache(system)
+      %<buffer>
+    %else
+      %assign fcnInfo = LibGetFcnInfo(system, fcnType, system.CurrentTID)
+      %assign sysIdx  = system.SystemIdx
+      %<LibGenSubsystemFcnCall(argVec, fcnInfo, SystemIdx, sysIdx, csIdx)>
+    %endif
+  %endif
+%endfunction %% SLibGenCachedSystemFcnCallWithArgs
+
+%% Function: LibGenCachedSystemFcnCall =========================================
+%% Abstract:
+%%    Generates function call to nonempty cached function
+%%
+%% Example:
+%%    LibGenCachedSystemFcnCall(childSystem, "Start", 0)
+%%
+%function LibGenCachedSystemFcnCall(system, fcnType, instIndex) Output
+   %<SLibGenCachedSystemFcnCallWithArgs(system, fcnType, instIndex, [])>
+%endfunction
+
+%% Function: SLibGetCombinedFcnType ============================================
+%% Abstract:
+%%    Returns "OutputUpdate" if the function type is Output and output and
+%%    update function have been combined.
+%%
+%function SLibGetCombinedFcnType(system, fcnType) void
+  %% Output may have been combined with update
+  %if fcnType == "Output" && !ISFIELD(system, "OutputFcn") &&  ...
+    !(ISFIELD(system, "OutputCalledInUpdate") &&  ...
+    system.OutputCalledInUpdate == "yes")
+    %assign fcnType = "OutputUpdate"
+  %endif
+  %return fcnType
+%endfunction
+
+%% Function: SLibGenSystemFcnCallWithArgs ======================================
+%% Abstract:
+%%    Generates (inlines) function call to a existing system function.
+%%
+%function SLibGenSystemFcnCallWithArgs(system, fcnType, instIndex, argVec) Output
+  %if LibSystemIsInlined(system)
+    %assign buffer = SLibGetBody%<fcnType>FcnCache(system)
+    %<buffer>
+  %else
+    %assign fcnInfo = LibGetFcnInfo(system, fcnType, system.CurrentTID)    
+    %assign sysIdx  = system.SystemIdx
+    %assign csIdx   = instIndex     
+    %<LibGenSubsystemFcnCall(argVec, fcnInfo, SystemIdx, sysIdx, csIdx)>
+  %endif
+%endfunction
+
+%% Function: LibGenSystemFcnCall ===============================================
+%% Abstract:
+%%    Generates (inlines) function call to a existing system function.
+%%
+%% Arguments:
+%%    1) system to call
+%%    2) function type to call (e.g. "Output", "Initialize", ...)
+%%    3) callside (instance) index of the subsystem block
+%%
+%% Example:
+%%    LibGenSystemFcnCall(system, "Output", 0)
+%%
+%function LibGenSystemFcnCall(system, fcnType, instIndex) Output
+  %<SLibGenSystemFcnCallWithArgs(system, ...
+    SLibGetCombinedFcnType(system, fcnType), instIndex, [])>
+%endfunction
+
+%% Function: LibGenSystemFcnCallIn =============================================
+%% Abstract:
+%%    Generates function call to a existing system function and copies the
+%%    accessed flags to the caller function type. 
+%%
+%% Example:
+%%    LibGenSystemFcnCallIn(system, "Output", "Initialize", 0)
+%%    - reads: call in the systems "Output" function the "Initialize" function
+%%    - will copy the accessed flags frm "Initialize" to "Output"
+%%
+%function LibGenSystemFcnCallIn(system, inFcnType, fcnType, instIndex) Output
+  %%
+  %% "Out Of Context fcnCalls" (OOCC) are now handled in sl_engin/comp_fcncalls.cpp
+  %%
+  %<LibGenSystemFcnCall(system, fcnType, instIndex)>
+%endfunction
+
+%% Function: SLibIsMultiRateAndPeriodicRateGrouping =============================================
+%% Abstract:
+%%    Returen TLC_TRUE if system is multi periodic rate
+%%    and rate grouping
+%%
+%function SLibIsMultiRateAndPeriodicRateGrouping(system) void
+  %return !LibIsSingleRateSystem(system) && ...
+    FcnSysModuleIsPeriodicRateGrouping(system, "Outputs")
+%endfunction
+
+%% Function: SLibIsMultiRateAndRateGrouping =============================================
+%% Abstract:
+%%    Returen TLC_TRUE if system is multi rate
+%%    and periodic rate grouping
+%%
+%function SLibIsMultiRateAndRateGrouping(system) void
+  %return !LibIsSingleRateSystem(system) && ...
+    FcnSysModuleIsRateGrouping(system, "Outputs")
+%endfunction
+
+%% Function SLibSystemFcnIsRateGroupType(fcnType) 
+%%
+%function SLibSystemFcnIsRateGroupType(fcnType) void
+  %return  (fcnType == "Output" || fcnType == "Outputs" || ...
+    fcnType == "Update" || fcnType == "RootUpdate" || ...
+    fcnType == "OutputUpdate" || fcnType == "UpdateContStates" || ...
+    SLibContFcnPartitionGrouping(fcnType))
+  
+%endfunction
+
+%% Function: SLibSystemFcnPeriodicRateGrouping ======================
+%% Abstract: 
+%%   Return true if system is rate grouping and fcnType is Output, Update 
+%% or OutputUpdate
+%%
+%function SLibSystemFcnPeriodicRateGrouping(system, fcnType)
+  %return FcnSysModuleIsPeriodicRateGrouping(system, fcnType)
+%endfunction
+
+
+%% Function: SLibSystemTidUsedByRateGroup(system, fcnType) void
+%% Abstract:
+%%    Return tid value to generate rate grouping code.
+%% If system fcn is not rate grouping return empty string "". 
+%% For tid01eq case, tid1 is always stipped. Code of tid1 
+%% groups with tid0 code. 
+%%
+%function SLibSystemTidUsedByRateGroup(system, fcnType)
+  %assert(LibIsSingleRateSystem(system) || ISFIELD(system, "CurrentTID"))
+  %assign tmpTid = FcnGetCurrentAccessTid()
+  %if SLibSystemFcnIsRateGroupType(fcnType) 
+    %% Check all callsites. 
+    %% Root system doesn't need to check all callsites because
+    %% root system is called from outside. 
+    %if !LibSystemIsRoot(system) && ...
+      LibIsSingleRateSystem(system) && SIZE(system.CallSites,0) > 1  
+      %% A single rate system may have multiple call sites. 
+      %% Each call sites may have different tid. Code is put 
+      %% in the tid of the first intance. 
+      %assign tmpTid = FcnGetSubsystemCodeBufTID(system)
+    %endif
+    %if LibAsynchronousTriggeredTID(tmpTid) || ...
+      SLibIsMultiRateAndRateGrouping(system)
+      %% Async task always rate grouping
+      %assign tid01Eq =  ISEQUAL(SolverType, "FixedStep") && ...
+        FixedStepOpts.TID01EQ
+      %if ISEQUAL(tmpTid, 1) && tid01Eq
+        %assign tmpTid = 0
+      %endif
+    %else
+      %assign tmpTid = ""
+    %endif
+  %else
+    %assign tmpTid = ""
+  %endif
+
+  %return tmpTid  
+%endfunction
+ 
+%% Function: SLibSingleTasking ==================================================
+%% Abstract:
+%%   Return true for fixed-step singletasking solver.  Otherwise, return false.
+%%
+%function SLibSingleTasking() void
+  %return ( ::CompiledModel.SolverType != "FixedStep" || ...
+            ::CompiledModel.FixedStepOpts.SolverMode != "MultiTasking" )
+%endfunction
+
+%function SLibConcurrentTasks() void
+  %return  ::CompiledModel.ConcurrentTasks != "no"
+%endfunction
+
+%% Function: SLibGenerateNativeThreads =========================================
+%% Abstract:
+%%   Returns true if generates threaded main.
+%%
+%function SLibGenerateNativeThreads() void
+  %return (SLibConcurrentTasks() || LibIsDeploymentDiagram()) && ...
+    !IsModelReferenceTarget() && ...
+    ((GenerateSampleERTMain && ::CompiledModel.ConfigSet.SystemTargetFile == "ert.tlc") ...
+    || ::CompiledModel.ConfigSet.SystemTargetFile == "grt.tlc")
+%endfunction
+
+%% Function: SLibIsPeriodicRateGrouping =======================================
+%% Abstract:
+%%    Return TLC_TRUE if periodic rates are rate grouping
+%%
+%% Example:
+%%
+%function SLibIsPeriodicRateGrouping() void
+  %return ::CompiledModel.MdlGenPeriodicRateGroupingCode == "yes"
+%endfunction
+%% =============================================================================
+%% Create global cache variables to hold each of the system functions
+%% =============================================================================
+%% =============================================================================
+%% Create empty caches for all Systems in the model
+%% =============================================================================
+
+%assign rootSystem = ::CompiledModel.System[::CompiledModel.NumSystems - 1] 
+
+%with ::CompiledModel
+  %foreach sysIdx = NumSystems
+    %addtorecord System[sysIdx] InstanceCache {}
+  %endforeach
+%endwith
+
+%% Function: LibIsSystemCached =================================================
+%% Abstract:
+%%    Returns the system cached flag.
+%function LibIsSystemCached(system)
+  %return LibGetSystemField(system, "SystemCached")
+%endfunction
+
+%% Function: LibIsSystemDumped =================================================
+%% Abstract:
+%%    Returns the system dumped flag.
+%%
+%function LibIsSystemDumped(system)
+  %return LibGetSystemField(system, "SystemDumped")
+%endfunction
+
+%% Function: LibIsSystemNonEmpty ===============================================
+%% Abstract:
+%%    Returns the system non-empty flag.
+%%
+%function LibIsSystemNonEmpty(system)
+  %return LibGetSystemField(system, "SystemNonEmpty") 
+%endfunction
+      
+%% Function: LibIsSystemTerminateNonEmpty ======================================
+%% Abstract:
+%%    Returns the system terminate function non-empty flag.
+%%
+%function LibIsSystemTerminateNonEmpty(system)
+  %return LibGetSystemField(system, "SystemTerminateNonEmpty")
+%endfunction
+
+%% Function: LibIsSystemTerminateCached ========================================
+%% Abstract:
+%%    Returns TLC_TRUE if the systems terminate function is cached
+%%    and TLC_FALSE otherwise.
+%%
+%function LibIsSystemTerminateCached(system)
+  %return LibGetSystemField(system, "SystemTerminateCached")
+%endfunction
+
+
+
+%% DocFunction{Sample Time Functions}: LibGetSubsystemBlkTIDForTask ==============
+%% Abstract:
+%%   Returns the subsystem block's TID's that serve as the first tid for a task
+%% 
+%%   Arguments:
+%%      system: system block record 
+%%      returnFundamentalTID: This option only affects returned TID value
+%%         if system block is multitask, where its block sample time for tasks is a vector.
+%%
+%%   For single task subsystem, the returned value depends on the 
+%%   classification of subsystem block sampletime:
+%%
+%%     System sample time classification      Returned value
+%%     ---------------------------------      --------------
+%%     discrete                               sample time index on sample time table
+%%     triggered                              sample time of trigger signal
+%%     constant                               0 
+%%     vector 
+%%      returnFundamentalTID == TLC_TRUE:    return tid of system fundermental sample time. 
+%%                                            For a multitask subsystem. System fundermental 
+%%                                            sample time is the tid for task 0
+%%      returnFundamentalTID == TLC_FALSE:   return an array contains tids of all subsystem 
+%%                                            sample times that are the first tid for a task
+%%
+%function LibGetSubsystemBlkTIDForTask(ssBlock, returnFundmentalTID) void
+  %assign subsystemTID    = ssBlock.TaskToFirstTID
+  %if (SIZE(subsystemTID, 1) == 1) || ...
+    (TYPE(subsystemTID) == "Vector" && returnFundmentalTID)
+    %return subsystemTID[0]
+  %else
+    %return subsystemTID
+  %endif
+%endfunction
+
+%% DocFunction{Sample Time Functions}: LibGetSubsystemBlkTID ======================
+%% Abstract:
+%%   Returns the subsystem block's TID sample. 
+%% 
+%%   Arguments:
+%%      system: system block record 
+%%      returnFundamentalTID: This option only affects returned TID value
+%%         if system block is multirate, where its block sample time is a vector.
+%%
+%%   For single rate subsystem, the returned value depends on the 
+%%   classification of subsystem block sampletime:
+%%
+%%     System sample time classification      Returned value
+%%     ---------------------------------      --------------
+%%     discrete                               sample time index on sample time table
+%%     triggered                              sample time of trigger signal
+%%     constant                               0 
+%%     vector 
+%%      returnFundamentalTID == TLC_TRUE:    return tid of system fundermental sample time. 
+%%                                            For a multirate subsystem. System fundermental 
+%%                                            sample time is the GCD of all system sample times.
+%%      returnFundamentalTID == TLC_FALSE:   return an array contains tids of all subsystem 
+%%                                            sample times
+%%
+%function LibGetSubsystemBlkTID(ssBlock, returnFundmentalTID) void
+  %assign subsystemTID    = ssBlock.SubsystemTID
+   
+  %if ISFIELD(ssBlock, "TriggerTID")
+    %assign tmpTid = ssBlock.TriggerTID[0]
+  %elseif ISEQUAL(subsystemTID, "constant") 
+    %assign tmpTid = 0
+  %elseif TYPE(subsystemTID) == "Vector" && returnFundmentalTID
+    %if ISFIELD(ssBlock,"AsyncShellTID")
+      %assign tmpTid = ssBlock.AsyncShellTID
+    %else
+      %% Since subsystem block doesn't add gcd sampletime 
+      %% in its sampletime table. We can't assume we can always
+      %% return a valid fundermentalTID. 
+      %% 
+      %if (ssBlock.firstEntryOfTsMapIsGCD == "yes")
+        %assign tmpTid = subsystemTID[0]
+      %else
+        %assign tmpTid = "InvalidTid"
+      %endif
+    %endif
+  %else
+    %assign tmpTid = subsystemTID
+  %endif
+  
+  %return tmpTid
+%endfunction
+
+%% Function: FcnGetSysBlkTID =================================
+%% This function is identical to LibGetSubsystemBlkTID. 
+%% Keep it to maintain back ward compatibility
+%%
+%function FcnGetSysBlkTID(ssBlock, returnFundmentalTID) void
+  %return LibGetSubsystemBlkTIDForTask(ssBlock, returnFundmentalTID)
+%endfunction
+
+%% DocFunction{Sample Time Functions}: LibGetSubsystemTID ======================
+%% Abstract:
+%%   Returns the system's TID sample. 
+%% 
+%%   Arguments:
+%%      system: system record 
+%%      returnFundamentalTID: This option only affects returned TID value
+%%         if system is multirate, where system sample time is a vector.
+%%
+%%   For single rate subsystem, the returned value depends on the 
+%%   classification of subsystem sampletime:
+%%
+%%     System sample time classification      Returned value
+%%     ---------------------------------      --------------
+%%     discrete                               sample time index on sample time table
+%%     triggered                              sample time of trigger signal
+%%     constant                               0 
+%%     vector 
+%%      returnFundamentalTID == TLC_TRUE:    return tid of system fundermental sample time. 
+%%                                            For a multirate subsystem. System fundermental 
+%%                                            sample time is the GCD of all system sample times.
+%%      returnFundamentalTID == TLC_FALSE:   return an array contains tids of all subsystem 
+%%
+%%                                            sample times
+%%   
+%%   Note: 
+%%       If Subsystem has multiple instance with different sample time, 
+%%       returned value is -1, which means that the subsystem doesn't have unique tid
+%%
+%function LibGetSubsystemTID(system, returnFundamentalTID) void
+  %assign tid = -1 %% assume 
+  %if system.Type == "root"
+    %% If subsystem in root has subsystemTID = "triggered",
+    %% the subsystem must be triggered by an aynchronous block. 
+    %% Assign the fastest discrete task TID as the subsystem TID
+    %% if discrete TID exists.
+    %%
+    %assign tid = 0
+    %foreach tidIdx = NumSampleTimes
+      %if ::CompiledModel.SampleTime[tidIdx].PeriodAndOffset[0] > 0 && ...
+        !SLibModelWideEventTID(tidIdx)
+	%assign tid = tidIdx
+	%break
+      %endif
+    %endforeach
+    %return tid
+  %endif
+  
+  %assign callSites = system.CallSites
+  %assign numCs     = SIZE(callSites,0)
+  %assert (numCs > 0)
+  
+  %foreach idx = numCs
+    %assign graphParentSys = ::CompiledModel.System[callSites[idx][2]]
+    %assign ssBlock        = graphParentSys.Block[callSites[idx][3]]
+
+    %assign tmpTid = LibGetSubsystemBlkTIDForTask(ssBlock, returnFundamentalTID)
+    %if ISEQUAL(tid, -1)
+      %% tid is not assigned values yet. 
+      %assign tid = tmpTid
+    %elseif !ISEQUAL(tid, tmpTid)
+      %% tmpTid of different callSites are different.
+      %% this means that tid of this subsystem is 
+      %% not unique. Assign -1 to tid
+      %assign tid = -1
+      %break
+    %endif
+  %endforeach
+  
+  %return tid
+%endfunction
+
+%% Function: FcnGetSubsystemTID =================================
+%% This function is identical to LibGetSubsystemTID
+%% Keep it to maintain back ward compatibility
+%%
+%function FcnGetSubsystemTID(system, returnFundamentalTID) void
+  %return LibGetSubsystemTID(system, returnFundamentalTID)
+%endfunction
+
+%% Function: FcnGetSubsystemCodeBufTID =========================================
+%% Abstract:
+%%   This function returns the TID of the first callSites of the subsystem. 
+%%   This is the tid when the reused code is generated.
+%%
+%function FcnGetSubsystemCodeBufTID(system) void
+  %if system.Type == "root"
+    %assign tmpTid = LibGetSubsystemTID(system, TLC_TRUE)
+  %else 
+    %assign callSites = system.CallSites
+    %assign numCs     = SIZE(callSites,0)
+    %assert (numCs > 0)
+    
+    %assign graphParentSys = ::CompiledModel.System[callSites[0][2]]
+    %assign ssBlock        = graphParentSys.Block[callSites[0][3]]
+    %assign tmpTid = LibGetSubsystemBlkTIDForTask(ssBlock,TLC_TRUE)
+  %endif
+  
+  
+  %if  LibAsynchronousTriggeredTID(tmpTid)
+    %% code of async task is always rate grouped
+    %assign tid = tmpTid
+  %else
+    %% code of periodic task is rate grouped only
+    %% when system is multirate and rate grouped option is on,
+    %% otherwise, code of periodic task is in buffer for tid0
+    %assign tmpTid = SLibIsMultiRateAndPeriodicRateGrouping(system) ? tmpTid:0
+
+    %assign tid01Eq = ISEQUAL(SolverType, "FixedStep") && FixedStepOpts.TID01EQ
+    %if tid01Eq && ISEQUAL(tmpTid,1)
+      %assign tid = 0
+    %else
+      %assign tid = tmpTid
+    %endif
+  %endif
+  
+  %return tid
+%endfunction
+
+
+
+%% Function: FcnGetSubsystemTaskToFirstTID ==================================
+%%   This function returns the TID of the first callSites of the subsystem. 
+%%   This is the tid when the reused code is generated.
+%%
+%function FcnGetSubsystemTaskToFirstTID(system) void
+  %if system.Type == "root"
+    %return FcnModelTaskToFirstTID(TLC_TRUE)
+  %else 
+    %assign callSites = system.CallSites
+    %assign numCs     = SIZE(callSites,0)
+    %assert (numCs > 0)
+    %assign graphParentSys = ::CompiledModel.System[callSites[0][2]]
+    %assign ssBlock        = graphParentSys.Block[callSites[0][3]]
+    %return ssBlock.TaskToFirstTID
+  %endif
+%endfunction
+
+
+
+%function FcnGetSubsystemCustomCodeBufTID(system) void
+  %assert system.Type != "root"
+  
+  %assign callSites = system.CallSites
+  %assign numCs     = SIZE(callSites,0)
+  %assert (numCs > 0)
+  
+  %assign graphParentSys = ::CompiledModel.System[callSites[0][2]]
+  %assign ssBlock        = graphParentSys.Block[callSites[0][3]]
+  %if ISFIELD(ssBlock,"CustomCodeTID")
+    %assign tmpTid = ssBlock.CustomCodeTID
+  %else 
+    %assign tmpTid = ""
+  %endif
+    
+  %assert TYPE(tmpTid) != "Vector" 
+    
+  %if  LibAsynchronousTriggeredTID(tmpTid)
+    %% code of async task is always rate grouped
+    %assign tid = tmpTid
+  %else
+    %% code of periodic task is rate grouped only
+    %% when system is multirate and rate grouped option is on,
+    %% otherwise, code of periodic task is in buffer for tid0
+    %assign tmpTid = SLibIsMultiRateAndPeriodicRateGrouping(system) ? tmpTid:0
+
+    %assign tid01Eq = ISEQUAL(SolverType, "FixedStep") && FixedStepOpts.TID01EQ
+    %if tid01Eq && ISEQUAL(tmpTid,1)
+      %assign tid = 0
+    %else
+      %assign tid = tmpTid
+    %endif
+  %endif
+  
+  %return tid
+%endfunction
+
+%% Function: FcnSubsystemIsAsycnTopSS ==========================================
+%%  Return true if ss is TopSS of an async tid
+%%
+%function FcnSubsystemIsAsycnTopSS(ss)
+  %return ISFIELD(ss, "IsTopAsyncSS")
+%endfunction
+
+
+%% Function: FcnBlkIsAsyncTopSfcn ======================
+%%  Return true if block is the async sfcn block
+%%
+%function FcnBlkIsAsyncTopSfcn(block)
+  %return block.AsyncSfcn
+%endfunction %% FcnBlkIsAsyncTopSfcn
+
+%function FcnAsyncTaskUpdatesTimersFromBaseRateSingleCore(tid)
+  %openfile tmpBuf
+  %assert SampleTime[tid].Asynchronous == "yes"
+  %assert SampleTime[tid].TimeSource   == "BaseRate"
+  
+  %switch SLibComparePriority(tid,0)
+    %case -1  %% Comparson failed, not priority assigned to this async task
+      %if SampleTime[tid].NeedAbsoluteTime == "yes" 
+        /* Asynchronous task (with no priority assigned) 
+        * reads absolute time */
+        switch(%<SLibGetDbBufWriteBuf(tid)>) {
+          case 0: %<SLibGetDbBufReadBuf(tid)> =1; break;
+          case 1: %<SLibGetDbBufReadBuf(tid)> =0; break;
+          default: %<SLibGetDbBufReadBuf(tid)> = ...
+            %<SLibGetDbBufLastBufWr(tid)>; break;	  
+        }
+        %if SampleTime[tid].ClockTickDataTypeId == tSS_DOUBLE
+          %<LibGetClockTick(tid)> = ...
+            %<SLibGetDbBufContTForTID(tid)>[%<SLibGetDbBufReadBuf(tid)>];
+        %else
+          %<LibGetClockTick(tid)> = ...
+            %<SLibGetDbBufClockTickForTID(tid)>[%<SLibGetDbBufReadBuf(tid)>];
+          %if SLibClockTickIsUnit32Pair(tid)
+            %<LibGetClockTickHigh(tid)> = ...
+              %<SLibGetDbBufClockTickHForTID(tid)>[%<SLibGetDbBufReadBuf(tid)>];
+          %endif
+        %endif
+        %<SLibGetDbBufReadBuf(tid)> = 0xFF;
+      %endif
+      %break
+    %case 0 %% This async task has same priority as base rate. 
+      /* Asynchronous task reads absolute time. Data (absolute time) 
+      transfers between tasks with the same priority task doesn't
+      need protection
+      */
+      %if SampleTime[tid].ClockTickDataTypeId == tSS_DOUBLE
+        %assert LibIsContinuous(0)
+        %<LibGetClockTick(tid)> = %<LibGetT()>;
+      %else
+        %<LibGetClockTick(tid)> = %<LibGetClockTick(0)>;
+        %if SLibClockTickIsUnit32Pair(tid)
+          %<LibGetClockTickHigh(tid)> =  %<LibGetClockTickHigh(0)>;
+        %endif
+      %endif
+      %break
+    %case 1  %% This aync task has higher priority than base rate
+      /* Asynchronous task reads absolute time. Data (absolute time) 
+      transfers from low priority task (base rate) to high priority 
+      task (asynchronous rate). Double buffers are used to ensure 
+      data integrity. 
+      -- rtmL2HLastBufWr is the buffer index that is written last. 
+      */   
+      %if SampleTime[tid].ClockTickDataTypeId == tSS_DOUBLE
+        %assert LibIsContinuous(0)
+        %<LibGetClockTick(tid)> = %<SLibGetL2HDbBufContT()>[%<SLibGetL2HLastBufWr()>];
+      %else
+        %<LibGetClockTick(tid)> = %<SLibGetL2HDbBufClockTick()>[%<SLibGetL2HLastBufWr()>];
+        %if SLibClockTickIsUnit32Pair(tid)
+          %<LibGetClockTickHigh(tid)> = %<SLibGetL2HDbBufClockTickH()>[%<SLibGetL2HLastBufWr()>];
+        %endif
+      %endif
+      %break
+    %case 2  %% This aync task has lower priority than base rate
+      /* Asynchronous task reads absolute time. Data (absolute time) 
+      transfers from high priority task (base rate) to low priority 
+      task (asynchronous rate). Double buffers are used to ensure 
+      data integrity. 
+      -- rtmH2LBufBeingRead is the index of the buffer being read
+      -- rtmH2LLastBufWr is the index of the buffer that is written last. 
+      */
+      if (%<SLibGetH2LLastBufWr(tid)> == 0) {	
+      %<SLibGetH2LBufBeingRead(tid)> = 0;
+      %if SampleTime[tid].ClockTickDataTypeId == tSS_DOUBLE
+        %assert LibIsContinuous(0)
+        %<LibGetClockTick(tid)> = %<SLibGetH2LDbBufContTForTID(tid)>[0];
+      %else
+        %<LibGetClockTick(tid)> = %<SLibGetH2LDbBufClockTickForTID(tid)>[0];
+        %if SLibClockTickIsUnit32Pair(tid)
+          %<LibGetClockTickHigh(tid)> = %<SLibGetH2LDbBufClockTickHForTID(tid)>[0];
+        %endif
+      %endif
+      } else {
+      %<SLibGetH2LBufBeingRead(tid)> = 1;
+      %if SampleTime[tid].ClockTickDataTypeId == tSS_DOUBLE
+        %assert LibIsContinuous(0)
+        %<LibGetClockTick(tid)> = %<SLibGetH2LDbBufContTForTID(tid)>[1];
+      %else
+        %<LibGetClockTick(tid)> = %<SLibGetH2LDbBufClockTickForTID(tid)>[1];
+        %if SLibClockTickIsUnit32Pair(tid)
+          %<LibGetClockTickHigh(tid)> = %<SLibGetH2LDbBufClockTickHForTID(tid)>[1];
+        %endif
+      %endif
+      }
+      %break
+    %default
+      %<SLibReportErrorWithId("RTW:tlc:UnknownPriorityComp")>
+      %break
+  %endswitch  
+  %closefile tmpBuf
+  
+  %return tmpBuf
+%endfunction
+
+%% Function: FcnAsyncTaskUpdatesTimersFromBaseRate =============================
+%% Abstract:
+%%   For asynchronous tasks that don't manage own absolute time,
+%% task time is obtained from absolute time for base rate. 
+%% To insure data integrity, code obtaining async task time 
+%% has two parts: one part runs at base rate, the other part runs
+%% when asynchronous task runs. 
+%%   This function generate code runs with asynchronous tasks. 
+%% FcnUpdateAsyncTaskTimers generates code runs at base rate. For
+%% more information, please see abstract of FcnUpdateAsyncTaskTimers.
+%% 
+%%
+%function FcnAsyncTaskUpdatesTimersFromBaseRate(tid)
+
+  %if !SLibIsERTCodeFormat() || IsModelReferenceTarget()
+    %% currently, we only support ert code format. 
+    %return ""
+  %endif
+  
+  
+  %openfile tmpBuf
+  %assert SampleTime[tid].Asynchronous == "yes"
+  %assert SampleTime[tid].TimeSource   == "BaseRate"
+  
+  %if RTMAbsTimeNeedTransProtection(tid)
+    %if  SLibConcurrentTasks()
+      %<SLibCGIRMutexOp(1,SLibGetTimerSemID(tid))>
+      %<LibGetClockTick(tid)> =  %<SLibGetClockTickBufForTID(tid)>;
+      %if SLibClockTickIsUnit32Pair(tid)
+        %<LibGetClockTickHigh(tid)> =  %<SLibGetClockTickHBufForTID(tid)>;
+      %endif
+      %<SLibCGIRMutexOp(2,SLibGetTimerSemID(tid))>
+    %else
+      %<FcnAsyncTaskUpdatesTimersFromBaseRateSingleCore(tid)>
+    %endif %% single core
+  %else 
+    %<LibGetClockTick(tid)> = %<LibGetClockTick(0)>;
+  %endif
+  %% Update float absolute time for async task
+  %if SampleTime[tid].NeedFloatTime == "yes"
+    %<SLibUpdateFloatTimeForAsyncTask(tid)>
+  %endif
+  %closefile tmpBuf
+  
+  %return tmpBuf
+%endfunction %%FcnAsyncTaskUpdatesTimersFromBaseRate
+
+
+%% Function: SLibIsCondExec ====================================================
+%% Abstract:
+%%      Returns whether or not a system is conditionally executed.
+%%
+%function SLibIsCondExec(ss) void
+  %return ss.IsCondExec
+%endfunction %% SLibIsCondExec
+
+%% Function: SLibGetReusableLibrarySubsystemDir ======================================
+%% Abstract:
+%%    Return the directory for a reusable library subsystem
+%function SLibGetReusableLibrarySubsystemDir(system)
+  %return "%<::CompiledModel.RTWInfoMatFile.sharedSourcesDir>"
+%endfunction        
+        
+%% Function: SLibGetReusableLibraryOutputDirectory ============================
+%% Abstract:
+%%    Set the output directory for a reusable library subsystem
+%function SLibGetReusableLibraryOutputDirectory(system)
+  %assign BuildDir = SLibGetReusableLibrarySubsystemDir(system)
+  %% Make sure directory exists
+  %if !FEVAL("exist", BuildDir, "dir")
+    %assign success = FEVAL( "mkdir", BuildDir )
+    %if success != 1
+      %<SLibReportErrorWithId("RTW:tlc:CannotCreateLibBuildDir")>
+    %endif
+  %endif
+  %return BuildDir
+%endfunction
+
+
+%endif %% _SYSBODLIB_
+
+%% [EOF] sysbodlib.tlc

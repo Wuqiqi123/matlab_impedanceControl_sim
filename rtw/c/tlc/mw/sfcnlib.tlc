@@ -1,0 +1,1117 @@
+%% Copyright 1994-2017 The MathWorks, Inc.
+
+%selectfile NULL_FILE
+
+%if EXISTS("_SFCNLIB_") == 0
+%assign _SFCNLIB_ = 1
+
+%include "sfcnutil.tlc"
+%include "prm_sfcntunable.tlc"
+
+%% Function: SLibDumpSfcnInpDims ===============================================
+%% Abstract:
+%%   Shared code used to dump input dimensions of various S-Function formats
+%%
+%function SLibDumpSfcnInpDims(S, pIdx, width, nDims, dims) Output
+  %if %<nDims> == matrixDimensionThreshhold
+    if(!ssSetInputPortMatrixDimensions(%<S>, %<pIdx>, %<dims[0]>, %<dims[1]>)) \
+    return;
+  %elseif %<nDims> > matrixDimensionThreshhold
+    {
+      DimsInfo_T inpDims;
+      %assign dimsStr = "{"
+      %foreach dIdx = nDims
+        %if dIdx != 0
+          %assign dimsStr = dimsStr + ", "
+        %endif
+        %assign dimsStr = dimsStr + "%<dims[dIdx]>"
+      %endforeach
+      %assign dimsStr = dimsStr + "}"
+      int_T inpDimsVals[%<nDims>] = %<dimsStr>;
+      inpDims.width   = %<width>;
+      inpDims.numDims = %<nDims>;
+      inpDims.dims    = inpDimsVals;
+      inpDims.nextSigDims = %<SLibGetNullDefinitionFromTfl()>;
+      if (!ssSetInputPortDimensionInfo(%<S>, %<pIdx>, &inpDims)) return;
+    }
+  %else
+    if(!ssSetInputPortVectorDimension(%<S>, %<pIdx>, %<width>)) return;
+  %endif
+%endfunction %% SLibDumpSfcnInpDims
+
+%% Function: SLibDumpSfcnOutDims ===============================================
+%% Abstract:
+%%   Shared code used to dump input dimensions of various S-Function formats
+%%
+%function SLibDumpSfcnOutDims(S, pIdx, width, nDims, dims) Output
+  %if %<nDims> == matrixDimensionThreshhold
+    if(!ssSetOutputPortMatrixDimensions(%<S>, %<pIdx>, %<dims[0]>, %<dims[1]>)) \
+    return;
+  %elseif %<nDims> > matrixDimensionThreshhold
+    {
+      DimsInfo_T outDims;
+      %assign dimsStr = "{"
+      %foreach dIdx = nDims
+        %if dIdx != 0
+          %assign dimsStr = dimsStr + ", "
+        %endif
+        %assign dimsStr = dimsStr + "%<dims[dIdx]>"
+      %endforeach
+      %assign dimsStr = dimsStr + "}"
+      int_T outDimsVals[%<nDims>] = %<dimsStr>;
+      outDims.width   = %<width>;
+      outDims.numDims = %<nDims>;
+      outDims.dims    = outDimsVals;
+      outDims.nextSigDims = %<SLibGetNullDefinitionFromTfl()>;
+      if (!ssSetOutputPortDimensionInfo(%<S>, %<pIdx>, &outDims)) return;
+    }
+  %else
+    if(!ssSetOutputPortVectorDimension(%<S>, %<pIdx>, %<width>)) return;
+  %endif
+%endfunction %% SLibDumpSfcnOutDims
+
+%% Function: SLibLocalSDeclaration =============================================
+%% Abstract:
+%%
+%function SLibLocalSDeclaration(usingStatic) void
+%endfunction
+
+
+%% Function: SLibLocalSRegistration ============================================
+%% Abstract:
+%%
+%function SLibLocalSRegistration(usingStatic) void
+  %openfile tmpBuffer
+  %%
+  %% "Local SimStruct" cached in SimStruct's user data
+  %%
+  /* Local SimStruct for the generated S-Function */
+  %if usingStatic
+    static LocalS slS;
+    LocalS *lS = &slS;
+  %else
+    LocalS *lS = (LocalS *) malloc(sizeof(LocalS));
+
+    %<RTMChkMemAndReturnIfErr("lS")>;
+  (void) %<LibGenMemFcnCall("memset", "(char *) lS", "0", ...
+    "sizeof(LocalS)")>;
+  %endif  
+  ssSetUserData(%<::tSimStruct>, lS);
+  %%
+  %% Local block I/O
+  %%
+  %if !LibBlockIOStructIsEmpty()
+    
+    /* block I/O */
+    {
+      %assign varName = "b"
+      %if usingStatic
+	static %<::tBlockIOType> sfcnB;
+	void *%<varName> = (real_T *) &sfcnB;
+      %else
+	void *%<varName> = malloc(sizeof(%<::tBlockIOType>));
+
+	%<RTMChkMemAndReturnIfErr(varName)>;
+      %endif
+      
+      ssSetLocalBlockIO(%<::tSimStruct>, %<varName>);
+      %assign unused = SLibInitBlockIO(varName)
+    }
+  %endif
+  %%
+  %% Invariant Block Outputs
+  %%
+  %if !LibConstBlockIOStructIsEmpty()
+
+    _ssSetConstBlockIO(%<::tSimStruct>, &%<::tInvariantSignals>);
+  %endif
+
+  %%
+  %% Parameters
+  %%
+  %if !LibParametersStructIsEmpty()
+    
+    /* model parameters */
+    ssSetLocalDefaultParam(%<::tSimStruct>, (real_T *) &%<::tDefaultParameters>);
+  %endif
+  %%
+  %% NonContDerivSig
+  %%
+  %if SolverType == "VariableStep" && ...
+    SolverResetInfo.NumNonContDerivSignals > 0
+    %assign dU = "nonContDerivSigCache_%<LibGetModelName()>_T"
+    
+    {
+      %assign varName = "pNonContDerivSig"
+      %if usingStatic
+	static %<dU> nonContDerivSigs;
+	void *%<varName> = (void *) &nonContDerivSigs;
+      %else
+	void *%<varName> = (void *)malloc(sizeof(%<dU>));
+
+	%<RTMChkMemAndReturnIfErr(varName)>;
+      %endif
+      (void) %<LibGenMemFcnCall("memset", "(char *) %<varName>", "0", ...
+	"sizeof(%<dU>)")>;
+      
+      ssSetLocalNonContDerivSig(%<::tSimStruct>, %<varName>);
+    }
+  %endif
+  %%
+  %% Previous zero-crossing states
+  %%
+  %if !LibPrevZCStatesStructIsEmpty()
+    
+    %assign prevZCStatesInRTM = FcnGetPrevZCSigStateType()
+        
+    /* previous zero-crossing states */
+    {
+      int_T i;
+      %if usingStatic
+	static %<::tPrevZCStateType> %<::tPrevZCState>;
+	%<prevZCStatesInRTM> *zc = (%<prevZCStatesInRTM> *) &%<::tPrevZCState>;
+      %else
+	%<prevZCStatesInRTM> *zc = (%<prevZCStatesInRTM> *) malloc(sizeof(%<::tPrevZCStateType>));
+
+	%<RTMChkMemAndReturnIfErr("zc")>;
+      %endif
+      _ssSetPrevZCSigState(%<::tSimStruct>, zc);
+      for(i = 0; i < %<NumZCEvents>; i++) {
+	zc[i] = UNINITIALIZED_ZCSIG;
+      }
+    }
+  %endif
+  
+  %%
+  %% Model mapping info for ParameterTuning
+  %%
+  %<SLibDumpModelMappingInfo()>
+
+  %%
+  %% Checksums
+  %%
+  /* model checksums */
+  ssSetChecksumVal(%<::tSimStruct>, 0, %<ModelChecksum[0]>);
+  ssSetChecksumVal(%<::tSimStruct>, 1, %<ModelChecksum[1]>);
+  ssSetChecksumVal(%<::tSimStruct>, 2, %<ModelChecksum[2]>);
+  ssSetChecksumVal(%<::tSimStruct>, 3, %<ModelChecksum[3]>);
+  
+  %closefile tmpBuffer
+  
+  %return tmpBuffer
+  
+%endfunction
+
+%function FcnContextErr(simStructName,curContext, generatedContext) Output
+  ssSetErrorStatus(%<simStructName>, "This Simulink Coder generated " ...
+    "S-Function cannot be used in a simulation with " ...
+    "%<curContext> " ...
+    "because this S-Function was created from a model with " ...
+    "%<generatedContext>. " ...
+    "See the Solver page of the simulation parameters dialog.");
+%endfunction
+
+%% Function: SLibGenerateSolverChecks =======================================
+%% 
+%function SLibGenerateSolverChecks(simStructName) Output
+  %if SolverType == "FixedStep"
+    %if LibIsContinuous(0)
+      %% Make sure this S-Function isn't used in a variable-step model
+      /* Check for invalid switching between solver types */
+      if (ssIsVariableStepSolver(%<simStructName>)) {
+	%<FcnContextErr(simStructName,"a solver type of variable-step", ...
+	  "solver type of fixed-step and it has continuous time blocks")>
+	return;
+      }
+    %endif
+    %if (FixedStepOpts.SolverMode == "SingleTasking") && (NumSynchronousSampleTimes > 1)
+      %% Building S-Function as SingleTasking so check that
+      %% MultiTasking mode is not later used in a simulation.
+      if (ssGetSolverMode(%<simStructName>) == SOLVER_MODE_MULTITASKING) {
+	%<FcnContextErr(simStructName,"solver mode set to auto or multitasking", ...
+	  "solver mode set to singletasking")>
+	return;
+      }
+    %endif
+    %if SLibIsPeriodicRateGrouping()
+      %% Rate grouped code sfcn code. 
+      %% SingleTasking mode is not later used in a simulation.
+      if (ssGetSolverMode(%<simStructName>) == SOLVER_MODE_SINGLETASKING) {
+	%<FcnContextErr(simStructName,"solver mode set to singletasking", ...
+	  "solver mode set to auto or multitasking")>
+	return;
+      }
+    %endif
+    %if (FixedStepOpts.DoRTWSFcnTID01EQCheck)
+      %assign fs = FixedStepOpts.FixedStep
+      if (fabs(ssGetFixedStepSize(%<::tSimStruct>) - %<fs>) > mxGetEps()*100*%<fs>) {
+	%<FcnContextErr(simStructName, "the current fixed step size", ...
+	  "a fixed step size of %<FixedStepOpts.FixedStep> and had both \"\n" ...
+	  "\"continuous blocks and discrete blocks running at this rate")>
+	return;
+      }
+    %endif
+  %else
+    %if LibIsContinuous(0)
+      %% Make sure this S-Function isn't used in a fixed-step model
+      /* Check for invalid switching between solver types */
+      if (!ssIsVariableStepSolver(%<simStructName>)) {
+	%<FcnContextErr(simStructName,"a solver type of fixed-step", ...
+	  "solver type of variable-step solver and it has continuous time blocks")>
+	return;
+      }
+    %endif
+  %endif
+%endfunction
+
+%% Function: LibDumpSfunTargetChecks ===========================================
+%% Abstract: 
+%%   Generate checks in mdlStart for S-Function target
+%%
+%function LibDumpSfunTargetChecks() Output
+  %assign nonFinitesBuffer = SLibGetSFcnNonFinite()
+
+  %%
+  /* instance underlying S-Function data */
+  #if defined(RT_MALLOC) || defined(MATLAB_MEX_FILE)
+  #  if defined(MATLAB_MEX_FILE)
+  %<nonFinitesBuffer>\
+  
+  %<SLibGenerateSolverChecks(::tSimStruct)>
+  
+  #  endif
+  
+  %<LibGetModelName()>_malloc(%<::tSimStruct>);
+  if( ssGetErrorStatus(%<::tSimStruct>) != %<SLibGetNullDefinitionFromTfl()> ) {
+    return;
+  }
+  #endif
+  
+%endfunction %% LibDumpSfunTargetChecks
+
+%% Function: SLibCreateSfcnTunablePrmWSVariable ================================
+%% Create Tunable Parameters for the S-Function Target in global MATLAB workspace
+%% Used by build procedure(rtw_c) to create the S-Function block.
+%%
+%function SLibCreateSfcnTunablePrmWSVariable(mdlName, numTunablePrms, prmIdxVec) void
+ %assign GenCodeOnly = FEVAL("get_param",mdlName,"RTWGenerateCodeOnly")
+ %if GenCodeOnly != "on"
+  %matlab evalin("base","clear global rtwsfcn_%<mdlName>")
+    
+  %% Initialize global variable for storing name & value strings
+  %if numTunablePrms > 0
+    %matlab evalin("base","global rtwsfcn_%<mdlName>")
+  %endif
+    
+  %% Cache name & value strings for each parameter.
+  %with ModelParameters
+    %foreach prmIdx = numTunablePrms
+      %<FcnCacheNameAndValueStrForSFcnParam(mdlName, prmIdxVec[prmIdx])>
+    %endforeach
+  %endwith
+ %endif
+%endfunction %% SLibCreateSfcnTunablePrmWSVariable
+
+%% Function: LegacyFixptValueConversion =======================================
+%% Abstract:
+%%   This function adds the legacy fixed point value conversion to a value
+%%   string.
+%%
+%function LegacyFixptValueConversion(aDataTypeIdx, aValueStr)
+  %%
+  %% Account for scaling / bias of fixed-point parameters
+  %% Used with the ERT S-Function (not generated S-Function)
+  %%
+  %assert (GenerateErtSFunction == 1)
+      
+  %% *** aValueStr represents the stored-integer value ***
+  %assign valueStr = aValueStr
+      
+  %assign dType = FixPt_GetDataTypeFromIndex(aDataTypeIdx)
+      
+  %% Perform operations to account for scaling and bias
+  %%
+  %%    RealWorldValue = Bias + Slope*StoredIntValue
+  %%
+  %if (dType.FixedExp > 0)
+    %assign valueStr = "(2^%<dType.FixedExp>)*%<valueStr>"
+  %elseif (dType.FixedExp < 0)
+    %assign valueStr = "(2^(%<dType.FixedExp>))*%<valueStr>"
+  %endif
+  
+  %if (dType.FracSlope != 1)
+    %assign valueStr = "%<dType.FracSlope>*%<valueStr>"
+  %endif
+  
+  %if (dType.Bias != 0)
+    %assign valueStr = "%<dType.Bias> + %<valueStr>"
+  %endif
+  
+  %% *** valueStr now represents the real-world value ***
+  
+  %% NOTE: We do not need to cast this value string to the appropriate
+  %% data type because it will get transformed to this data type when
+  %% the ERT S-Function registers it as a run-time parameter.    
+  
+  %return valueStr
+%endfunction
+
+%function SLibGetFxptValueStr(aMLType, aIsSigned, aNumBits, aFracSlope, ...
+  aFixedExp, aBias, aValueStr, aIsComplex, numElements) void
+  %assign valueStr = FEVAL("strrep", aValueStr, "(", "")
+  %assign valueStr = FEVAL("strrep", valueStr, ")", "")
+  %assign valueStr = FEVAL("strrep", valueStr, ...
+    "MIN_" + aMLType + "_T", "intmin('" + aMLType + "')")
+  %assign valueStr = FEVAL("strrep", valueStr, ...
+    "MAX_" + aMLType + "_T", "intmax('" + aMLType + "')")
+  %assign isLargeInt = (aNumBits > 53)
+  %if isLargeInt || aFracSlope != 1 || aFixedExp != 0 || aBias != 0
+    %assign fiCall = "fi([], %<aIsSigned>, %<aNumBits>, " ...
+        "%<aFracSlope>, %<aFixedExp>, %<aBias>, 'int', "
+    %if aIsComplex
+      %assign valueStr = FEVAL("regexprep", valueStr, ...
+        "((-|)[0-9]+)\\s*\\+\\s*((-|)[0-9]+)\\s*\\*\\s*i", "complex($1, $2)")
+      %if isLargeInt  
+        %assign valueStr = FEVAL("regexprep", valueStr, ...
+          "(\\(|\\[| )((-|)[0-9]+)", "$1%<fiCall>%<aMLType>($2))")
+      %else
+        %assign valueStr = FEVAL("regexprep", valueStr, ...
+          "(\\(|\\[| )((-|)[0-9]+)", "$1%<fiCall>$2)")
+      %endif
+    %else
+      %if isLargeInt  
+        %assign valueStr = FEVAL("regexprep", valueStr, ...
+          "(\\[| )((-|)[0-9]+)", "$1%<aMLType>($2)")
+      %endif
+      %assign valueStr = fiCall + valueStr + ")"
+    %endif
+  %endif
+  %% fi(v,s,w,slopeadjustmentfactor,fixedexponent,bias, 'int', [stored int])
+  %return valueStr
+%endfunction
+
+%function SLibGetMLIntegerValueStr(aDataTypeIdx, aMLType, aValueStr, ...
+  aIsComplex, numEl) void
+  %assign valueStr = FEVAL("strrep", "%<aValueStr>","U", "")      
+  %assign valueStr = FEVAL("strrep", valueStr,      "L", "")
+  %if LibIsDataTypeFixpt(aDataTypeIdx)
+    %assign dType = FixPt_GetDataTypeFromIndex(aDataTypeIdx)
+    %if dType.RequiredBits > 53
+      %assign valueStr = SLibGetFxptValueStr(aMLType, dType.IsSigned, ...
+        dType.RequiredBits, dType.FracSlope, dType.FixedExp, dType.Bias, ...
+        valueStr, aIsComplex, numEl)
+    %else
+      %assign valueStr = LegacyFixptValueConversion(aDataTypeIdx, valueStr)
+    %endif
+  %elseif aMLType == "int64"
+    %assign valueStr = SLibGetFxptValueStr(aMLType, 1, 64, 1, 0, 0, ...
+      valueStr, aIsComplex, numEl)
+  %elseif aMLType == "uint64"
+    %assign valueStr = SLibGetFxptValueStr(aMLType, 0, 64, 1, 0, 0, ...
+      valueStr, aIsComplex, numEl)
+  %else
+    %assign valueStr = FEVAL("strrep", valueStr, ...
+      "(MIN_" + aMLType + "_T)", "intmin('" + aMLType + "')")
+    %assign valueStr = FEVAL("strrep", valueStr, ...
+      "(MAX_" + aMLType + "_T)", "intmax('" + aMLType + "')")    
+    %assign valueStr = aMLType + "(" + valueStr + ")"
+  %endif
+  %return valueStr
+%endfunction
+
+%% Function: FcnCacheNameAndValueStrForSFcnParam ===============================
+%% Abstract:
+%%   Generate name & value strings for a parameter to be used by
+%%   generated (or ERT) S-Function.
+%%
+%% NOTE:
+%% - These strings get cached into a global MATLAB variable (accessed in rtw_c.m)
+%%
+%function FcnCacheNameAndValueStrForSFcnParam(modelName, mdlPrmIdx) void
+  %assign mdlPrm = ModelParameters.Parameter[mdlPrmIdx]
+  %assign pName = LibGetRecordIdentifier(mdlPrm)
+  %assign dataTypeIdx = ...
+    LibGetDataTypeIdAliasedThruToFromId(mdlPrm.OriginalDataTypeIdx)
+
+  %% --- Create the name string for this parameter -------------------------
+
+  %%  Mask Editor dialogs for S-Function blocks can display tunable parameters
+  %%  by name or by value in the edit fields.  Generated S-Function targets support a
+  %%  configuration checkbox that gives users the choice of propagating
+  %%  parameter names or parameter values to the masks of generated S-Function
+  %%  blocks.  For ERT targets, generation of S-Function
+  %%  blocks does not support this option and parameters are always propagated
+  %%  to the mask editor by name.
+  %%
+  %%  Check if the 'UseParamValues' option exists in the config set, and
+  %%  if it does, respect it.  Otherwise, default to using parameter names.
+  %%
+  %if (FcnParamMatchesVariableInGlobalScope(pName,mdlPrm) && ...
+       (!EXISTS(ConfigSet.UseParamValues) || ...
+       (EXISTS(ConfigSet.UseParamValues) && ...
+       ConfigSet.UseParamValues == 0)))
+    %if (FcnIsParamAlias(mdlPrm))
+      %assign nameStr  = mdlPrm.WorkspaceVarName
+    %else
+      %assign nameStr  = pName
+    %endif
+      %assign valueStr = ""
+  %else
+    %% Resulting value could be the result of executing an expression that
+    %% uses a combination of functions and variables from multiple workspaces
+    %% and may also include a transformation due to scaling/bias.  Therefore
+    %% we can not reliably use the parameter name in the generated S-Fcn.
+    %% --> Always use numeric (stored integer) value directly.
+    %assign nameStr = ""
+    
+    %% --- Create the value string for this parameter ------------------------
+    %assign isComplex = LibGetRecordIsComplex(mdlPrm)
+      
+    %% Get value string and replace TLC-specific tokens
+    %assign mdlPrmValue = SLibGetValueFromParamRec(mdlPrm, TLC_FALSE)
+    %assign valueStr = FEATURE("expandparameter", mdlPrmValue)
+    %%
+    %if LibIsNonBuiltInTypeNeededForFixpt(dataTypeIdx)
+      %% remove white space before i.
+      %assign valueStr = FEVAL("strrep","%<valueStr>"," i","\*i")
+    %endif
+    %%
+    %if LibIsDataTypeMultiWordFixpt(dataTypeIdx)
+      %assign valueStr = FEVAL("fixptGetMultiWordValue", valueStr, ...
+        IntegerSizes.LongNumBits)
+      %assign valueStr = FcnReshapeValueStr(valueStr, mdlPrm)
+      %if LibIsDataTypeFixpt(dataTypeIdx)
+        %assign valueStr = LegacyFixptValueConversion(dataTypeIdx, valueStr)
+      %endif
+    %elseif LibIsEnumDataType(dataTypeIdx)
+      %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+        LibGetDataTypeNameFromId(dataTypeIdx), valueStr, isComplex, LibGetRecordWidth(mdlPrm))
+      %assign valueStr = FcnReshapeValueStr(valueStr, mdlPrm)
+    %else
+      %assign numElement = LibGetRecordWidth(mdlPrm)
+      %switch LibGetDataTypeNameFromId(dataTypeIdx)          
+        %case "int64_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "int64", valueStr, isComplex, numElement)
+          %break
+        %case "uint64_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "uint64", valueStr, isComplex, numElement)
+          %break
+        %case "int32_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "int32", valueStr, isComplex, numElement)
+          %break
+        %case "uint32_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "uint32", valueStr, isComplex, numElement)
+          %break
+        %case "int16_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "int16", valueStr, isComplex, numElement)
+          %break
+        %case "uint16_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "uint16", valueStr, isComplex, numElement)
+          %break
+        %case "int8_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "int8", valueStr, isComplex, numElement)
+          %break
+        %case "uint8_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "uint8", valueStr, isComplex, numElement)
+          %break
+        %case "boolean_T"
+          %assign valueStr = SLibGetMLIntegerValueStr(dataTypeIdx, ...
+            "logical", valueStr, isComplex, numElement)
+          %break
+        %case "real32_T"
+          %assign valueStr = FEVAL("strrep","%<valueStr>","F","")
+          %assign valueStr = FEVAL("strrep", valueStr, "rtInfF",     "inf")
+          %assign valueStr = FEVAL("strrep", valueStr, "rtMinusInfF","-inf")
+          %assign valueStr = FEVAL("strrep", valueStr, "rtNaNF",     "nan")
+          %assign valueStr = "single(" + valueStr + ")"
+          %break
+        %default
+          %assign valueStr = FEVAL("strrep", valueStr, "rtInf",      "inf")
+          %assign valueStr = FEVAL("strrep", valueStr, "rtMinusInf","-inf")
+          %assign valueStr = FEVAL("strrep", valueStr, "rtNaN",      "nan")
+          %break
+      %endswitch
+      %assign valueStr = FcnReshapeValueStr(valueStr, mdlPrm)
+    %endif
+  %endif
+
+  %% Create temporary global variable in base workspace
+  %matlab evalin("base", ...
+    "rtwsfcn_%<modelName>(end+1).Name = '%<pName>';")
+  %matlab evalin("base", ...
+    "rtwsfcn_%<modelName>(end).NameStr = '%<nameStr>';")
+  %% 
+  %% Matlab would crash if the intialization string of tunable 
+  %% parameter exceeded the matlab eval function limit of 64kB.
+  %% Added workaround by assigning a temporary variable in the
+  %% base workspace in order to limit the size of the evaluation
+  %% string.
+  %%
+  %matlab assignin("base", "rtw_sfunction_temp_var", valueStr)  
+  %matlab evalin("base", ...
+    "rtwsfcn_%<modelName>(end).ValueStr = rtw_sfunction_temp_var;")
+  %matlab evalin("base", "clear rtw_sfunction_temp_var;")
+%endfunction %% FcnCacheNameAndValueStrForSFcnParam
+
+
+%% Function: SLibGenRTWSFcnParamHandlingFcns ==================================
+%% Abstract:
+%%   The function generates all of the parameter handling functions:
+%%   - mdlCheckParameters:   Check attributes of dialog parameters
+%%   - mdlSetWorkWidths:     Register run-time parameters
+%%   - mdlProcessParameters: Update tunable parameter values
+%%
+%%   We do not currently retrieve these functions from a cache.
+%%   We simply generate them when asked.
+%%
+%function SLibGenRTWSFcnParamHandlingFcns() void
+  %assert ((CodeFormat == "S-Function") && !Accelerator)
+  %assign result = [0, ""]
+
+  %% Create mapping to tunable parameters to be included
+  %assign numTunablePrms = 0
+  %with ModelParameters
+    %% We need to handle ModelParameters for both AllTunable mode
+    %% and variable only mode.
+    %if InlineParameters != 0 && NumParameters > 0
+      %assign prmIdxVec = ...
+	Vector(%<NumParameters>) [0:%<NumParameters-1>]
+      %foreach prmIdx = NumParameters
+	%assign mdlPrm = Parameter[prmIdx]
+	%if mdlPrm.StorageClass == "Auto_SFCN" && mdlPrm.Tunable == "yes"
+	  %assert !LibGetRecordIsComplex(mdlPrm)
+	  %assert LibIsBuiltInDataType(mdlPrm.OriginalDataTypeIdx)
+	  %assign prmIdxVec[numTunablePrms] = prmIdx
+	  %assign numTunablePrms = numTunablePrms + 1
+	%endif %%  mdlPrm.StorageClass == "Auto_SFCN" && mdlPrm.Tunable == "yes"    
+      %endforeach %% prmIdx = NumParameters
+    %endif
+  %endwith
+
+  %% Generate the functions into a buffer to be returned
+  %if numTunablePrms > 0
+    %% Check that the number of tunable parameters matches the number of
+    %% parameter that were declared/defined in prm_sfcntunable.tlc
+    %assert(numTunablePrms == ::CompiledModel.ModelParameters.SfcnParamIdx)
+    
+    %% Cache parameter names in variable in global MATLAB workspace
+    %<SLibCreateSfcnTunablePrmWSVariable(LibGetModelName(), numTunablePrms, prmIdxVec)>
+
+    %openfile fcnBuffer
+  
+    %% Write out mdlCheckParameters function
+    %<FcnGenRTWSFcnCheckParamsFcn(numTunablePrms, prmIdxVec)>
+
+    %closefile fcnBuffer
+
+    %%-------------------------------------------------------------------     
+    %% NOT REGISTERING RUN-TIME PARAMETERS FOR GENERATED S-FUNCTION:
+    %%-------------------------------------------------------------------     
+    
+    %assign result[0] = %<numTunablePrms>
+    %assign result[1] = "%<fcnBuffer>"
+  %endif
+  
+  %return result
+    
+%endfunction %% SLibGenRTWSFcnParamHandlingFcns
+
+
+%% Function: FcnGenRTWSFcnCheckParamsFcn =======================================
+%% Abstract:
+%%   Generate mdlCheckParameters function for generated S-Functions.
+%%
+%function FcnGenRTWSFcnCheckParamsFcn(numTunablePrms, prmIdxVec) Output
+  %if numTunablePrms > 0
+    %with ModelParameters
+      %assign fcnAbstract = "This function checks the attributes of tunable parameters."
+      %assign fcnName = "mdlCheckParameters"
+      %assign fcnReturns = "static void"
+      %assign fcnParams = "SimStruct *%<::tSimStruct>"
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "model"; GeneratedBy "sfcnlib.tlc"; Type "Model parameter check"}
+      %<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      #define MDL_CHECK_PARAMETERS
+      #if defined(MDL_CHECK_PARAMETERS) && defined(MATLAB_MEX_FILE)
+      %<fcnReturns> %<fcnName>(%<fcnParams>)
+      {
+	%foreach sfcnPrmIdx = numTunablePrms
+	  %assign mdlPrm = Parameter[prmIdxVec[sfcnPrmIdx]]
+          %<FcnGenRTWSFcnParamChecks(mdlPrm, sfcnPrmIdx)>
+	%endforeach %% sfcnPrmIdx = numTunablePrms
+      }
+      #endif /* MDL_CHECK_PARAMETERS */
+    %endwith %% ModelParameters
+  %endif %% numTunablePrms > 0
+%endfunction %% FcnGenRTWSFcnCheckParamsFcn
+
+
+%% Function: FcnGenRTWSFcnParamChecks ==========================================
+%% Abstract:
+%%   Generate code to check attributes of tunable parameters
+%%   for RTW-generated (or ERT) S-Functions.
+%%
+%function FcnGenRTWSFcnParamChecks(mdlPrm, sfcnPrmIdx) Output
+  %assign pName = LibGetRecordIdentifier(mdlPrm)
+  /* Parameter check for '%<pName>' */
+
+  %% Check complexity (should never be complex for generated S-Function)
+  %assert !SLibGetRecordIsComplex(mdlPrm)
+  if (mxIsComplex(ssGetSFcnParam(%<::tSimStruct>, %<sfcnPrmIdx>))) {
+    ssSetErrorStatus(%<::tSimStruct>,"Parameter '%<pName>' has to be a non complex array.");
+    return;
+  }
+  
+  %% Check data type (must be built-in data type for generated S-Function)
+  %assign dataTypeIdx = mdlPrm.OriginalDataTypeIdx
+  %assert LibIsBuiltInDataType(dataTypeIdx)
+  %assign mxClassOfVar = SLibGetMLDataTypeFromId(dataTypeIdx)
+  %assign mxFcnName    = SLibGetMLidentFcnFromId(dataTypeIdx)
+  if (!%<mxFcnName>(ssGetSFcnParam(%<::tSimStruct>, %<sfcnPrmIdx>))) {
+    ssSetErrorStatus(%<::tSimStruct>,"Parameter '%<pName>' has to be a %<mxClassOfVar> array.");
+    return;
+  }
+  
+  %% Check dimensions
+  %assign dims = FcnGetMatlabSafeDimensions(mdlPrm)
+  %assign numOfDims = SIZE(dims,1)
+  %%
+  %% Construct dimensions string (for error message)
+  %assign dimsStr = "[%<dims[0]>"
+  %foreach dimsIdx = (numOfDims-1)
+    %assign dimsStr = dimsStr + "x%<dims[dimsIdx+1]>"
+  %endforeach
+  %assign dimsStr = dimsStr + "]"
+  %%
+  if ((mxGetNumberOfDimensions(ssGetSFcnParam(%<::tSimStruct>, %<sfcnPrmIdx>)) != %<numOfDims>)\
+  %foreach dimsIdx = numOfDims
+    ||
+    (mxGetDimensions(ssGetSFcnParam(%<::tSimStruct>, %<sfcnPrmIdx>))[%<dimsIdx>] != %<dims[dimsIdx]>)\
+  %endforeach
+  )
+  {
+    ssSetErrorStatus(%<::tSimStruct>,"Parameter '%<pName>' has to be a %<dimsStr> array.");
+    return;
+  }
+  
+%endfunction %% FcnGenRTWSFcnParamChecks
+
+
+%% Function: FcnParamMatchesVariableInGlobalScope ==============================
+%% Abstract:
+%%   Check if there is a variable in the base workspace or data dictionary
+%%   for this parameter.
+%%
+%% NOTE:
+%% - For InlineParameters OFF, the expression could have resolved to variables
+%%   in any workspace, so we don't try to guess as to which variables to use.
+%% - For InlineParameters ON, we expect to find a variable in the base workspace
+%%   for each tunable parameter.  However, this might not be the case if the
+%%   model contains non-inlined S-Functions.
+%%
+%function FcnParamMatchesVariableInGlobalScope(varName, param) void
+  %if ((InlineParameters >= 1) && ...
+       (( FcnIsParamAlias(param) && ...
+          FEVAL("existsInGlobalScope", LibGetModelName(), param.WorkspaceVarName)) || ...
+        (!FcnIsParamAlias(param) && ...
+          FEVAL("existsInGlobalScope", LibGetModelName(), varName))))
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+%% Function: FcnIsParamAlias ====================================================
+%% Abstract:
+%%   Check if this parameter has an Alias name set
+%%
+%function FcnIsParamAlias(param) void
+
+  %if (EXISTS(param.Object.ObjectProperties.CoderInfo.Object.ObjectProperties.Alias))
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+%% Function: FcnGetMatlabSafeDimensions
+%% Abstract:
+%%   Get the dimensions of a parameter
+%%   For 1-D parameters, return [1xN]
+%function FcnGetMatlabSafeDimensions(mdlPrm)
+  %assign dims = LibGetRecordDimensions(mdlPrm)
+  %if (SIZE(dims) == [1,1])
+    %assign dims = [1, %<dims[0]>]
+  %endif
+  
+  %return dims
+%endfunction
+
+
+%% Function: FcnReshapeValueStr ================================================
+%% Abstract:
+%%   Reshape value string if necessary.
+%%
+%function FcnReshapeValueStr(valueStr, mdlPrm) void
+  
+  %% Reshape value string if necessary
+  %assign dims = FcnGetMatlabSafeDimensions(mdlPrm)
+  %assign prmSize = SLibGetSizeOfValueFromParamRec(mdlPrm)
+  %if (prmSize != dims)
+    %assign valueStr = "reshape(%<valueStr>"
+    %foreach dimsIdx = SIZE(dims)[1]
+      %assign valueStr = "%<valueStr>, %<dims[dimsIdx]>"
+    %endforeach
+    %assign valueStr = "%<valueStr>)"
+  %endif
+
+  %return valueStr
+%endfunction  
+
+%% Function: SLibRegisterDataStores ===========================================
+%% Abstract:
+%%   Generates the data-store registration code.
+%%
+%function SLibRegisterDataStores(simStructArg) Output
+  %if ::CompiledModel.DWorks.NumSFcnWrapperDWorks > 0
+    {
+      boolean_T success;
+      
+      %with ::CompiledModel.DWorks
+        ssSetNumDataStores(%<simStructArg>, %<NumSFcnWrapperDWorks>);
+        
+        %foreach idx = NumSFcnWrapperDWorks
+          %with DWork[SFcnWrapperDWIndices[idx]]
+            %switch SFcnWrapperMode
+              %case "read"
+                %assign rwMode = "SS_READER_ONLY"
+                %break
+              %case "write"
+                %% We always register DSMs in readwrite mode to allow 
+                %% for element-wise access in Simulink
+              %case "readwrite"
+                %assign rwMode = "SS_READER_AND_WRITER"
+                %break
+              %case "none"
+                %continue
+                %break
+              %default
+                %assert "Unknown SFcnWrapperMode \"%<SFcnWrapperMode>\""
+            %endswitch
+            %if GlobalDSM
+              %assign fcnName = "ssRegisterGlobalDataStoreFromName"
+            %else
+              %assign fcnName = "ssRegisterDataStoreFromName"
+            %endif
+            %assign dsmName = SFcnWrapperDSMName
+            %<fcnName>(%<simStructArg>, %<idx>, "%<dsmName>",%<rwMode>, %<GET_TYPE_ID_REPLACEMENT("false")>, &success);
+            if (!success) return;
+            
+          %endwith
+        %endforeach
+      %endwith
+    }
+  %endif
+%endfunction
+
+%% Function: SLibGenDataStoreChecks ===========================================
+%% Abstract:
+%%   Generates the data-store type checking code.
+%% 
+%function SLibGenDataStoreChecks(simStructArg) Output
+  %if ::CompiledModel.DWorks.NumSFcnWrapperDWorks > 0 
+    {
+      const SFcnDataStoreInfo *info;
+      int dIdx;
+      int compWidth;
+      %with ::CompiledModel.DWorks
+        %foreach idx = NumSFcnWrapperDWorks
+          %assign dw     = DWork[SFcnWrapperDWIndices[idx]]
+          %assign dsName = dw.SFcnWrapperDSMName
+          %assign dtId   = ...
+            LibGetDataTypeIdAliasedThruToFromId(SLibGetRecordDataTypeId(dw))
+          
+          ssGetDataStoreInfo(%<simStructArg>,%<idx>,&info);
+          %if LibIsBuiltInDataType(dtId)
+            if (ssGetDataTypeIdAliasedThruTo(%<simStructArg>,info->dataTypeId) != %<dtId>) {
+              ssSetErrorStatus(%<simStructArg>, 
+              "Data-Store Memory '%<dsName>' is registered with a "
+              "'%<LibGetDataTypeNameFromId(dtId)>' data type.");
+              return;
+            }
+          %endif
+
+          compWidth = 1;         
+          for (dIdx=0; dIdx<info->numDims; dIdx++) {
+            compWidth *= info->dims[dIdx];
+          }
+   
+          if (compWidth != %<SLibDWorkWidth(dw)>) {
+            ssSetErrorStatus(%<simStructArg>,
+            "Data-Store Memory '%<dsName>' is registered as a "
+            "'%<SLibDWorkWidth(dw)>' wide signal.");
+            return;
+          }
+
+          %assign isComplex = SLibGetRecordIsComplex(dw)
+          if (info->complex != %<isComplex>) {
+            %assign none = isComplex ? "" : "none "
+            ssSetErrorStatus(%<simStructArg>, 
+            "Data-Store Memory '%<dsName>' is registered as a "
+            "%<none>complex signal.");
+            return;
+          }
+        %endforeach
+      %endwith
+    } 
+  %endif
+%endfunction
+
+%% Function: AccessDSMWithStorageClass ========================================
+%% Abstract:
+%%   Generates the signal conditioning code for DSM's with custom storage
+%%   classes that aren't addressable.
+%%
+%function AccessDSMWithStorageClass(simStructArg, dwRec, dsmIdx, dsmRW, cscOP) Output
+  %if SLibGetRecordIsComplex(dwRec)
+    %assign errMsg = ...
+      "Data-Store Memory blocks with a non-addressable custom storage " + ...
+      "class and complex variable type is currently not supported by the " + ...
+      "ERT S-Function."
+    %<LibReportError(errMsg)>
+  %endif
+  %assign  dtName = SLibGetRecordDataTypeName(dwRec, "")
+  %assign dwWidth = SLibDWorkWidth(dwRec)
+  %assign optWith = LibOptionalVectorWidth(dwWidth)
+  %assign optZero = dwWidth > 1 ? "[0]" : ""
+  %assign varName = "_localDS%<dsmRW>Var"
+  {
+    %<dtName> %<varName>%<optWith>;
+    %if cscOP == "set"
+      ss%<dsmRW>DataStore(%<simStructArg>, %<dsmIdx>, &_localDS%<dsmRW>Var%<optZero>);
+    %endif
+    %if dwWidth > 1
+      {
+        int i;
+        
+        for (i = 0; i < %<dwWidth>; i++) {
+          %if cscOP == "set"
+            %<SLibAssignCustomData(dwRec, "[i]", "",  "%<varName>[i]")>
+          %else
+            %<varName>[i] = ...
+              %<LibAccessCustomData(dwRec, cscOP, "[i]", "", "")>;
+          %endif
+        }
+      }
+    %else
+      %if cscOP == "set"
+        %<SLibAssignCustomData(dwRec, "", "", varName)>
+      %else
+        %<varName> = %<LibAccessCustomData(dwRec, cscOP, "", "", "")>;
+      %endif
+    %endif
+    %if  cscOP != "set"
+      ss%<dsmRW>DataStore(%<simStructArg>, %<dsmIdx>, &_localDS%<dsmRW>Var%<optZero>);
+    %endif
+  }
+%endfunction
+
+%% Function: SLibGenDataStoreReads ============================================
+%% Abstract:
+%%   Generates the data-store read code.
+%%
+%function SLibGenDataStoreReads(simStructArg) Output
+  %if ::CompiledModel.DWorks.NumSFcnWrapperDWorks > 0
+    %foreach idx = ::CompiledModel.DWorks.NumSFcnWrapperDWorks
+      %assign dwIdx = ::CompiledModel.DWorks.SFcnWrapperDWIndices[idx]
+      %assign dwRec = ::CompiledModel.DWorks.DWork[dwIdx]
+      %% We always "read" even if dwRec.SFcnWrapperMode is "write" 
+      %% to handle element-wise access in Simulink
+      %if LibHasCustomStorage(dwRec) && !LibCustomDataIsAddressable(dwRec)
+        %<AccessDSMWithStorageClass(simStructArg, dwRec, idx, "ReadFrom", "set")>
+      %else
+        %assign sigAddr = SLibGetGlobalDWorkAddr(dwIdx, TLC_FALSE)
+        ssReadFromDataStore(%<simStructArg>, %<idx>, %<sigAddr>);
+      %endif
+    %endforeach
+  %endif
+%endfunction
+
+%% Function: SLibGenDataStoreWrites ===========================================
+%% Abstract:
+%%   Generates the data-store write code.
+%%
+%function SLibGenDataStoreWrites(simStructArg) Output
+  %if ::CompiledModel.DWorks.NumSFcnWrapperDWorks > 0
+    %foreach idx = ::CompiledModel.DWorks.NumSFcnWrapperDWorks
+      %assign dwIdx =  ::CompiledModel.DWorks.SFcnWrapperDWIndices[idx]
+      %assign dwRec = ::CompiledModel.DWorks.DWork[dwIdx]
+      %switch dwRec.SFcnWrapperMode
+        %case "write"
+        %case "readwrite"
+          %if LibHasCustomStorage(dwRec) && !LibCustomDataIsAddressable(dwRec)
+            %<AccessDSMWithStorageClass(simStructArg, dwRec, idx, "WriteTo", "contents")>
+          %else
+            %assign sigAddr = SLibGetGlobalDWorkAddr(dwIdx, TLC_FALSE)
+            ssWriteToDataStore(%<simStructArg>, %<idx>, %<sigAddr>);
+            %break
+          %endif
+        %case "read"
+          %break
+        %case "none"
+          %break
+        %default
+          %error "Unknown SFcnWrapperMode \"%<dwRec.SFcnWrapperMode>\""
+      %endswitch
+    %endforeach
+  %endif
+%endfunction
+
+%% Function: SLibSetSfcnExternProtos ==========================================
+%% Abstract: 
+%%   Dump extern function prototype declarations
+%%
+%function SLibSetSfcnExternProtos(mdlName) void
+  %openfile tmpBuf
+  #if defined(RT_MALLOC) || defined(MATLAB_MEX_FILE)
+  %<LibExternInFcnDecls()>void *%<mdlName>_malloc(SimStruct *%<::tSimStruct>);
+  #endif
+  
+  #ifndef __RTW_UTFREE__  %% defined in rtw/c/src/rtw_modelmap.h
+  #if defined (MATLAB_MEX_FILE)
+  %if ::GenCPP 
+    #ifdef __cplusplus
+    extern "C" {
+    #endif
+  %endif
+  %<LibExternInFcnDecls()>void * utMalloc(size_t);
+  %<LibExternInFcnDecls()>void   utFree(void *);
+  %if ::GenCPP
+    #ifdef __cplusplus
+    }
+    #endif
+  %endif
+  #endif
+  #endif /* #ifndef __RTW_UTFREE__ */
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("baseMdl_src_extern_fcn_decl", tmpBuf)>
+%endfunction %% SLibSetSfcnExternProtos
+
+
+%% Function: SLibSfcnWideInit ==================================================
+%% Abstract:
+%%   sfcnwide.tlc remnant.  Performs S-Function target specific code to 
+%%   register child S-Functions, SID, and MID registrations.
+%%
+%function SLibSfcnWideInit() void
+
+%% Temporarily switch global TLC variables
+%%
+
+%assign save_UsingMalloc              = UsingMalloc
+%assign save_tSimStruct               = ::tSimStruct
+%assign save_tChildSimStruct          = ::tChildSimStruct
+%assign save_tConstBlockIOStruct      = ::tConstBlockIOStruct
+
+%assign ::tSimStruct          = ::tChildSimStruct
+%assign ::tConstBlockIOStruct = "%<::tConstBlockIODefine>(%<::tChildSimStruct>)"
+%assign ::tChildSimStruct     = "childS"
+
+%assign ::CompiledModel.UsingMalloc         = 0
+
+%% ==========================================================================
+%% Cache static registration code for model_sid.h
+%%
+
+%<LibCacheChildSFunctionRegistration(::tChildSimStruct, LibGetModelName())>
+%<LibCacheBlockInstanceData()>
+
+%% SID S-Function registration
+%openfile SIDSFunctionRegistration
+%<LibDumpSFunctionRegistration()>\
+%closefile SIDSFunctionRegistration
+
+%<LibAddToCompiledModel("SIDSFunctionRegistration", SIDSFunctionRegistration)>
+
+%% SID block instance data
+%openfile SIDBlockInstanceData
+%<LibDumpBlockInstanceData()>\
+%closefile SIDBlockInstanceData
+
+%<LibAddToCompiledModel("SIDBlockInstanceData", SIDBlockInstanceData)>  
+
+%% Setup counter used to track tunable parameters for the generated S-Function
+%assign SfcnParamIdx = 0
+%assign ::CompiledModel.ModelParameters = ModelParameters + SfcnParamIdx
+
+%% ============================================================================
+%% Cache structure definitions prior to model registration.  Note that
+%% the instance should be cached prior to the definition to properly
+%% handle non-finites values.  For example, when inlining parameters the
+%% individual parameters are declared "const" unless they are non-finite.
+%% Whether a parameter is non-finite is determined while caching the
+%% parameter structure instance.
+%%
+%<SLibCacheDataBuffers()>
+
+%% SID local SimStuct declaration
+%<LibAddToCompiledModel("SIDLocalSDeclarations", SLibLocalSDeclaration(1))> 
+
+%% SID local SimStruct registration
+%<LibAddToCompiledModel("SIDLocalSRegistration", SLibLocalSRegistration(1))>
+
+%% ==========================================================================
+%% Cache malloc registration code for model_mid.h
+%%
+
+%assign ::CompiledModel.UsingMalloc = 1
+
+%<LibCacheChildSFunctionRegistration(::tChildSimStruct, LibGetModelName())>
+%<LibCacheBlockInstanceData()>
+
+%% MID S-Function registration
+%openfile MIDSFunctionRegistration
+%<LibDumpSFunctionRegistration()>\
+%closefile MIDSFunctionRegistration
+
+%<LibAddToCompiledModel("MIDSFunctionRegistration", MIDSFunctionRegistration)>
+
+%% MID block instance data
+%openfile MIDBlockInstanceData
+%<LibDumpBlockInstanceData()>\
+%closefile MIDBlockInstanceData
+
+%<LibAddToCompiledModel("MIDBlockInstanceData", MIDBlockInstanceData)>  
+
+%% MID local SimStuct declaration
+%<LibAddToCompiledModel("MIDLocalSDeclarations", SLibLocalSDeclaration(0))> 
+
+%% MID local SimStruct registration
+%<LibAddToCompiledModel("MIDLocalSRegistration", SLibLocalSRegistration(0))>
+
+%% ==========================================================================
+%% Restore global TLC variables
+%%
+%assign ::CompiledModel.UsingMalloc         = save_UsingMalloc
+%assign ::tSimStruct          = save_tSimStruct
+%assign ::tChildSimStruct     = save_tChildSimStruct
+%assign ::tConstBlockIOStruct = save_tConstBlockIOStruct
+%endfunction %% SLibSfcnWideInit
+
+%endif %% _SFCNLIB_
+
+%% [EOF] sfcnlib.tlc
+
+/%  LocalWords:  sfcnutil sfcntunable Deriv zc rtwsfcn expandparameter dsm SLib
+ %  LocalWords:  sfunction readwrite dw RW decl SDeclarations SRegistration
+ %  LocalWords:  MIDS singletasking
+ %/

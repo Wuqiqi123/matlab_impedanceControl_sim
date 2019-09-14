@@ -1,0 +1,1608 @@
+%% ============================================================================
+%%
+%% Abstract:
+%%      Library of functions for generating codeInfo object and its components.
+%%    
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+
+%if EXISTS("_CIINFOLIB_") == 0
+%assign _CIINFOLIB_ = 1
+
+%include "dtypelib.tlc"
+
+%selectfile NULL_FILE
+
+%% Function SLibResetCodeInfoLib ==============================================
+%% Abstract:
+%%  This function creates a TLCRecord which contains various hash maps.
+%%
+%%  It should be called once before CodeInfo processing begins and once before
+%%  C API RTW.DataInterface processing begins to ensure that both use cases for
+%%  this library begin from a clean state.
+%%
+%function SLibResetCodeInfoLib() void
+%% Create a TLCRecord which contains various hash maps
+%createrecord CodeInfoMapEmpty { \
+  TypeMap                {} \
+  VariableMap            {} \
+  StructExprMap          {} \
+  InternalDataTypeMap    {} \
+  InternalDataMap        {} \
+  ConstDataMap           {} \
+  TimingInterfaceMap     {} \
+  LookupMap              {} \
+}
+%assign ::CodeInfoMap = CodeInfoMapEmpty
+%endfunction
+  
+%% Function: SLibGetConstTypeObject ============================================
+%% Abstract:
+%%   This function creates a coder.types object using the CGTypeIdx provided
+%%   by the argument typeIdx.
+%%
+%function SLibGetConstTypeObject(typeIdx) Output
+  %%
+  %% Get the CGType record
+  %if LibCGTypeIsPointer(typeIdx)
+    %assign baseTypeObj = SLibGetCoderTypeObject(LibCGTypeBaseIndex(typeIdx), 1, 0)
+    %return FcnGetPointerTypeObj(baseTypeObj, 0, 0)
+  %elseif LibCGTypeWidth(typeIdx) != 1 
+    %return SLibGetCoderTypeObject(typeIdx, 1, 0)
+  %else
+    %return SLibGetCoderTypeObject(typeIdx, 0, 0)
+  %endif
+%endfunction
+
+
+%% Function SLibGetCoderTypeObject ==========================================
+%% Abstract :
+%%   This function creates a coder.types.Type object using the CGTypeIdx provided
+%%   The first argument 'typeIdx' represnts the CGTypeIdx as provided in the 
+%%   .rtw file. The 2nd and 3rd arguments represent the "const" and "volatile"
+%%   properties of the type.
+%%   This is a replacement for the SLibGetEmbeddedTypeObject and should be used
+%%   for all types in codeInfo.
+%%   
+%%   Using the CGTypeIdx, this function can create objects of following classes
+%%     - coder.types.Numeric
+%%     - coder.types.Complex
+%%     - coder.types.Matrix
+%%     - coder.types.Struct
+%%   The process of creation here means emitting out the MATLAB syntax which can 
+%%   create a MATALB object.
+%%
+%%   This function will be called in codeinfo.tlc which is writing out MATLAB code.
+%%   The MATLAB syntax emitted by this function will be part of that file
+%%
+%function SLibGetCoderTypeObject(typeIdx, const, volatile) Output
+  %assign typeObj = "Type_%<typeIdx>_R%<const>_V%<volatile>"
+  %if ISFIELD(CodeInfoMap.TypeMap, typeObj)
+    %% Do nothing. It is already mapped. Just return the name of type object.
+    %%
+  %else
+    %% Need to create a coder.types.xxxx object
+    %%
+    %% Get the CGType record
+    %assign cgType   = ::CompiledModel.CGTypes.CGType[typeIdx]
+    %%
+    %% 
+    %if (SLibCGTypeIsStructStrict(typeIdx))
+      %% Structure type. 
+      %% Create a coder.types.Struct object
+      %%
+      %<FcnCreateStructTypeObj(typeObj, typeIdx, const, volatile)>\
+      %%
+    %elseif (SLibCGTypeIsMatrixStrict(typeIdx))
+      %% Matrix type. 
+      %% Create a coder.types.matrixtype object
+      %%
+      %assign dummyWidth = LibCGTypeSymbolicWidth(typeIdx)
+      %assign dummyDims = LibCGTypeSymbolicDimensions(typeIdx)
+      %<FcnCreateMatrixTypeObj(typeObj, typeIdx, const, volatile)>\
+      %%
+    %elseif (SLibCGTypeIsComplexStrict(typeIdx))
+      %% Complex type. 
+      %% Create a coder.types.complextype object
+      %%
+      %<FcnCreateComplexTypeObj(typeObj, typeIdx, const, volatile)>\
+      %%
+    %elseif (LibCGTypeIsPointer(typeIdx))
+      %% Pointer type
+      %%
+      %<FcnCreatePointerTypeObjNew(typeObj, typeIdx, const, volatile)>\
+    %elseif (LibCGTypeIsRenamed(typeIdx))
+      %% Alias type
+      %% create coder.types.numerictype object representing this type
+      %%
+      %assign typeName = cgType.Name
+      %<FcnCreateAliasTypeObj(typeObj, typeIdx, const, volatile)>\
+      %%
+    %elseif (LibCGTypeIsVoid(typeIdx))
+      %<FcnCreateOpaqueTypeObj(typeObj, cgType, 0, 0)>\
+      
+    %elseif (SLibCGTypeIsEnumStrict(typeIdx))
+      %% Enumerated Type
+      %% enums are captured as coder.types.numerictype represnting an "int"
+      %%
+      %<FcnCreateEnumTypeObj(typeObj, cgType, const, volatile)>\
+      %%
+    %elseif (cgType.SLTypeIdx != -1)
+      %% Process a Simulink defined type
+      %%
+      %% Get the appropriate DataTypes.DataType record
+      %assign dTypeIdx = cgType.SLTypeIdx
+      %assign dTypeRec = ::CompiledModel.DataTypes.DataType[dTypeIdx]
+      %%
+      %%
+      %if (LibIsFundamentalBuiltInDataType(dTypeIdx))
+        %% fundamental builtin type
+        %% create coder.types.numerictype object representing this type
+        %%
+        %<FcnCreateBuiltInTypeObj(typeObj, cgType, const, volatile)>\
+        %%
+      %elseif (dTypeRec.IsFixedPoint)
+        %% fixed-point type
+        %% create coder.types.numerictype object representing this type
+        %%
+        %<FcnCreateFixPtTypeObj(typeObj, typeIdx, const, volatile)>\
+        %%
+      %elseif (LibIsStringDataType(dTypeIdx))
+        %% Simulink string type
+        %% First check container cg type
+        %if ISFIELD(dTypeRec, "ContainerCGTypeIdx") && LibCGTypeIsPointer(dTypeRec.ContainerCGTypeIdx)
+            %% Container type is pointer - sim target, string as void*
+            %assign typeObj = SLibGetCoderTypeObject(dTypeRec.ContainerCGTypeIdx, const, volatile)
+            %% Do not add identifier - it has been added before
+            %return typeObj
+        %else
+            %% Container type is matrix - rtw target, string as char[]
+            %% create matrix type for string (SLStringType)
+            %% create coder.types.Char object for base type
+            %%
+            %if (cgType.Name == "SLStringType")
+              %assign containerTypeIdx = dTypeRec.ContainerCGTypeIdx
+              %assign dummyWidth = LibCGTypeSymbolicWidth(containerTypeIdx)
+              %assign dummyDims = LibCGTypeSymbolicDimensions(containerTypeIdx)
+              %<FcnCreateMatrixTypeObj(typeObj, containerTypeIdx, const, volatile)>\          
+            %else
+              %<FcnCreateCharTypeObj(typeObj, cgType, const, volatile)>\
+            %endif
+        %endif
+        %%
+      %else
+        %% Custom type
+        %% create a coder.types.opaque type
+        %<FcnCreateOpaqueTypeObj(typeObj, cgType, 0, 0)>\
+        %%
+      %endif
+      %%
+    %else
+      %% Error out
+      %<LibReportFatalError("CodeInfo: Unhandled Data Type")>
+    %endif
+    %<LibAddIdentifier(CodeInfoMap.TypeMap, typeObj, typeIdx)>\
+  %endif
+  %return typeObj
+%endfunction
+
+%% Function: SLibGetCodeInfoCGTypeIdx ==========================================
+%% Abstract:
+%%   Returns a CG type index as it is required for the code info
+%%
+%function SLibGetCodeInfoCGTypeIdx(aRecord) void
+  %assign cgTypeIdx = LibGetRecordCGTypeIdx(aRecord)
+  %if LibCGTypeIsMatrix(cgTypeIdx) && LibCGTypeWidth(cgTypeIdx) == 1
+    %% This could happen for bus data types and port dimensions [1 1]
+    %return LibCGTypeBaseIndex(cgTypeIdx)
+  %endif
+  %return cgTypeIdx
+%endfunction
+
+
+%% Function SLibGetRTWVariableObject ========================================
+%% Abstract :
+%%   This function returns the name of a  RTW.Variable object which has the
+%%   type (typeObj) and the given identifer as its properties.
+%%   If the object does'nt exist it is created.
+%%   The MATLAB syntax for creation is
+%%       varObj = RTW.Variable(typeObj, identifier)
+%%   
+%%   Additional properties like Owner, DefinitionFile and Declaration file can
+%%   also be provided.
+%%
+%%   The process of creation here means emitting out the MATLAB syntax which can 
+%%   create a MATALB object. 
+%%
+%%   This function will be called in codeinfo.tlc which writes out MATLAB code.
+%%   The MATLAB syntax emitted by this function will be part of that file
+%%
+%function SLibGetRTWVariableObject(varKey, typeObj, identifier, ...
+                                   owner, defnFile, declFile) Output
+  %assign varObj = "Var_%<varKey>"
+  %if ISFIELD(CodeInfoMap.VariableMap, varObj)
+    %% Do nothing. It is already mapped. Just return the name of object.
+    %%
+  %else
+    %% Create Object
+    %assign comment = "% Variable: %<varObj>"
+    
+%<comment>
+%<varObj> = RTW.Variable(%<typeObj>, '%<identifier>');
+    %% Add properties
+    %<varObj>.Owner           = '%<owner>';
+    %<varObj>.DeclarationFile = '%<declFile>';
+    %if !ISEMPTY(owner)
+    %<varObj>.DefinitionFile  = '%<defnFile>';
+    %endif
+    %<LibAddIdentifier(CodeInfoMap.VariableMap, varObj, identifier)>
+  %endif
+  %return varObj
+%endfunction
+
+%% Function SLibGetRTWPointerVariableObject ===================================
+%% Abstract :
+%%   This function returns the name of a  RTW.PointerVariable object which has 
+%%   the type (typeObj) and the given identifer as its properties.
+%%   If the object does'nt exist it is created.
+%%   The MATLAB syntax for creation is
+%%       varObj = RTW.PointerVariable(typeObj, identifier, tgtVariable)
+%%   
+%%   The process of creation here means emitting out the MATLAB syntax which can 
+%%   create a MATLAB object.
+%%
+%%   This function will be called in codeinfo.tlc which writes out MATLAB code.
+%%   The MATLAB syntax emitted by this function will be part of that file
+%%
+%function SLibGetRTWPointerVariableObject(varKey, typeObj, identifier, tgtVar) Output
+  %assign varObj = "PtrVar_%<varKey>"
+  %if ISFIELD(CodeInfoMap.VariableMap, varObj)
+    %% Do nothing. It is already mapped. Just return the name of object.
+    %%
+  %else
+    %% Create Object
+    %assign comment = "% Pointer Variable: %<varObj>"
+    
+%<comment>
+%<varObj> = RTW.PointerVariable(%<typeObj>, '%<identifier>', %<tgtVar>);
+    %<LibAddIdentifier(CodeInfoMap.VariableMap, varObj, identifier)>
+  %endif
+  %return varObj
+%endfunction
+
+%% Function SLibGetRTWArrayExprObject ========================================
+%% Abstract :
+%%   This function returns the name of a  RTW.ArrayExpression object which has 
+%%   the type (typeObj) and the given identifer as its properties.
+%%   If the object does'nt exist it is created.
+%%   The MATLAB syntax for creation is
+%%       arExpr = RTW.ArrayExpression( type, baseRegion, offset)
+%%   
+%%   The process of creation here means emitting out the MATLAB syntax which can 
+%%   create a MATLAB object.
+%%
+%%   This function will be called in codeinfo.tlc which writes out MATLAB code.
+%%   The MATLAB syntax emitted by this function will be part of that file
+%%
+%function SLibGetRTWArrayExprObject(typeObj, baseRegion, offset) Output
+  %assign varObj = "AExp_%<baseRegion>_%<offset>"
+  %if ISFIELD(CodeInfoMap.VariableMap, varObj)
+    %% Do nothing. It is already mapped. Just return the name of object.
+    %%
+  %else
+    %% Create Object
+    %assign comment = "% Array Expression: "
+    
+%<comment>
+%<varObj> = RTW.ArrayExpression(%<baseRegion>, %<offset>, %<typeObj>);
+    %<LibAddIdentifier(CodeInfoMap.VariableMap, varObj, 0)>
+  %endif
+  %return varObj
+%endfunction
+
+%% Function SLibGetRTWCustomVariableObject ========================================
+%% Abstract :
+%function SLibGetRTWCustomVariableObject(varKey, typeObj, identifier, ...
+                                   owner, defnFile, declFile) Output
+  %assign varObj = "Var_%<varKey>"
+  %if ISFIELD(CodeInfoMap.VariableMap, varObj)
+    %% Do nothing. It is already mapped. Just return the name of object.
+    %%
+  %else
+    %% Create Object
+    %assign comment = "% Variable: %<varObj>"
+    
+%<comment>
+%<varObj> = RTW.CustomVariable(%<typeObj>);
+    %% Add properties
+    %<varObj>.Owner           = '%<owner>';
+    %<varObj>.DeclarationFile = '%<declFile>';
+    %if !ISEMPTY(owner)
+    %<varObj>.DefinitionFile  = '%<defnFile>';
+    %endif
+    %<LibAddIdentifier(CodeInfoMap.VariableMap, varObj, identifier)>
+  %endif
+  %return varObj
+%endfunction
+
+
+%% Function SLibGetRTWLiteralObject ========================================
+%% Abstract :
+%%   This function returns the name of a  RTW.IntegerConstnat object which has
+%%   the given Value as its properties.
+%%   If the object does'nt exist it is created.
+%%   The MATLAB syntax for creation is
+%%       valObj = RTW.Literal(type, value)
+%%   
+%%   The process of creation here means emitting out the MATLAB syntax which can 
+%%   create a MATLAB object.
+%%
+%%   This function will be called in codeinfo.tlc which writes out MATLAB code.
+%%   The MATALB syntax emitted by this function will be part of that file
+%%
+%function SLibGetRTWLiteralObject(typeObj, value) Output
+  %assign varObj = "Lit_%<value>"
+  %if ISFIELD(CodeInfoMap.VariableMap, varObj)
+    %% Do nothing. It is already mapped. Just return the name of object.
+    %%
+  %else
+    %% Create Object
+    %assign comment = "% Literal: %<varObj>"
+    
+%<comment>
+%<varObj> = RTW.Literal(%<typeObj>, %<value>);
+    %<LibAddIdentifier(CodeInfoMap.VariableMap, varObj, value)>
+  %endif
+  %return varObj
+%endfunction
+
+%% Function FcnCreateRTMMemberObject ========================================
+%% Abstract : 
+%%
+%%   This function returns the name of a RTW.PointerExpression object 
+%%   representing a field (for e.g. ModelData.blockIO) of Real-time model data
+%%   structure
+%%   If the object does not exist, it is created.
+%%   The MATLAB syntax for creation is
+%%       
+%%       elemObj = embedded.structelement;
+%%       elemObj.Identifier = identifier;
+%%       elemObj.Type = typeObj;
+%%
+%%       valObj = RTW.PointerExpression(elemObj, baseObj, tgtObj)
+%%   
+%%   The process of creation here means emitting out the MATLAB syntax which can 
+%%   create a MATLAB object.
+%%
+%%   This function will be called in codeinfo.tlc which writes out MATLAB code.
+%%   The MATLAB syntax emitted by this function will be part of that file
+%function FcnCreateRTMMemberObject(varKey, identifier, typeObj, baseObj, tgtObj) Output
+  %assign varObj = "PointerExpr_%<varKey>"
+  %assign elemObj = "StructElem_%<varObj>"
+  %if ISFIELD(CodeInfoMap.StructExprMap, varObj)
+    %% Do nothing. It is already mapped. Just return the name of object.
+    %%
+  %else
+    %% Create Struct Element
+    %assign comment = "% Structure Element: %<elemObj>"
+  
+    %<comment>
+    %<elemObj> = coder.types.AggregateElement;
+    %<elemObj>.Identifier = '%<identifier>';
+    %<elemObj>.Type = %<typeObj>;
+    
+    %% Create PointerExpression object
+    %assign comment = "% Pointer Expression: %<varObj>"
+    
+    %<comment>
+    %<varObj> = RTW.PointerExpression(%<elemObj>, %<baseObj>, %<tgtObj>);
+    %<LibAddIdentifier(CodeInfoMap.StructExprMap, varObj, baseObj)>
+    
+  %endif
+  %return varObj
+%endfunction
+
+%% Function SLibGetRTWCalibrationObject ======================================
+%% Abstract :
+%%   This function returns the name of a  RTW.AutosarCalibration object from 
+%%   the parameters.
+%%   If the object does'nt exist it is created.
+%%   The MATALB syntax for creation is
+%%       irObj = RTW.AutosarCalibration
+%%         irObj.Type = xyz
+%%         irObj.VariableName = abc
+%%   
+%%   The process of creation here means emitting out the MATLAB syntax which can 
+%%   create a MATLAB object.
+%%
+%%   This function will be called in codeinfo.tlc which writes out MATLAB code.
+%%   The MATLAB syntax emitted by this function will be part of that file
+%%
+%function SLibGetRTWCalibrationObject(varKey, typeObj, identifier, customAttribs, coderTypeObj) Output
+  %assign varObj = "Cal_%<varKey>"
+  %if ISFIELD(CodeInfoMap.VariableMap, varObj)
+    %% Do nothing. It is already mapped. Just return the name of object.
+    %%
+  %else
+    %% Create Object
+    %assign comment = "% Calibration: %<varObj>"
+    %assign csAttribs = customAttribs.ObjectProperties
+    
+%<comment>    
+    %if ISEQUAL(customAttribs.Class, "AttribClass_AUTOSAR_CalPrm")
+      %<varObj> = RTW.AutosarCalibration('Calibration');
+      %<varObj>.Type = %<typeObj>;
+      %<varObj>.CodeType = %<coderTypeObj>;
+      %<varObj>.ElementName = '%<csAttribs.ElementName>';
+      %<varObj>.InterfacePath = '%<csAttribs.InterfacePath>';
+      %<varObj>.Port = '%<csAttribs.PortName>';
+      %<varObj>.CalibrationComponent = '%<csAttribs.CalibrationComponent>';
+      %<varObj>.ProviderPortName     = '%<csAttribs.ProviderPortName>';
+    %elseif ISEQUAL(customAttribs.Class, "AttribClass_AUTOSAR_InternalCalPrm")
+      %% Internal calibration parameter
+      %<varObj> = RTW.AutosarCalibration('InternalCalPrm');
+      %<varObj>.Type = %<typeObj>;
+      %<varObj>.CodeType = %<coderTypeObj>;
+      switch '%<csAttribs.PerInstanceBehavior>'
+         case 'Parameter shared by all instances of the Software Component'
+            %<varObj>.Shared = 'true';
+         case 'Each instance of the Software Component has its own copy of the parameter'
+            %<varObj>.Shared = 'false';
+         otherwise
+            assert(false, 'Should not be here');
+      end
+      %% identifier may have been overridden by a mapped name in the 
+      %% generated code (see CalPrm.m)
+      %assign mappedName = FcnGetLookupMapping(identifier)
+      %if ISEMPTY(mappedName)
+         %assign port = identifier
+      %else
+         %assign port = mappedName
+      %endif
+      %<varObj>.Port = '%<port>';
+    %elseif ISEQUAL(customAttribs.Class, "AttribClass_AUTOSAR_SystemConstant") 
+      %<varObj> = RTW.AutosarCalibration('InternalCalPrm');
+      %% Initialized to empty by default
+      %%<varObj>.Type = [];
+    %else
+      %<LibReportFatalError("CodeInfo: Incorrect Calibration Parameter")>
+    %endif
+    %<LibAddIdentifier(CodeInfoMap.VariableMap, varObj, identifier)>
+  %endif
+  %return varObj
+%endfunction
+
+%% Function SLibMapDSMToRunnables ======================================
+%% Abstract :
+%%
+%function SLibMapDSMToRunnables(componentObj, runnableName) Output
+  dsmAccessS  = [];
+  %if ISFIELD(::CompiledModel.RTWAutosar, "DSMAccessInfo")
+    %with ::CompiledModel.RTWAutosar
+      %if ISFIELD(DSMAccessInfo, runnableName)
+        %assign dws = DSMAccessInfo.%<runnableName>
+        %foreach dwIdx = SIZE(dws)[1]
+          temp_dsm = %<componentObj>.DataStores(%<dws[dwIdx]>);
+          dsmAccessS = [dsmAccessS, temp_dsm];
+        %endforeach
+      %endif
+    %endwith
+  %endif
+  %return "dsmAccessS"
+%endfunction
+
+%% Function SLibMapCalPrmToRunnables ======================================
+%% Abstract :
+%%
+%function SLibMapCalPrmToRunnables(componentObj, runnableName) Output
+  
+  calPrmReads  = [];
+  %if ISFIELD(::CompiledModel.RTWAutosar, "ParamAccessInfo")
+    %with ::CompiledModel.RTWAutosar
+      %if ISFIELD(ParamAccessInfo, runnableName)
+        %assign calPrms = ParamAccessInfo.%<runnableName>
+        %foreach prmIdx = SIZE(calPrms)[1]
+          temp_par = %<componentObj>.Parameters(%<calPrms[prmIdx]>);
+          calPrmReads = [calPrmReads, temp_par];
+        %endforeach
+      %endif
+    %endwith
+  %endif
+  %return "uniquifyDataAccess(calPrmReads)"
+%endfunction
+
+%% Function SLibGetRTWTimingObject ========================================
+%% Abstract :
+%%   This function returns the name of a RTW.TimingInterface object which
+%%   corresponds to the given TID (tid).
+%%   If the object has'nt been created, this function will create the MATLAB
+%%   object. The process of creation here means emitting out the MATLAB 
+%%   syntax which can create a MATLAB object.
+%%   The MATLAB syntax is
+%%       timeObj = RTW.TimingInterface
+%%   
+%%   Additional properties (e.g. SamplePeriod) are also added if the TID 
+%%   maps to a appropriate ::CompiledModel.SampleTime record
+%%
+%%   Valid TID. The following are valid arguments to this function
+%%      - A number >=0 and corresponds to a valid SampleTime TID in .rtw file
+%%      - The string "constant"
+%%
+%%   This function will be called in codeinfo.tlc which writes out MATLAB code.
+%%   The MATLAB syntax emitted by this function will be part of that file
+%%
+%function SLibGetRTWTimingObject(tid) Output
+  %% Figure out the exact TID
+  %if (TYPE(tid) == "Number")
+    %if SLibModelWideEventTID(tid)
+      %assign tid = tid
+      %assign tidKey = tid
+    %elseif (FcnGetIsInheritedSampleTime() == 1)
+      %assign tid = "inherited"
+      %assign tidKey  = -3
+    %elseif ( ISEQUAL(SolverType, "FixedStep") && (FixedStepOpts.TID01EQ) && (tid == 0) && !IsModelReferenceSimTarget() )
+      %assign tid = 1
+      %assign tidKey = tid
+    %else
+      %assign tid = tid
+      %assign tidKey = tid
+    %endif
+  %elseif ISEQUAL(tid, "constant")
+    %assign tidKey  = -1
+    %% Do nothing. Ensure that u dont have any arbitrary string
+  %elseif ISEQUAL(tid, "continuous")
+    %% Do nothing. Ensure that u dont have any arbitrary string
+    %assign tidKey  = -2
+  %elseif ISEQUAL(tid, "inherited")
+    %% Do nothing. Ensure that u dont have any arbitrary string
+    %assign tidKey  = -3
+  %else
+    %<LibReportFatalError("CodeInfo TID: Incorrect TID specified")>
+  %endif
+  %%
+  %assign timeObj = "time_%<tid>"
+  %<timeObj> = codeInfo.TimingProperties(getIndexFromTimingInternalId(codeInfo.TimingInternalIds, %<tidKey>));
+  %return timeObj
+%endfunction
+
+%% Function SLibGetRTWTimingObjectFromPeriod ==================================
+%% Abstract :
+%%   This function returns the name of a PERIODIC RTW.TimingInterface object 
+%%   whose SamplePeriod is equal to the value
+%%   If the object has'nt been created, this function will create the MATLAB
+%%   object. The process of creation here means emitting out the MATLAB syntax
+%%    which can create a MATLAB object.
+%%   The MATLAB syntax is
+%%       timeObj = RTW.TimingInterface
+%%         timeObj.TimingMode = 'PERIODIC'
+%%         timeObj.SamplePeriod = value
+%%
+%%   This function will be called in codeinfo.tlc which writes out MATLAB code.
+%%   The MATLAB syntax emitted by this function will be part of that file
+%%
+%function SLibGetRTWTimingObjectFromPeriod(samplePeriod) Output
+  %% Figure out the exact TID
+  %if (TYPE(samplePeriod) != "Real")
+    %<LibReportFatalError("CodeInfo Period: Incorrect Period specified")>
+  %endif
+  %% Create a timeObj variable from the value
+  %% This variable name is also used to hash the objects
+  %if ISEQUAL(samplePeriod, 0)
+    %assign timeObj = "time_val_0"
+  %elseif samplePeriod < 0
+    %% Format SamplePeriod as a double with %g format specifier
+    %assign str = SPRINTF("%g",-samplePeriod)
+    %if samplePeriod > -1
+      %assign timeObj = "time_val_N" + FEVAL("regexprep", str, "[.-]", "n")
+    %else
+      %assign timeObj = "time_val_N" + FEVAL("regexprep", str, "[.+]", "p")
+    %endif
+  %else
+    %assign str = SPRINTF("%g",samplePeriod)
+     %if samplePeriod < 1
+      %assign timeObj = "time_val_P" + FEVAL("regexprep", str, "[.-]", "n")
+    %else
+      %assign timeObj = "time_val_P" + FEVAL("regexprep", str, "[.+]", "p")
+    %endif
+  %endif
+  %%
+  %if ISFIELD(CodeInfoMap.TimingInterfaceMap, timeObj)
+    %% Do nothing. This object has already been created.
+    %% Just return the name of the object
+    %%
+  %else
+    %% Create a default object. Note the default TimingMode is PERIODIC
+    %assign comment = "% Timing Information: %<timeObj>"
+    
+%<comment>
+%<timeObj> = RTW.TimingInterface;
+  %<timeObj>.SamplePeriod =  %<samplePeriod>;
+    %<LibAddIdentifier(CodeInfoMap.TimingInterfaceMap, timeObj, samplePeriod)>
+  %endif
+  %return timeObj
+%endfunction
+
+%% =====================================================
+%% LOCAL HELPER FUNCTIONS BELOW THIS LINE
+%% =====================================================
+%% 
+%function FcnCreateBuiltInTypeObj(typeObj, cgTypeRec, const, volatile) Output
+  %assign cgTypeName = cgTypeRec.Name
+  %assign slTypeIdx  = cgTypeRec.SLTypeIdx
+  
+  %assign comment = "% Built-In Type: %<slTypeIdx>"
+%<comment>
+  %switch (slTypeIdx)
+    %case 0
+%<typeObj> = coder.types.Double;
+  %<typeObj>.Name = 'double';
+      %break
+    %case 1
+%<typeObj> = coder.types.Single;
+  %<typeObj>.Name = 'single';
+      %break
+    %case 2
+%<typeObj> = coder.types.Int(8,1);
+   %<typeObj>.Name = 'int8';
+      %break
+    %case 3
+%<typeObj> = coder.types.Int(8,0);
+   %<typeObj>.Name = 'uint8';
+      %break
+    %case 4
+%<typeObj> = coder.types.Int(16,1);
+  %<typeObj>.Name = 'int16';
+      %break
+    %case 5
+%<typeObj> = coder.types.Int(16,0);
+  %<typeObj>.Name = 'uint16';
+      %break
+    %case 6
+%<typeObj> = coder.types.Int(32,1);
+  %<typeObj>.Name = 'int32';
+      %break
+    %case 7
+%<typeObj> = coder.types.Int(32,0);
+  %<typeObj>.Name = 'uint32';
+      %break
+    %case 8
+ %<typeObj> = coder.types.Bool;
+  %<typeObj>.Name = 'boolean';
+      %break
+    %default
+      %<LibReportFatalError("coder.types.Type: Unhandled Data Type")>
+      %break
+  %endswitch
+  %<typeObj>.Identifier = '%<cgTypeName>';
+  %<typeObj>.ReadOnly   = %<const>;
+  %<typeObj>.Volatile   = %<volatile>;
+%endfunction
+
+%function FcnCreateFixPtTypeObj(typeObj, cgTypeIdx, const, volatile) Output
+  %assign cgTypeRec = ::CompiledModel.CGTypes.CGType[cgTypeIdx]
+  %assign cgTypeName = ::CompiledModel.CGTypes.CGType[LibCGTypeBaseIndex(cgTypeIdx)].Name
+  %assign dTypeRec   = ::CompiledModel.DataTypes.DataType[cgTypeRec.SLTypeIdx]
+  
+  %assign comment = "% Fixed-Point Type"
+  %<comment>
+  %<typeObj> = coder.types.Fixed;
+  %<typeObj>.Signedness = %<dTypeRec.IsSigned>; 
+  %<typeObj>.WordLength = %<dTypeRec.RequiredBits>;
+  %if (dTypeRec.Bias != 0.0) || (dTypeRec.FracSlope != 1.0)
+    %if (fxpIsDataTypeScaledDouble(dTypeRec))
+       %<typeObj>.DataTypeMode = 'Scaled double: slope and bias scaling';
+    %else
+       %<typeObj>.DataTypeMode = 'Fixed-point: slope and bias scaling';
+    %endif
+    %<typeObj>.Bias                  = %<dTypeRec.Bias>;
+    %<typeObj>.SlopeAdjustmentFactor = %<dTypeRec.FracSlope>;
+    %<typeObj>.FixedExponent         = %<dTypeRec.FixedExp>;
+  %else
+    %if (fxpIsDataTypeScaledDouble(dTypeRec))
+       %<typeObj>.DataTypeMode = 'Scaled double: binary point scaling';
+    %else
+       %<typeObj>.DataTypeMode = 'Fixed-point: binary point scaling';
+    %endif
+    %<typeObj>.FixedExponent = %<dTypeRec.FixedExp>;
+  %endif
+  %<typeObj>.Identifier = '%<cgTypeName>';
+  %<typeObj>.Name       = '%<cgTypeRec.Name>';
+  %<typeObj>.ReadOnly   = %<const>;
+  %<typeObj>.Volatile   = %<volatile>;
+%endfunction
+
+%function FcnCreateAliasTypeObj(typeObj, cgTypeIdx, const, volatile) Output
+  %assign cgTypeRec = ::CompiledModel.CGTypes.CGType[cgTypeIdx]
+  %assign cgTypeName  = cgTypeRec.Name
+  %assign dTypeIdx    = cgTypeRec.SLTypeIdx
+  %if dTypeIdx < 0
+    %assign baseTypeObj = ...
+      SLibGetCoderTypeObject(LibCGTypeBaseIndex(cgTypeIdx), const, volatile)
+    %assign comment = "% Alias Data Type"
+      
+ %<comment>
+ %<typeObj>  = %<baseTypeObj>.clone;
+   %<typeObj>.Identifier = '%<cgTypeName>';
+  %else
+    %assign aliasIdx    = LibGetDataTypeIdAliasedToFromId(dTypeIdx)
+    %assign aliasThruIdx= LibGetDataTypeIdAliasedThruToFromId(dTypeIdx)
+    %if (LibIsFundamentalBuiltInDataType(aliasIdx))
+      %assign baseTypeObj = SLibGetCoderTypeObject(aliasIdx, const, volatile)
+      %assign comment = "% Alias Data Type"
+      
+%<comment>
+%<typeObj>  = %<baseTypeObj>.clone;
+  %<typeObj>.Identifier = '%<cgTypeName>';
+    %elseif LibIsFundamentalBuiltInDataType(aliasThruIdx)
+      %assign baseTypeObj = ...
+        SLibGetCoderTypeObject(aliasThruIdx, const, volatile)
+      %assign comment = "% Alias Data Type"
+      
+%<comment>
+%<typeObj>  = %<baseTypeObj>.clone;
+  %<typeObj>.Identifier = '%<cgTypeName>';
+    %elseif LibIsEnumDataType(aliasThruIdx)
+      %assign baseTypeObj = ...
+        SLibGetCoderTypeObject(LibCGTypeBaseIndex(cgTypeIdx), const, volatile)
+      %assign comment = "% Alias to Enum Type"
+      
+%<comment>
+%<typeObj>  = %<baseTypeObj>.clone;
+  %<typeObj>.Identifier = '%<cgTypeName>';  
+    %else
+      %assign dTypeRec = ::CompiledModel.DataTypes.DataType[dTypeIdx]
+      %if (dTypeRec.IsFixedPoint)
+        %assign comment = "% Alias to Fixed-Point Type"
+        
+%<comment>
+%<typeObj> = coder.types.Fixed;
+  %<typeObj>.Signedness = %<dTypeRec.IsSigned>; 
+  %<typeObj>.WordLength = %<dTypeRec.RequiredBits>;
+       %if (dTypeRec.Bias != 0.0) || (dTypeRec.FracSlope != 1.0)
+            %if (fxpIsDataTypeScaledDouble(dTypeRec))
+                %<typeObj>.DataTypeMode = 'Scaled double: slope and bias scaling';
+            %else
+                %<typeObj>.DataTypeMode = 'Fixed-point: slope and bias scaling';
+            %endif
+          %<typeObj>.Bias                  = %<dTypeRec.Bias>;
+          %<typeObj>.SlopeAdjustmentFactor = %<dTypeRec.FracSlope>;
+          %<typeObj>.FixedExponent         = %<dTypeRec.FixedExp>;
+        %else
+          %if (fxpIsDataTypeScaledDouble(dTypeRec))
+              %<typeObj>.DataTypeMode = 'Scaled double: binary point scaling';
+          %else
+              %<typeObj>.DataTypeMode = 'Fixed-point: binary point scaling';
+          %endif
+            %<typeObj>.FixedExponent = %<dTypeRec.FixedExp>;
+        %endif
+        %<typeObj>.Identifier = '%<cgTypeName>';  
+        %<typeObj>.ReadOnly   = %<const>;
+        %<typeObj>.Volatile   = %<volatile>;
+        %%
+      %else
+        %% Custom type
+        %% create a embedded.opaque type
+        %<FcnCreateOpaqueTypeObj(typeObj, cgTypeRec, 0, 0)>\
+        %%
+      %endif
+    %endif
+  %endif
+  %<typeObj>.Name = %<typeObj>.Identifier;
+%endfunction
+
+%function FcnCreateEnumTypeObj(typeObj, cgTypeRec, const, volatile) Output
+  %assign cgTypeName = cgTypeRec.Name
+  %assign dTypeId    = cgTypeRec.SLTypeIdx
+  %if !LibIsEnumDataType(dTypeId)
+    %<LibReportFatalError("CodeInfo: Unhandled Enumerated Data Type")>
+  %endif
+  %assign numEnums = FcnGetEnumTypeNumEnums(dTypeId)
+  %assert (numEnums > 0)
+  tmpEnumStr%<dTypeId> = cell(%<numEnums>, 1);
+  tmpEnumVal%<dTypeId> = zeros(%<numEnums>, 1);
+  %foreach enIdx = numEnums
+    tmpEnumStr%<dTypeId>{%<enIdx>+1} = '%<SLibGetEnumTypeCodeGenStringFromIndex(dTypeId, enIdx)>';
+    tmpEnumVal%<dTypeId>(%<enIdx>+1) =  %<SLibGetEnumTypeValueFromIndex(dTypeId, enIdx)>;
+  %endforeach
+  
+  %assign comment = "% Enum Data Type"
+%<comment>
+%<typeObj>  = coder.types.Enum;
+  %<typeObj>.Identifier = '%<cgTypeName>';
+  %<typeObj>.Name       = '%<cgTypeName>';
+  %<typeObj>.ReadOnly   = %<const>;
+  %<typeObj>.Volatile   = %<volatile>;
+  %<typeObj>.Strings    = tmpEnumStr%<dTypeId>;
+  %<typeObj>.Values     = int32(tmpEnumVal%<dTypeId>);
+  %<typeObj>.DefaultMember = %<FcnGetEnumTypeIndexOfDefaultValue(dTypeId)+1>;
+  %if (!LibIsEnumTypeStoredAsInt(dTypeId))
+    %assign baseDTypeId  = LibGetEnumTypeStorageType(dTypeId)
+    %assign baseDTypeRec = ::CompiledModel.DataTypes.DataType[baseDTypeId]
+    %assign baseTypeObj = SLibGetCoderTypeObject(baseDTypeRec.CGTypeIdx, 0, 0)
+    %<typeObj>.StorageType = %<baseTypeObj>;
+  %endif
+%endfunction
+
+%function FcnCreateCharTypeObj(typeObj, cgTypeRec, const, volatile) Output
+  %assign cgTypeName = cgTypeRec.Name
+  
+  %assign comment = "% Char Data Type"
+%<comment>
+%<typeObj>  = coder.types.Char;
+  %<typeObj>.Identifier = '%<cgTypeName>';
+  %<typeObj>.ReadOnly = %<const>;
+  %<typeObj>.Volatile = %<volatile>;
+%endfunction
+
+%function FcnCreateOpaqueTypeObj(typeObj, cgTypeRec, const, volatile) Output
+  %assign cgTypeName = cgTypeRec.Name
+  
+  %assign comment = "% Opaque Data Type"
+%<comment>
+%<typeObj>  = coder.types.Opaque;
+  %<typeObj>.Identifier = '%<cgTypeName>';
+  %<typeObj>.Name = '%<cgTypeName>';
+%endfunction
+
+%function FcnCreateStructTypeObj(typeObj, cgTypeIdx, const, volatile) Output
+  %assign cgTypeRec = ::CompiledModel.CGTypes.CGType[cgTypeIdx]
+  %assign cgTypeName = cgTypeRec.Name
+  %if FcnTypeIsMultiWord(cgTypeIdx)
+    %<FcnCreateFixPtTypeObj(typeObj, cgTypeIdx, const, volatile)>
+    %%<FcnCreateOpaqueTypeObj(typeObj, cgTypeRec, 0, 0)>
+  %else
+    %assign comment = "% Structure Elements"
+      
+%<comment>
+%<typeObj>_EL = [];
+    %foreach mIdx = LibCGTypeNumMembers(cgTypeIdx)
+      %assign mtypeIdx = LibCGTypeMemberCGTypeIdx(cgTypeIdx, mIdx)
+      %assign mTypeObj = SLibGetCoderTypeObject(mtypeIdx, 0, 0)
+      %assign comment = "% Element # %<mIdx+1>"
+    
+  %<comment>
+  %<typeObj>_M%<mIdx> = coder.types.AggregateElement;
+    %<typeObj>_M%<mIdx>.Identifier = '%<LibCGTypeMemberName(cgTypeIdx, mIdx)>';
+    %<typeObj>_M%<mIdx>.Type = %<mTypeObj>;
+  %<typeObj>_EL = [%<typeObj>_EL, %<typeObj>_M%<mIdx>];
+    %endforeach
+    
+    %assign comment = "% Structure Type"
+%<comment>
+%<typeObj> = coder.types.Struct;
+  %<typeObj>.Identifier = '%<cgTypeName>';
+  %<typeObj>.Name       = '%<cgTypeName>';
+  %<typeObj>.Elements   = %<typeObj>_EL;
+  %<typeObj>.ReadOnly   = %<const>;
+  %<typeObj>.Volatile   = %<volatile>;
+    %assign dTypeIdx = cgTypeRec.SLTypeIdx
+    %if (dTypeIdx > -1)
+      %assign dTypeRec = ::CompiledModel.DataTypes.DataType[dTypeIdx]
+      %if ISFIELD(dTypeRec, "StructDtChecksum")
+        %% cast to Real to remove trailing 'U' (e.g. 12215U) and preserve 32-bit values
+  %<typeObj>.Checksum   = uint32([%<CAST("Real", dTypeRec.StructDtChecksum[0])>; ...
+                                  %<CAST("Real", dTypeRec.StructDtChecksum[1])>; ...
+                                  %<CAST("Real", dTypeRec.StructDtChecksum[2])>; ...
+                                  %<CAST("Real", dTypeRec.StructDtChecksum[3])>]);
+      %endif    
+    %endif
+  %endif
+%endfunction
+
+%function FcnTypeIsMultiWord(cgTypeIdx) void
+  %assign isMultiWord = 0
+  %if (LibCGTypeIsStruct(cgTypeIdx))
+    %assign isMultiWord = LibCGTypeIsLoweredMultiword(cgTypeIdx)
+  %endif
+  %return isMultiWord
+%endfunction
+
+%function FcnCreateMatrixTypeObj(typeObj, cgTypeIdx, const, volatile) Output
+  %assign cgTypeRec = ::CompiledModel.CGTypes.CGType[cgTypeIdx]
+  %assign baseTypeObj = SLibGetCoderTypeObject(LibCGTypeBaseIndex(cgTypeIdx), const, volatile)
+
+  %assign comment = "% Matrix Type"
+  %<comment>
+  %<typeObj> = coder.types.Matrix;
+  %<typeObj>.BaseType   = %<baseTypeObj>;
+  %if ISFIELD(cgTypeRec, "SymbolicWidth")
+    %if ISFIELD(cgTypeRec, "SLSymbolicDimensions")
+      %assign symDims  = cgTypeRec.SLSymbolicDimensions
+    %else
+      %assign symDims  = cgTypeRec.SymbolicDimensions
+    %endif
+    %assign symDimsStr = "{"
+    %assign numDimsStr = "["
+    %assign sep        = ""
+    %assign hasNumDims = TLC_FALSE
+    %foreach dimsIdx = SIZE(symDims, 1)
+      %assign numDimStr = "%<cgTypeRec.Dimensions[dimsIdx]>"
+      %if numDimStr ==  symDims[dimsIdx]
+        %assign hasNumDims = TLC_TRUE
+      %else
+        %assign numDimStr = "inf"
+      %endif
+      %assign numDimsStr = numDimsStr + sep + numDimStr
+      %assign symDimsStr = symDimsStr + sep + "'" + symDims[dimsIdx] + "'"
+      %assign sep = ", "
+    %endforeach
+    %assign symDimsStr = symDimsStr + "}"
+    %assign numDimsStr = numDimsStr + "]"
+    %<typeObj>.SymbolicDimensions = %<symDimsStr>;
+    %if ISFIELD(cgTypeRec, "SLSymbolicWidth")
+      %<typeObj>.SymbolicWidth = '%<cgTypeRec.SLSymbolicWidth>';
+    %else
+      %<typeObj>.SymbolicWidth = '%<cgTypeRec.SymbolicWidth>';
+    %endif
+    %if hasNumDims
+      %<typeObj>.Dimensions = %<numDimsStr>;
+    %endif
+  %else
+    %<typeObj>.Dimensions = %<cgTypeRec.Dimensions>;
+  %endif  
+%endfunction
+
+%function FcnCreateMatrixTypeWithBaseTypeObj(baseCgTypeIdx, const, volatile) Output
+  %%
+  %assign baseTypeObj = SLibGetCoderTypeObject(baseCgTypeIdx, const, volatile)
+
+  %if (LibCGTypeIsMatrix(baseCgTypeIdx))
+    %return baseTypeObj
+  %else
+    %assign comment = "% Matrix Type"
+    %<comment>
+    %assign matTypeObj = "Mat%<baseTypeObj>_%<const>_%<volatile>"
+    %<matTypeObj> = coder.types.Matrix;
+    %<matTypeObj>.BaseType   = %<baseTypeObj>;
+    %<matTypeObj>.Dimensions = [1,1];
+  
+    %return matTypeObj
+  %endif
+%endfunction
+
+%function FcnCreateComplexTypeObj(typeObj, cgTypeIdx, const, volatile) Output
+  %assign baseTypeObj = SLibGetCoderTypeObject(LibCGTypeBaseIndex(cgTypeIdx), 0, 0)
+  %assign baseCGRec   = ::CompiledModel.CGTypes.CGType[LibCGTypeBaseIndex(cgTypeIdx)]
+  %assign typeName    = LibGetDataTypeComplexNameFromId(baseCGRec.SLTypeIdx)
+  
+  %assign comment = "% Complex Type"
+%<comment>
+%<typeObj> = coder.types.Complex;
+  %<typeObj>.Identifier = '%<typeName>'; 
+  %<typeObj>.BaseType   = %<baseTypeObj>;
+  %<typeObj>.ReadOnly   = %<const>;
+  %<typeObj>.Volatile   = %<volatile>; 
+%endfunction
+
+%function FcnCreatePointerTypeObjNew(typeObj, cgTypeIdx, const, volatile) Output
+  %assign baseTypeObj = SLibGetCoderTypeObject(LibCGTypeBaseIndex(cgTypeIdx), const, volatile)
+  %assign comment = "% Pointer Type: Pointer to '%<baseTypeObj>'"
+%<comment>    
+%<typeObj> = coder.types.Pointer;
+  %<typeObj>.BaseType = %<baseTypeObj>;
+  %%
+  %% looks like the code info doesn't have the type hierarchy implemented
+  %% correctly
+  %%
+  %<typeObj>.ReadOnly = 0; 
+  %<typeObj>.Volatile = 0;
+%endfunction
+
+%function FcnCreatePointerTypeObj(cgTypeIdx, const, volatile) Output
+  %%
+  %if (LibCGTypeWidth(cgTypeIdx) != 1)
+    %assign baseTypeObj = ...
+      SLibGetCoderTypeObject(LibCGTypeBaseIndex(cgTypeIdx), const, volatile)
+  %else
+     %assign baseTypeObj = SLibGetCoderTypeObject(cgTypeIdx, const, volatile)
+  %endif
+  %return FcnGetPointerTypeObj(baseTypeObj, 0, 0)
+%endfunction
+
+%function FcnGetPointerTypeObj(baseTypeName, const, volatile) Output
+  %assign ptrtypeObj = "Ptr%<baseTypeName>_%<const>_%<volatile>"
+  %if ISFIELD(CodeInfoMap.TypeMap, ptrtypeObj)
+  %else
+    %assign comment = "% Pointer Type: Pointer to %<baseTypeName>"
+
+%<comment>    
+%<ptrtypeObj> = coder.types.Pointer;
+%if !ISEQUAL(baseTypeName, "void")
+   %<ptrtypeObj>.BaseType = %<baseTypeName>;
+ %endif
+    %<ptrtypeObj>.ReadOnly = %<const>;
+    %<ptrtypeObj>.Volatile = %<volatile>;
+    %<LibAddIdentifier(CodeInfoMap.TypeMap, ptrtypeObj, 1)>
+  %endif
+  %return ptrtypeObj
+%endfunction
+
+%function FcnGetMatrixFrameTypeObj(typeName) Output
+  %assign frameTypeObj = "Frame_%<typeName>"
+  %if ISFIELD(CodeInfoMap.TypeMap, frameTypeObj)
+  %else
+    %assign comment = "% Matrix Type: Frame to %<typeName>"
+%<comment>
+if ~%<typeName>.isMatrix
+  %<frameTypeObj> = coder.types.Matrix;
+    %<frameTypeObj>.BaseType = %<typeName>;
+    %<frameTypeObj>.Dimensions = [1, 1];
+    %<frameTypeObj>.FrameData = true;
+else
+        
+  %<frameTypeObj> = %<typeName>.clone;
+    %<frameTypeObj>.FrameData = true;
+end
+    %<LibAddIdentifier(CodeInfoMap.TypeMap, frameTypeObj, 1)>
+  %endif
+  %return frameTypeObj
+%endfunction
+
+%function FcnGetIntegerTypeObj(const, volatile) Output
+  %assign inttypeObj = "Type_int_R%<const>_V%<volatile>"
+  %if ISFIELD(CodeInfoMap.TypeMap, inttypeObj)
+  %else
+    %assign comment = "% Unsized integer type"
+
+%<comment>    
+%<inttypeObj> = coder.types.Int(32,1);
+    %<inttypeObj>.Identifier = 'int_T';
+    %<inttypeObj>.Name       = 'int';
+    %<inttypeObj>.ReadOnly   = %<const>;
+    %<inttypeObj>.Volatile   = %<volatile>;
+    %<LibAddIdentifier(CodeInfoMap.TypeMap, inttypeObj, 1)>
+  %endif
+  %return inttypeObj
+%endfunction
+
+%function FcnGetCharTypeObj(const, volatile) Output
+  %assign chartypeObj = "Type_char_R%<const>_V%<volatile>"
+  %if ISFIELD(CodeInfoMap.TypeMap, chartypeObj)
+  %else
+    %assign comment = "% Char type"
+
+%<comment>    
+%<chartypeObj> = coder.types.Char;
+    %<chartypeObj>.Identifier = 'char_T';
+    %<chartypeObj>.ReadOnly = %<const>;
+    %<chartypeObj>.Volatile = %<volatile>;
+    %<LibAddIdentifier(CodeInfoMap.TypeMap, chartypeObj, 1)>
+  %endif
+  %return chartypeObj
+%endfunction
+
+%function FcnGetOpaqueTypeObj(typeName, const, volatile) Output
+  %assign opaquetypeObj = "Type_opaque_%<typeName>_R%<const>_V%<volatile>"
+  %if ISFIELD(CodeInfoMap.TypeMap, opaquetypeObj)
+  %else
+    %assign comment = "% Opaque type"
+
+%<comment>    
+%<opaquetypeObj> = coder.types.Opaque;
+    %<opaquetypeObj>.Identifier = '%<typeName>';
+    %<opaquetypeObj>.ReadOnly = %<const>;
+    %<opaquetypeObj>.Volatile = %<volatile>;
+    %<LibAddIdentifier(CodeInfoMap.TypeMap, opaquetypeObj, 1)>
+  %endif
+  %return opaquetypeObj
+%endfunction
+
+%function FcnGetInternalTypeObj(key, typeName, typeObj) Output
+  %assign keyName = "Type_%<key>"
+  %if ISEMPTY(typeObj)
+    %if !ISFIELD(CodeInfoMap.InternalDataTypeMap, keyName)
+      %assign typeObj  = "type_%<key>"
+      %assign comment = "% Opaque Data Type"
+      
+%<comment>
+%<typeObj>  = coder.types.Opaque;
+       %<typeObj>.Identifier = '%<typeName>';
+      %<LibAddIdentifier(CodeInfoMap.InternalDataTypeMap, keyName, typeObj)>
+    %endif
+  %else
+    %if !ISFIELD(CodeInfoMap.InternalDataTypeMap, keyName)
+      %<LibAddIdentifier(CodeInfoMap.InternalDataTypeMap, keyName, typeObj)>
+    %endif
+  %endif
+  %return GETFIELD(CodeInfoMap.InternalDataTypeMap, keyName)
+%endfunction
+
+%function FcnGetInternalDataObject(key, path, name, region, time) Output
+  %assign dataObj = "idata_%<key>"
+  %if ISFIELD(CodeInfoMap.InternalDataMap, dataObj)
+  %else
+    
+     %assign comment = "% Data Interface: %<dataObj>"
+%<comment>
+  %if ISEMPTY(time)
+    %assign time = "empty_timing"
+    %<time> = RTW.TimingInterface.empty;
+  %endif
+%<dataObj> = RTW.DataInterface('%<path>', '%<name>', %<region>, %<time>);
+    %<LibAddIdentifier(CodeInfoMap.InternalDataMap, dataObj, key)>
+  %endif
+  %return dataObj
+%endfunction
+
+%function FcnGetInternalDataByName(iDataName) Output
+  %assign dataObj = "idata_%<iDataName>"
+  %assign comment = "% Data Interface: %<iDataName>"
+  
+  %<comment>
+  %<dataObj> = getInternalDataByName(codeInfo.InternalData, '%<iDataName>');
+  %return dataObj
+%endfunction
+
+%function FcnGetInternalDataByVariableName(iDataName) Output
+  %assign dataObj = "idata_%<iDataName>"
+  %assign comment = "% Data Interface: %<iDataName>"
+  
+  %<comment>
+  %<dataObj> = getInternalDataByVariableName(codeInfo.InternalData, '%<iDataName>');
+  %return dataObj
+%endfunction
+
+%function FcnGetDataInterfaceType(dataInterface) Output
+  %assign typeObj = "type_%<dataInterface>"
+  %assign comment = "% Type of : %<dataInterface>"
+  
+  %<comment>
+  if isa(%<dataInterface>.Implementation,'RTW.PointerExpression')
+  %<typeObj> = %<dataInterface>.Implementation.TargetRegion.Type;
+  else
+  %<typeObj> = %<dataInterface>.Implementation.Type;
+  end
+  %return typeObj
+%endfunction
+
+%function FcnGetInternalConstant(value, region) Output
+  %assign dataObj = "Const_%<value>"
+  %if ISFIELD(CodeInfoMap.ConstDataMap, dataObj)
+  %else
+    
+     %assign comment = "% Data Interface: %<dataObj>"
+%<comment>
+%assign time = "empty_timing"
+%<time> = RTW.TimingInterface.empty;
+%<dataObj> = RTW.DataInterface('', '%<value>', %<region>, %<time>);
+    %<LibAddIdentifier(CodeInfoMap.ConstDataMap, dataObj, value)>
+  %endif
+  %return dataObj
+%endfunction
+
+%function FcnGetCIIdxFromEIIdx(eiIdx) void
+  %assign ciIdx = -1
+  %assign rootInPairs = FcnGetRootInportsMapFromIRInfo()
+   %foreach idx = SIZE(rootInPairs, 0)
+     %assign rootInPair = rootInPairs[idx]
+     %if (eiIdx == rootInPair[0])
+       %assign ciIdx = rootInPair[1]
+       %break
+     %endif
+   %endforeach
+   %if (ciIdx == -1)
+     %<LibReportFatalError("CodeInfo: Incorrect Root Inport Idx")>
+   %endif
+   %return ciIdx+1
+%endfunction
+
+
+%function AddSimulinkFunctionInfo(componentObj) Output
+   %with ::CompiledModel
+    %foreach fcnIdx = NumSimulinkFunctions
+      %assign fcnRec = SimulinkFunction[fcnIdx]
+      %assign isDefinedInThisModel = (fcnRec.IsDefinedInThisModel == "yes")
+      %assign isDeclaredInThisModel = SLibSimulinkFunctionNeedsDeclaration(fcnRec)
+
+      %% For Export Functions models, we need to propagate up OutputFunctions
+      %% from child Export Functions models to support their being called
+      %% through a SIL/PIL interface.  We cannot yet support
+      %% this for Multi-Instance functions so they are excluded here.
+      %assign isDefinedInChildExportFunctionModel = ...
+            (fcnRec.IsDefined == "yes") && SLibIsExportFcnDiagram() && !(fcnRec.IsMultiInstance == "yes")
+
+      %% If NONE of the following hold, then we do not need to create the
+      %% OutputFunction record in CodeInfo.
+      %%        * The current model defines the function
+      %%        * The current model needs to declare the function
+      %%        * The function needs to be promoted from a child export function model
+      %if !( isDefinedInThisModel || isDeclaredInThisModel || isDefinedInChildExportFunctionModel )
+        %continue
+      %endif
+      
+      %if (SLibAutosarActive() && fcnRec.IsSupportedForAUTOSAR=="no")
+        %% Skip describing Simulink Functions that are not supported for
+        %% AUTOSAR target (e.g. Stateflow exported graphical functions)
+        %continue
+      %endif
+      
+      cimpl  = coder.types.Prototype;
+      cimpl.Name = '%<fcnRec.CGFunctionName>';
+      %assign isClassMethod = (GenerateClassInterface && fcnRec.FullPathToFunction != "G")
+      %if !(SLibAutosarActive() && fcnRec.IsDefinedInThisModel == "no" && ...
+        !IsModelReferenceTarget())
+        %if fcnRec.WriteHeaderFile == "no" || isClassMethod
+          %% For AUTOSAR targets, the runnable declarations are generated by the
+          %% RTE. Hence do not populate the HeaderFile property. 
+          %if !SLibAutosarActive()
+            cimpl.HeaderFile = '%<::CompiledModel.Name>.h';
+          %endif
+        %else
+          cimpl.HeaderFile = '%<fcnRec.CGFunctionName>.h';
+        %endif
+      %endif
+      %% Rate grouped Simulink functions are emitted to model.c.
+      %if SLibIsCompactFileFormat() || fcnRec.IsMultiInstance == "yes" || isClassMethod || ...
+        (RateGroupedSimulinkFunctions && fcnRec.IsScoped == "no")
+        cimpl.SourceFile = ['%<::CompiledModel.Name>', '.%<::LangFileExt>'];
+      %else
+        cimpl.SourceFile = '%<fcnRec.CGFunctionName>.c';
+      %endif
+      %% Loop-over InoutArgs and track them
+      %assign numInOutArgs = SIZE(fcnRec.InoutArgs)[1]
+      %createrecord inoutArgPairFirst {}
+      %createrecord inoutArgPairSecond {}
+      %foreach argIdx = numInOutArgs/2
+        %assign inArgNum  = fcnRec.InoutArgs[2*argIdx]
+        %assign outArgNum = fcnRec.InoutArgs[2*argIdx + 1]
+        %addtorecord inoutArgPairFirst I%<inArgNum> 1
+        %addtorecord inoutArgPairSecond O%<outArgNum> 1
+      %endforeach
+
+      %% Do prototype customization. Also works if there is no customization
+      argvec = [];
+      %if (SLibAutosarActive() && MultiInstanceERTCode)
+        %% Add Rte_Instance as argument to AUTOSAR runnables
+        %assign rteTypeName = "Rte_Instance"
+        %assign rteName = FcnGetInstanceHandleName()
+        %assign rteType = FcnGetOpaqueTypeObj(rteTypeName, 0, 0)
+        
+        %%
+        %% Create a coder.types.Argument object 
+        %assign rteArg = "%<fcnName>_RTEArg"
+        %<rteArg> = coder.types.Argument;
+        %<rteArg>.Type   = %<rteType>;
+        %<rteArg>.Name   = '%<rteName>';
+        %<rteArg>.IOType = 'INPUT';    
+        
+        argvec = [argvec %<rteArg>];
+      %elseif fcnRec.IsMultiInstance == "yes" && !GenerateClassInterface
+        %% Add this argument to fcn prototype
+        %assign slfType    = FcnGetInternalTypeObj("RTModel", ::tSimStructType, "")
+        %assign slfPtrType = FcnGetPointerTypeObj(slfType, 1, 0)
+       
+        %assign slfArg = "%<fcnName>_SlfArg"
+        %assign slfArgName = ::tSimStruct
+        %<slfArg> = coder.types.Argument;
+        %<slfArg>.Type   = %<slfPtrType>;
+        %<slfArg>.Name   = '%<slfArgName>';
+        %<slfArg>.IOType = 'INPUT';
+        argvec    = [argvec; %<slfArg>];
+      %endif
+      %foreach argIdx = SIZE(fcnRec.ArgIndices)[1]
+        %assign argKey = fcnRec.ArgIndices[argIdx]
+        %assign argDir = IDNUM(argKey)[0]
+        %assign argIndex = IDNUM(argKey)[1]
+        arg = coder.types.Argument;
+        %assign argName = fcnRec.ArgNames[argIdx]
+        arg.Name = '%<argName>';
+        %if argDir == "I" 
+          %assign cgTypeIdx = fcnRec.ArginCGTypeIdx[argIndex]
+          %if (LibCGTypeWidth(cgTypeIdx) == 1) && (fcnRec.ArginPassByType[argIndex] >= eSLFARG_PASSBYTYPE.POINTER)
+            %% pass-by-pointer to scalar
+            %assign typeObj = FcnCreatePointerToScalarTypeObj(cgTypeIdx, 0,0)
+          %else
+            %if LibCGTypeIsMatrix(cgTypeIdx) && LibCGTypeWidth(cgTypeIdx) != 1
+              %assign typeObj =  SLibGetCoderTypeObject (cgTypeIdx,1,0)
+            %elseif LibCGTypeIsStruct(cgTypeIdx) && ...
+              !LibIsDataTypeMultiWordFixpt(LibCGTypeToSLType(cgTypeIdx)) && ...
+              !LibCGTypeIsComplex(cgTypeIdx)
+              %assign typeObj = FcnCreatePointerTypeObj(cgTypeIdx,1,0)
+            %else
+              %assign typeObj =  SLibGetCoderTypeObject(cgTypeIdx,0,0)
+            %endif
+          %endif
+          %assign typeObj = FcnSetTypeObjPropsForNonAutoPassByType(typeObj,fcnRec.ArginPassByType[argIndex])
+          arg.Type = %<typeObj>;
+          arg.IOType = 'INPUT';
+        %elseif argDir == "O"
+          %assign cgTypeIdx = fcnRec.ArgoutCGTypeIdx[argIndex]
+          %if (LibCGTypeWidth(cgTypeIdx) == 1) 
+            %if (fcnRec.ArgoutPassByType[argIndex] >= eSLFARG_PASSBYTYPE.POINTER)
+              %% pass-by-pointer to scalar
+              %assign typeObj = FcnCreatePointerToScalarTypeObj(cgTypeIdx, 0,0)
+            %else
+              %assign typeObj = FcnCreatePointerTypeObj(cgTypeIdx, 0,0)
+            %endif
+          %else
+            %assign typeObj = SLibGetCoderTypeObject(cgTypeIdx,0,0)
+          %endif
+          %assign typeObj = FcnSetTypeObjPropsForNonAutoPassByType(typeObj,fcnRec.ArgoutPassByType[argIndex])
+          arg.Type = %<typeObj>; 
+          %if ISFIELD(inoutArgPairSecond, argKey)
+            arg.IOType = 'INPUT_OUTPUT';
+          %else
+            arg.IOType = 'OUTPUT';
+          %endif
+        %endif
+        argvec = [argvec arg];
+      %endforeach
+      %% Generate Return Arg.
+      %if fcnRec.ReturnArgIndex >= 0
+        arg = coder.types.Argument;
+        arg.Name = '';
+        %assign cgTypeIdx = fcnRec.ArgoutCGTypeIdx[fcnRec.ReturnArgIndex]
+        %assign typeObj = SLibGetCoderTypeObject(cgTypeIdx,0,0)
+        arg.Type = %<typeObj>;
+        arg.IOType = 'OUTPUT';
+        cimpl.Return = arg;
+      %endif
+      
+      cimpl.Arguments = argvec;
+      %if fcnRec.TID == -2
+        %assign timeObj = SLibGetRTWTimingObject("constant")
+      %elseif fcnRec.TID >= 0
+        %assign timeObj = SLibGetRTWTimingObject(fcnRec.TID)
+      %else
+        %assign timeObj = "RTW.TimingInterface.empty"
+      %endif
+      %if fcnRec.IsDefined == "yes"
+        %% These are the MATLAB syntax to create appropriate objects in function interface.
+        %% VariantInfo is newly added for InlineVariants.
+        fcnRec = RTW.FunctionInterface;
+        fcnRec.Prototype = cimpl;
+        fcnRec.Timing = %<timeObj>;
+        %if  fcnRec.IsVariantSimulinkFunction == "yes"
+          vInfoObj = RTW.VariantInfo;
+          vInfoObj.NetCGVCE = '%<fcnRec.NetCGVCE>';
+          vInfoObj.NetCGVCEPoundIf = '%<fcnRec.NetCGVCEPoundIf>';
+          vInfoObj.NetSVCE = %<fcnRec.NetSVCE>;
+          vInfoObj.EMVCE = '%<fcnRec.EMVCE>'; 
+          fcnRec.VariantInfo = vInfoObj;
+        %endif
+        %if !(SLibAutosarActive()) && ISFIELD(fcnRec, "ServerFcnCallPortGroupIdx")
+          %assign pgIdx            = fcnRec.ServerFcnCallPortGroupIdx
+          %assign fcnCallPortGroup = ExternalPortGroups.FcnCallPortGroup[pgIdx]
+          tmpDirectReads  = [];
+          tmpDirectWrites = [];
+          %assign dataInputPorts = fcnCallPortGroup.DataInputPorts
+          %foreach idx = SIZE(dataInputPorts, 1)
+            %assign portIdx = dataInputPorts[idx]
+            tmpDirectReads = [tmpDirectReads; %<componentObj>.Inports(%<FcnGetCIIdxFromEIIdx(portIdx)>)];  
+          %endforeach
+          %assign dataOutputPorts = fcnCallPortGroup.DataOutputPorts
+          %foreach idx = SIZE(dataOutputPorts, 1)
+            %assign portIdx = dataOutputPorts[idx]
+            tmpDirectWrites = [tmpDirectWrites; %<componentObj>.Outports(%<portIdx>+1)];  
+          %endforeach
+          fcnRec.DirectReads  = tmpDirectReads;
+          fcnRec.DirectWrites = tmpDirectWrites;
+        %elseif SLibAutosarActive()
+          %% For AUTOSAR find the runnable and output direct read writes.
+          %with ::CompiledModel.RTWAutosar.AutosarRunnables
+            %assign numRunnables = SIZE(Runnable)[1]
+            %foreach runIdx = numRunnables
+              %if Runnable[runIdx].IsService == "yes" && fcnRec.Name == Runnable[runIdx].Symbol
+                %assign tmpRunnable = Runnable[runIdx]
+                %<SLibAutosarWriteDirectReadWrite(tmpRunnable, "fcnRec")>
+                %break
+              %endif
+            %endforeach
+          %endwith
+        %endif
+        if isempty( %<componentObj>.OutputFunctions)
+          %<componentObj>.OutputFunctions = fcnRec;
+        else
+          %<componentObj>.OutputFunctions(end+1) = fcnRec;
+        end
+      %endif
+      %if fcnRec.IsCalled == "yes"
+        %if ISEQUAL(fcnRec.CallerOperationName, fcnRec.Name)
+          callerImpl = cimpl;
+        %else
+          callerImpl = coder.types.Prototype;
+          callerImpl.Name = '%<fcnRec.CallerOperationName>';
+          callerImpl.Arguments  = cimpl.Arguments;
+          callerImpl.Return     = cimpl.Return;
+        %endif
+        %foreach callerIdx = SIZE(fcnRec.ServerCallPoints)[1]
+          %assign callerTID = fcnRec.ServerCallPoints[callerIdx]
+          %if callerTID == -2
+            %assign callerTimeObj = SLibGetRTWTimingObject("constant")
+          %elseif callerTID >= 0
+            %assign callerTimeObj = SLibGetRTWTimingObject(callerTID)
+          %else
+            %<LibReportFatalError("CodeInfo: Unhandled Function Caller TID")>
+          %endif
+          fcnRec = RTW.AutosarClientCall;
+          fcnRec.Prototype = callerImpl;          
+          fcnRec.Timing = %<callerTimeObj>;
+          fcnRec.PortName = '%<fcnRec.CallerPortName>';
+          %% TopTester : test/toolbox/simulink/variants/inlineVariants/variantSource/systemtests/tVariantSource3.m
+          %if fcnRec.IsVariantSimulinkFunction == "yes"
+            vInfoObj = RTW.VariantInfo;
+            vInfoObj.NetCGVCE = '%<fcnRec.NetCGVCE>';
+            vInfoObj.NetCGVCEPoundIf = '%<fcnRec.NetCGVCEPoundIf>';
+            vInfoObj.NetSVCE = %<fcnRec.NetSVCE>;
+            vInfoObj.EMVCE = '%<fcnRec.EMVCE>'; 
+            fcnRec.VariantInfo = vInfoObj;
+          %endif
+          if isempty(%<componentObj>.ServerCallPoints)
+          %<componentObj>.ServerCallPoints = fcnRec;
+          else
+          %<componentObj>.ServerCallPoints(end+1) = fcnRec;
+          end
+        %endforeach        
+      %endif
+      %undef inArgNames
+      %undef outArgNames
+      %undef inoutArgPairFirst
+      %undef inoutArgPairSecond
+    %endforeach
+  %endwith
+%endfunction
+
+%function FcnCreatePointerToScalarTypeObj(cgTypeIdx, const, volatile) Output
+  %% Specifying a scalar type in the function Caller dialog creates
+  %% a [1x1] matrix to scalar type. This function strips out the [1x1] matrix type
+  
+  %if LibCGTypeIsMatrix(cgTypeIdx) && "1"==LibCGTypeSymbolicWidth(cgTypeIdx)
+    %assign cgTypeIdx = LibCGTypeBaseIndex(cgTypeIdx)
+  %endif
+    
+  %return FcnCreatePointerTypeObj(cgTypeIdx,const,volatile)
+  
+%endfunction
+
+%function FcnSetTypeObjPropsForNonAutoPassByType(typeObj, passByType) Output
+  %assign newTypeObj = "%<typeObj>_PassByT%<passByType>"
+
+  %<newTypeObj> = %<typeObj>.clone();
+  
+  %switch passByType
+      %case eSLFARG_PASSBYTYPE.CONST_DATA
+          %<newTypeObj>.ReadOnly = 1;
+          %break
+      %case eSLFARG_PASSBYTYPE.ARR_SIZEONE
+      %case eSLFARG_PASSBYTYPE.CONST_ARR_SIZEONE
+          %<newTypeObj>_ARR_SIZEONE = coder.types.Matrix;
+          %<newTypeObj>_ARR_SIZEONE.Dimensions = 1;
+          %<newTypeObj>_ARR_SIZEONE.ArrSizeOne = true;
+          %<newTypeObj>_ARR_SIZEONE_base = %<newTypeObj>;
+          if(isa(%<newTypeObj>,'coder.types.Pointer'))
+              %% caller converts arr size 1 to pointer->type for outputs
+              %<newTypeObj>_ARR_SIZEONE_base = %<newTypeObj>.BaseType;
+          end
+          if isa(%<newTypeObj>_ARR_SIZEONE_base,'coder.types.Matrix')
+              %% scalar type could be matrix[1x1] - see g618791
+              assert(prod(%<newTypeObj>_ARR_SIZEONE_base.Dimensions)==1);
+              %<newTypeObj>_ARR_SIZEONE_base = %<newTypeObj>_ARR_SIZEONE_base.BaseType;
+          end
+          %<newTypeObj>_ARR_SIZEONE.BaseType = %<newTypeObj>_ARR_SIZEONE_base;
+          %assign arrSizeOneBaseT = "%<newTypeObj>_ARR_SIZEONE.BaseType"
+          %if (passByType==eSLFARG_PASSBYTYPE.CONST_ARR_SIZEONE)
+              %<FcnSetPropertyOnCopy(arrSizeOneBaseT,"ReadOnly",1)>
+          %else
+              %<FcnSetPropertyOnCopy(arrSizeOneBaseT,"ReadOnly",0)>
+          %endif
+          %<newTypeObj> = %<newTypeObj>_ARR_SIZEONE;
+          %break
+      %case eSLFARG_PASSBYTYPE.POINTER
+          %<newTypeObj>.ReadOnly = 0;
+	  %assign baseT = "%<newTypeObj>.BaseType"
+          %<FcnSetPropertyOnCopy(baseT,"ReadOnly",0)>
+          %break
+      %case eSLFARG_PASSBYTYPE.POINTER_VOID
+          %<newTypeObj>_VOIDPTR = coder.types.Pointer;
+          %<newTypeObj>_VOIDPTR.ReadOnly = 0;
+          %<newTypeObj>_VOIDPTR.BaseType = coder.types.Void;
+          %<newTypeObj>_VOIDPTR.BaseType.ReadOnly = 0;
+          if isa(%<newTypeObj>,'coder.types.Pointer')
+              %<newTypeObj>_VOIDPTR.BaseType.BaseType = %<newTypeObj>.BaseType.clone();
+          else
+              %<newTypeObj>_VOIDPTR.BaseType.BaseType = %<newTypeObj>;
+          end
+          %<newTypeObj>_VOIDPTR.BaseType.BaseType.ReadOnly = 0;
+          %<newTypeObj> = %<newTypeObj>_VOIDPTR;
+          %break
+      %case eSLFARG_PASSBYTYPE.POINTER_CONST_DATA
+          %<newTypeObj>.ReadOnly = 0;
+          %assign baseT = "%<newTypeObj>.BaseType"
+          %<FcnSetPropertyOnCopy(baseT,"ReadOnly",1)>
+          %break
+      %case eSLFARG_PASSBYTYPE.POINTER_CONST_VOID
+          %<newTypeObj>_VOIDPTR = coder.types.Pointer;
+          %<newTypeObj>_VOIDPTR.ReadOnly = 0;
+          %<newTypeObj>_VOIDPTR.BaseType = coder.types.Void;
+          %<newTypeObj>_VOIDPTR.BaseType.ReadOnly = 1;
+          %<newTypeObj>_VOIDPTR.BaseType.BaseType = %<newTypeObj>;
+          if isa(%<newTypeObj>,'coder.types.Pointer')
+              %<newTypeObj>_VOIDPTR.BaseType.BaseType = %<newTypeObj>.BaseType.clone();
+          else
+              %<newTypeObj>_VOIDPTR.BaseType.BaseType = %<newTypeObj>;
+          end
+          %<newTypeObj>_VOIDPTR.BaseType.BaseType.ReadOnly = 1;
+          %<newTypeObj> = %<newTypeObj>_VOIDPTR;
+          %break
+      %case eSLFARG_PASSBYTYPE.CONST_POINTER_CONST_DATA
+          %<newTypeObj>.ReadOnly = 1;
+          %assign baseT = "%<newTypeObj>.BaseType"
+          %<FcnSetPropertyOnCopy(baseT,"ReadOnly",1)>
+          %break
+  %endswitch
+  
+  %return newTypeObj
+%endfunction
+
+%% Function FcnSetPropertyOnCopy ===========================================
+/% Abstract :
+  This function is intended to for setting an EmbeddedTypeSystem property
+  without changing the original object in case it is referenced by other 
+  objects. 
+
+  <> Ex1: (set ReadOnly flag to true):
+ 
+    type1 = numerictype(1,16,0);
+    type2 = type1;
+
+  setting ReadOnly flag of type2 will also set the ReadOnly flag of type1
+  so this function emits:
+
+    tmp_copy = type2.copy;
+    type2 = numerictype(); % this is needed (see Ex2)
+    type2 = tmp_copy;
+    type2.ReadOnly = true;
+
+  <> Ex2: not clearing BaseType first does not work as in the example below
+
+    t3 = embedded.matrixtype;
+    t3.BaseType = numerictype(1,16,0);
+    t4 = t3.copy;
+    base = t4.BaseType.copy;
+    %j4.BaseType = numerictype();
+    t4.BaseType = base;
+    t4.BaseType.ReadOnly = true;
+
+    t3.BaseType.ReadOnly
+    t4.BaseType.ReadOnly
+    
+  The above code produced the following INCORRECT result:
+
+    1
+    1
+    
+%/  
+%function FcnSetPropertyOnCopy(obj,prop,value) Output
+    tmp_copy = [];
+    tmp_copy = %<obj>.clone;
+    tmp_copy.%<prop> = %<value>;
+    %<obj> = tmp_copy;
+%endfunction
+
+%% Function FcnGetLookupMapping ======================================
+%% Abstract : Get Lookup Table / Breakpoint mapping information.
+%function FcnGetLookupMapping(slParam)
+   %if ISFIELD(CodeInfoMap.LookupMap, slParam)
+      %% map for Lookup to AUTOSAR param mapping to avoid 
+      %% duplicate calls to MATLAB
+      %assign output = CodeInfoMap.LookupMap.%<slParam>
+   %else
+      %% Call MATLAB to get AUTOSAR mapping for Lookup data
+      %assign output = FEVAL("autosar.api.Utils.getLookupMapping", ...
+                             ::CompiledModel.Name, ...
+                             slParam)   
+      %if ISEMPTY(output) || (TYPE(output) != "Scope")
+         %exit Failed to call getLookupMapping function
+      %endif
+      %if output.success != 1
+        %exit Failed during call to getLookupMapping: %<output.message>
+      %endif
+      %% add to map 
+      %<LibAddIdentifier(CodeInfoMap.LookupMap, slParam, output)>
+   %endif
+   %return output.ARParameterData
+%endfunction
+
+%endif  %% EXISTS("_CIINFOLIB_") == 0
+
+%% [EOF] codeinfolib.tlc

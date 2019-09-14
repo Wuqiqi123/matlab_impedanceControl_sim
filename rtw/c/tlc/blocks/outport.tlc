@@ -1,0 +1,59 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2008 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   Outport block template file
+
+%implements Outport "C"
+
+
+%% Function: BlockInstanceSetup ================================================
+%% Abstract:
+%%   Eventually this will be handled by Simulink but for now,  we eliminate
+%%   unnecessary delays in the S-Function target here.  Root outports fed by a
+%%   function-call subsystem may cause a 1 time step delay for the S-Function
+%%   target since the outport does not execute in the context of the
+%%   function-call subsystem.
+%%
+%%   NOTE: SL detects/forces function-call output/update function since output
+%%   function is too late to implement a hook when the function-call system 
+%%   inlines. This forcing is done in Simulink since SL needs to know when
+%%   f-c subsystems are forced.
+%%
+%function BlockInstanceSetup(block, system) void
+
+  %<LibBlockSetIsExpressionCompliant(block)>
+  
+  %assign DoAllOutputsInRoot = 1
+  %assign block = block + DoAllOutputsInRoot
+  
+  %assign isRTWSFcn = (CodeFormat == "S-Function" && !Accelerator)
+  
+  %if isRTWSFcn  && system.Type == "root"
+    %assign sigWidth = LibGetRecordWidth(DataInputPort)
+    %if sigWidth > 1
+      %assign SourceIsFunctionCall = FEVAL("zeros",1,sigWidth)
+    %else
+      %assign SourceIsFunctionCall = [0]
+    %endif
+    %foreach uIdx = sigWidth
+      %assign src = LibBlockSrcSignalBlock(0, uIdx)
+      %if TYPE(src) == "Vector"
+	%assign srcSystemIdx = src[0]
+	%assign srcBlockIdx = src[1]
+	%assign srcSystem = System[srcSystemIdx]
+	%if srcSystem.Type == "function-call"
+	  %assign SourceIsFunctionCall[uIdx] = 1
+	  %assign block.DoAllOutputsInRoot = 0
+	%endif
+      %endif
+    %endforeach
+    %assign block = block + SourceIsFunctionCall
+  %endif
+  
+%endfunction
+
+%% [EOF] outport.tlc

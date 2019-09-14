@@ -1,0 +1,82 @@
+%%
+%% Copyright 1994-2012 The MathWorks, Inc.
+%%
+
+
+%function FixPt_FloatingPointNotSupported(uDT) void
+    %%
+    %assign uIsFloat = FixPt_DataTypeIsFloat(uDT)
+    %%
+    %if uIsFloat
+      %%START_ASSERT
+      %assign errTxt = "Block: %<MaskBlockName> Floating point signals are not supported by this function."
+      %<LibReportFatalError(errTxt)>\
+      %%END_ASSERT
+    %endif
+%endfunction
+
+
+%function FixPt_FloatNotSupportedNamed(uDT,uDTName,fcnName) void
+    %%
+    %assign uIsFloat = FixPt_DataTypeIsFloat(uDT)
+    %%
+    %if uIsFloat
+      %%START_ASSERT
+      %assign errTxt = "Floating point data types are not supported for variable %<uDTName> by function %<fcnName>."
+      %<LibReportFatalError(errTxt)>\
+      %%END_ASSERT
+    %endif
+%endfunction
+
+
+%function FixPt_FixptNotSupportedNamed(uDT,uDTName,fcnName) void
+    %%
+    %assign uIsFloat = FixPt_DataTypeIsFloat(uDT)
+    %%
+    %if !uIsFloat
+      %%START_ASSERT
+      %assign errTxt = "Floating point data types are required for variable %<uDTName> by function %<fcnName>."
+      %<LibReportFatalError(errTxt)>\
+      %%END_ASSERT
+    %endif
+%endfunction
+
+
+%function FixPt_WordLengthLimitationCheck(uDT) void
+    %%
+    %assign uIsFixPt = fxpIsDataTypeFixPtNonBool(uDT) 
+    %%
+    %if uIsFixPt
+      %%
+      %if uDT.RequiredBits > LibMaxCodeGenWordSize()
+        %%
+        %%START_ASSERT
+        %assign w1 = uDT.RequiredBits
+        %assign w2 = IntegerSizes.LongNumBits
+        %assign w3 = LibMaxCodeGenWordSize()
+        %%
+        %openfile errTxt
+        
+An attempt has been made to generate code for an integer or fixed-point
+operation involving a word length of %<w1> bits. For integer and fixed-point
+data types, code generation is limited to word lengths of %<w3> bits or less.
+        %if IntegerSizes.LongNumBits < 32 
+This model has the additional limitation that generated code is restricted to
+word lengths of %<w2> bits or less. This additional limitation comes from this
+model's Configuration Parameters Hardware Implementation pane. That pane 
+specifies that the current target C Compiler only provides long integers with 
+%<w2> bits.
+        %endif
+Signals and parameters with excessively long word lengths usually cause errors
+earlier in the code generation process. It is therefore likely that this word 
+length violation is due to a variable used internal to a block.  The MATLAB 
+command window should currently contain a TLC Function Traceback listing. That
+listing can help identify the block using the excessively long word length.
+        %closefile errTxt
+        %<LibReportFatalError(errTxt)>\
+        %%END_ASSERT
+      %endif
+    %endif
+%endfunction
+
+

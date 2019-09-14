@@ -1,0 +1,79 @@
+*%% 
+%% 
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%% Abstract:
+%%      Array Plot block target file, for use in mobile targets.
+%%
+
+%implements * "C"
+
+%% BlockInstanceSetup =========================================================
+%% Abstract:
+%%      Define over-ride data type for PWork structure when logging to
+%%      a structure
+%%
+%function BlockInstanceSetup(block, system) void
+  %<LibBlockSetIsExpressionCompliant(block)>
+  %if EXISTS("ParamSettings.IsERTMobileTarget") && ParamSettings.IsERTMobileTarget
+    %if ParamSettings.MobileTargetDevice == 1 %% iOS
+      %<SLibAddToCommonIncludes("driver_ios_plot.h")>
+    %elseif ParamSettings.MobileTargetDevice == 2 %% Android
+      %<SLibAddToCommonIncludes("driver_android_plot.h")>   
+    %endif
+  %endif
+%endfunction %% BlockInstanceSetup
+
+
+%% Function: Start =============================================================
+%% Abstract:
+%%      If the scope has a IsERTMobileTarget defined, initialize plot.
+%%
+%function Start(block, system) Output
+  %assign typeQ     = "static "
+  %if CodeFormat == "S-Function"
+    %assign warnTxt = "Scope blocks not currently supported for S-Function " ...
+      "code format.  Block disabled."
+    %<LibBlockReportWarning(block, warnTxt)>
+    %return
+  %endif
+  %%
+  %if  EXISTS("ParamSettings.IsERTMobileTarget" ) && ParamSettings.IsERTMobileTarget 
+    {
+      %assign scopeID = ParamSettings.MobileTargetID
+      %assign mobileScopeProps = STRING(ParamSettings.MobileScopeProperties)
+
+      %assign blockSampleTimeStr = "%<LibBlockSampleTime(block)>"
+      %assign sampleTimeStr = "%<blockSampleTimeStr>" 
+      %foreach pIdx = NumDataInputPorts-1
+        %assign sampleTimeStr = sampleTimeStr + "," + "%<blockSampleTimeStr>"
+      %endforeach
+      const char* mobileScopeProperties%<scopeID> = "%<mobileScopeProps>";
+      int_T numInputPortsScope%<scopeID> = %<NumDataInputPorts>;
+      int_T scope%<scopeID>ID = %<ParamSettings.MobileTargetID>;
+      real32_T sampleTimes%<scopeID>[%<NumDataInputPorts>] = {%<sampleTimeStr>};
+      INITIALIZE_PLOT(scope%<scopeID>ID,numInputPortsScope%<scopeID>,mobileScopeProperties%<scopeID>,sampleTimes%<scopeID>);
+    }
+    /* End of %<Type>: '%<Name>' */ 
+  %endif
+%endfunction %% Start
+
+
+
+%% Function: Outputs ===========================================================
+%% Abstract:
+%%      If the scope has a IsERTMobileTarget defined, include the
+%%      scope_mobile.tlc file.
+%%
+%function Outputs(block, system) Output
+  %if  EXISTS("ParamSettings.IsERTMobileTarget" ) && ParamSettings.IsERTMobileTarget
+    /* Call plotting routine for a mobile target */
+    %include "scope_mobile.tlc"
+    /* End of %<Type>: '%<Name>' */
+  %elseif Accelerator
+    /* Call into Simulink for Scope */
+    %<SLibCallBlockInSimulink(system, block, "SS_CALL_MDL_OUTPUTS")>
+  %endif
+%endfunction %% Outputs
+
+%% [EOF] scope.tlc

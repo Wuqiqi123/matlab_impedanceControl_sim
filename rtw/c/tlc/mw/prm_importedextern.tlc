@@ -1,0 +1,56 @@
+%% ============================================================================
+%% File: prm_importedextern.tlc
+%%
+%% Abstract:
+%%   
+%%   
+%%  
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%% 
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PRM_IMPORTEDEXTERN_") == 0
+%assign _PRM_IMPORTEDEXTERN_ = 1
+
+%include "prm_cacheutils.tlc"
+
+
+%% Function: SLibCacheImportedExternPrmBuffers ==========================================
+%% Abstract:
+%%   Generate the definition & instantiation buffers for constant parameters
+%%
+%function SLibCacheImportedExternPrmBuffers(startIdx) void
+
+  %% Create parameter buffers
+  %<SLibCreatePrmBuffer("ImportedExtern", "Decl")>
+  
+  %% Generate the parameter definition buffer
+  %assign declBuffer = FcnGenImportedExternPrmDecl(startIdx)
+  %<SLibSetPrmBufferPart("ImportedExtern", "Decl", "Code", declBuffer)>
+
+%endfunction %% SLibCacheImportedExternPrmBuffers
+
+
+%% Function: FcnGenImportedExternPrmDecl ======================================
+%% Abstract:
+%%   Generate the ImportedExtern parameters definition buffer
+%%
+%function FcnGenImportedExternPrmDecl(startIdx) void
+
+  %assign cacheBuffer = "" 
+  %foreach prmIdx = NumImportedExtern
+    %assign mdlParam = Parameter[startIdx + prmIdx]
+    %assign cacheBuffer = cacheBuffer + SLibGenModelParamDecl(mdlParam, TLC_FALSE)
+  %endforeach
+
+  %return cacheBuffer
+  
+%endfunction %% FcnGenImportedExternPrmDecl
+
+
+%endif %% EXISTS("_PRM_IMPORTEDEXTERN_")
+
+%% [EOF] prm_importedextern.tlc

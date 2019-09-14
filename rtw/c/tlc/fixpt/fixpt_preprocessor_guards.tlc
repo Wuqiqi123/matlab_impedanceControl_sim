@@ -1,0 +1,187 @@
+%% 
+%% 
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%% insert C preprocessor code to check for agreement of
+%% integer sizes
+%%
+
+%% default is to generate the checks but this can be supressed
+%% by setting RemoveFixptWordSizeChecks=1, possibly via the
+%% TLCOptions parameter
+%if !EXISTS("RemoveFixptWordSizeChecks") 
+   %assign RemoveFixptWordSizeChecks = 0
+%endif
+
+%% optionally remove checks
+%if !RemoveFixptWordSizeChecks
+
+%if !ISFIELD(CTargetSpecific,"PreprocMaxBitsSint")
+  %%
+  %addtorecord CTargetSpecific PreprocMaxBitsSint 128
+  %%
+%endif
+
+%if !ISFIELD(CTargetSpecific,"PreprocMaxBitsUint")
+  %%
+  %addtorecord CTargetSpecific PreprocMaxBitsUint 128
+  %%
+%endif
+%%
+
+%% loop through the model data types and search for fixed point types
+%assign UsesFixedPointMath = TLC_FALSE
+%with ::CompiledModel.DataTypes
+  %foreach i=NumDataTypes
+    %if DataType[i].IsFixedPoint == 1
+      %assign UsesFixedPointMath = TLC_TRUE
+      %break
+    %endif
+  %endforeach
+%endwith
+%% only put the word size checks in if fixed point data types are used
+%if UsesFixedPointMath == TLC_TRUE
+%openfile buffer
+%%
+%assign signedYes = 1
+%assign signedNo  = 0
+
+%%
+%% If PORTABLE_WORDSIZES is on, include tmwtypes.h in rtwtypes.h instead of 
+%% checking word length here
+%%
+%assign ENABLE_PORTABLE_WORDSIZES = ::CompiledModel.ConfigSet.PortableWordSizes
+%if ENABLE_PORTABLE_WORDSIZES == 1
+#ifndef PORTABLE_WORDSIZES
+%endif
+
+%%
+%% make sure limits.h has been included
+%%
+#ifndef UCHAR_MAX
+#include <limits.h>
+#endif
+
+%function FcnGetWordSizeErrorMessage(type) void
+  %assign str = ...
+    "Code was generated for compiler with different sized " + type + ". \\\n" ...
+    "Consider adjusting Test hardware word size settings on the \\\n" ...
+    "Hardware Implementation pane to match your compiler word sizes as \\\n" ...
+    "defined in limits.h of the compiler. Alternatively, you can \\\n" ...
+    "select the Test hardware is the same as production hardware option and \\\n" ...
+    "select the Enable portable word sizes option on the Code Generation > \\\n" ...
+    "Verification pane for ERT based targets, which will disable the \\\n" ...
+    "preprocessor word size checks."
+  %return str
+%endfunction
+
+%function FcnGetWordSizeSkipCheckMessage(type) void
+  %assign str = ...
+    "/* Skipping " + type + " check: insufficient preprocessor integer range. */"
+  %return str
+%endfunction
+
+%%
+%%
+%% check CHARS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%assign umask = SetLSNBitsStr((IntegerSizes.CharNumBits),IntegerSizes.CharNumBits,signedNo)
+%assign smask = SetLSNBitsStr((IntegerSizes.CharNumBits-1),IntegerSizes.CharNumBits,signedYes)
+%assign typeStr = "uchar/char"
+%if IntegerSizes.CharNumBits > CTargetSpecific.PreprocMaxBitsUint || ...
+  IntegerSizes.CharNumBits > CTargetSpecific.PreprocMaxBitsSint
+%<FcnGetWordSizeSkipCheckMessage(typeStr)>
+%else
+#if ( UCHAR_MAX != %<umask> ) || ( SCHAR_MAX != %<smask> )
+#error %<FcnGetWordSizeErrorMessage(typeStr)>
+#endif
+%endif
+
+%%
+%%
+%% check SHORTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%assign umask = SetLSNBitsStr((IntegerSizes.ShortNumBits),IntegerSizes.ShortNumBits,signedNo)
+%assign smask = SetLSNBitsStr((IntegerSizes.ShortNumBits-1),IntegerSizes.ShortNumBits,signedYes)
+%assign typeStr = "ushort/short"
+%if IntegerSizes.ShortNumBits > CTargetSpecific.PreprocMaxBitsUint || ...
+  IntegerSizes.ShortNumBits > CTargetSpecific.PreprocMaxBitsSint
+%<FcnGetWordSizeSkipCheckMessage(typeStr)>
+%else
+#if ( USHRT_MAX != %<umask> ) || ( SHRT_MAX != %<smask> )
+#error %<FcnGetWordSizeErrorMessage(typeStr)>
+#endif
+%endif
+
+%%
+%%
+%% check INTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%assign umask = SetLSNBitsStr((IntegerSizes.IntNumBits),IntegerSizes.IntNumBits,signedNo)
+%assign smask = SetLSNBitsStr((IntegerSizes.IntNumBits-1),IntegerSizes.IntNumBits,signedYes)
+%assign typeStr = "uint/int"
+%if IntegerSizes.IntNumBits > CTargetSpecific.PreprocMaxBitsUint || ...
+  IntegerSizes.IntNumBits > CTargetSpecific.PreprocMaxBitsSint
+%<FcnGetWordSizeSkipCheckMessage(typeStr)>
+%else
+#if ( UINT_MAX != %<umask> ) || ( INT_MAX != %<smask> )
+#error %<FcnGetWordSizeErrorMessage(typeStr)>
+#endif
+%endif
+
+%%
+%%
+%% check LONGS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%assign umask = SetLSNBitsStr((IntegerSizes.LongNumBits),IntegerSizes.LongNumBits,signedNo)
+%assign smask = SetLSNBitsStr((IntegerSizes.LongNumBits-1),IntegerSizes.LongNumBits,signedYes)
+%assign typeStr = "ulong/long"
+%if IntegerSizes.LongNumBits > CTargetSpecific.PreprocMaxBitsUint || ...
+  IntegerSizes.LongNumBits > CTargetSpecific.PreprocMaxBitsSint
+%<FcnGetWordSizeSkipCheckMessage(typeStr)>
+%else
+#if ( ULONG_MAX != %<umask> ) || ( LONG_MAX != %<smask> )
+#error %<FcnGetWordSizeErrorMessage(typeStr)>
+#endif
+%endif
+
+%if IntegerSizes.LongLongMode == 1
+%%
+%%
+%% check LONG LONG %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%assign umask = SetLSNBitsStr((IntegerSizes.LongLongNumBits),IntegerSizes.LongLongNumBits,signedNo)
+%assign smask = SetLSNBitsStr((IntegerSizes.LongLongNumBits-1),IntegerSizes.LongLongNumBits,signedYes)
+%assign typeStr = "ulong_long/long_long"
+%if IntegerSizes.LongLongNumBits > CTargetSpecific.PreprocMaxBitsUint || ...
+IntegerSizes.LongLongNumBits > CTargetSpecific.PreprocMaxBitsSint
+%<FcnGetWordSizeSkipCheckMessage(typeStr)>
+%else
+#if ( ULLONG_MAX != %<umask> ) || ( LLONG_MAX != %<smask> )
+#error %<FcnGetWordSizeErrorMessage("typeStr")>
+#endif
+%endif
+%% end of %if IntegerSizes.LongLongMode == 1
+%endif 
+
+%% If SIL_TESTING is on, include tmwtypes.h in rtwtypes.h instead of 
+%% defining word length here
+%if ENABLE_PORTABLE_WORDSIZES == 1                         
+#endif  /* PORTABLE_WORDSIZES */
+%endif
+
+%%
+%closefile buffer
+%%
+%% cause defines to be included in generated code
+%%
+%<LibCacheDefine(buffer)>\
+%%
+%% end define integer size check
+%%
+%% end of %if UsesFixedPointMath == TLC_TRUE
+%%
+%endif
+%% end of %if !RemoveFixptWordSizeChecks
+%endif

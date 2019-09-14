@@ -1,0 +1,101 @@
+%% ============================================================================
+%% File: prm_cachebuffers.tlc
+%%
+%% Abstract:
+%%   
+%%   
+%%  
+%% 
+%%
+%% Copyright 1994-2012 The MathWorks, Inc.
+%% 
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PRM_CACHEBUFFERS_") == 0
+%assign _PRM_CACHEBUFFERS_ = 1
+
+%include "prm_constant.tlc"
+%include "prm_constwithinit.tlc"
+%include "prm_exportedglobal.tlc"
+%include "prm_importedextern.tlc"
+%include "prm_importedexternpointer.tlc"
+%include "prm_sfcntunable.tlc"
+%include "prm_simulinkglobal.tlc"
+%include "prm_unstsimulinkglobal.tlc"
+
+%% Function: SLibCachePrmBuffers ==============================================
+%% Abstract:
+%%
+%function SLibCachePrmBuffers() void
+  
+  %with ModelParameters
+    %assert (NumParameters >= 0)
+    
+    %% ONLY GENERATE ANY BUFFERS IF NUMPARAMETERS > 0
+    %% ------------------------------------------------------------------------
+    %if NumParameters != 0
+      %assert (System[NumSystems-1].Interface.ParameterArgDef.FirstLocation == 0)
+      %assign startIdx = 0
+      
+      %% 
+      %% SimulinkGlobal parameters
+      %%
+      %<SLibCacheSimulinkGlobalPrmBuffers(startIdx)>
+      %assign startIdx = startIdx + NumInrtP
+      
+      %%
+      %% Constant parameters with initialization
+      %%
+      %<SLibCacheConstPrmWithInitBuffers(startIdx)>
+      %assign startIdx = startIdx + NumConstPrmsWithInit
+      
+      %%
+      %% Constant parameters
+      %%
+      %<SLibCacheConstPrmBuffers(startIdx)>
+      %assign startIdx = startIdx + NumConstPrms
+      
+      %% The following can only be generated if inline parameters is on
+      %% or there are model blocks in the model.
+      %% ------------------------------------------------------------------------
+      %%
+      %% ExportedGlobal parameters
+      %%
+      %<SLibCacheExportedGlobalPrmBuffers(startIdx)>
+      %assign startIdx = startIdx + NumExportedGlobal
+      
+      %%
+      %% ImportedExtern parameters
+      %%
+      %<SLibCacheImportedExternPrmBuffers(startIdx)>
+      %assign startIdx = startIdx + NumImportedExtern
+      
+      %%
+      %% ImportedExternPointer parameters
+      %%
+      %<SLibCacheImportedExternPointerPrmBuffers(startIdx)>
+      %assign startIdx = startIdx + NumImportedExternPointer
+      
+      %%
+      %% Modelref Global Parameters
+      %%
+      %if InlineParameters == 0
+        %assign startIdx = startIdx + NumCustomStorageClass
+        %<SLibCacheUnstructuredSimulinkGlobalPrmBuffers(startIdx)>
+        %assign startIdx = startIdx + NumInMdlRefGlobal
+      %endif
+      %%
+      %% S-Function tunable parameters
+      %%
+      %<SLibCacheSfcnTunablePrmBuffers()>
+
+    %endif %% NumParameters != 0
+  %endwith %% with ModelParamters
+
+%endfunction %% SLibCachePrmBuffers
+
+
+%endif %% EXISTS("_PRM_CACHEBUFFERS_")
+
+%% [EOF] prm_cachebuffers.tlc

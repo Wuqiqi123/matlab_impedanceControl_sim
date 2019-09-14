@@ -1,0 +1,123 @@
+%% ============================================================================
+%% Abstract:
+%%   This file contains helper functions to cache data in the binfo.mat file
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+
+%if EXISTS("_CACHEGLOBALPARAMS_") == 0
+%assign _CACHEGLOBALPARAMS_ = 1
+
+%function GenStringVarListForListOfValues(values)
+  %assign varList = "\"\""
+  %if !ISEMPTY(values)
+    %assign comma = ","
+    %assign varList = "\""
+    %foreach idx = SIZE(values,1)
+      %assign varList = varList + values[idx] + comma
+    %endforeach
+    %assign varList[SIZE(varList,1)-1] = "\""
+  %endif
+  
+  %return varList
+%endfunction
+
+%% Function: GenAndCacheGlobalParamsInMatFile  =====================
+%% Abstract:
+%%     Cache global params data in the mat file
+%function GenAndCacheGlobalParamsInMatFile() void
+  
+  %with ::CompiledModel  
+    %% mdlRTW: no code is generated. this information is cached in binfo.mat
+    %assign rootIdx    = NumSystems-1
+    %assign sysIdx     = NumSystems-2
+    %if IsModelReferenceTarget()    
+      %assign thisSystem = System[sysIdx]
+    %else
+      %assign thisSystem = System[rootIdx]
+    %endif
+    %assign interface  = thisSystem.Interface
+    
+    %with interface
+      
+      %createrecord blkInterface { Name  "%<Name>"}
+      
+      %% Add InlineParameters (needed for checking GlobalParamsChecksum)
+      %% InlineParameters == 0,2 corresponds to the InlineParameters setting OFF
+      %% that user sees. InlineParameters == 1 is the Inline on case.
+
+      %if InlineParameters == 1
+        %addtorecord blkInterface InlineParameters TLC_TRUE
+      %else
+        %addtorecord blkInterface InlineParameters TLC_FALSE
+      %endif
+      
+      %% Add IgnoreCustomStorageClasses (needed for checking GlobalParamsChecksum)
+      %addtorecord blkInterface IgnoreCustomStorageClasses %<IgnoreCustomStorageClasses>
+
+      %% The GlobalParamsList is a vector of strings (parameter-names).
+      %% We store this in the mat-file as a comma-seperated list of variables
+      %% which is used for checksum testing in several places. Currently, code
+      %% that relies on this list is not robust to white-space between the 
+      %% parameters, so we cannot simply dump the vector using ...
+      %% %assign csv = "%<values>"
+      %% %if !ISEMPTY(csv)
+      %%    %assign csv[0] = "\""
+      %%    assign csv[SIZE(csv,1)-1] = "\""
+      %% %endif
+
+      %assign values = ::CompiledModel.ModelParameters.GlobalParamsList
+      %assign varList = GenStringVarListForListOfValues(values)
+
+      %% Also keep track of any global variables that have lost tunability.
+      %assign tunVars = ::CompiledModel.ModelParameters.CollapsedTunableParameters
+      %assign tunVarList = GenStringVarListForListOfValues(tunVars)
+      
+      %% Also keep track of CSC packages used by this model.
+      %if ISFIELD(::CompiledModel.CustomStorageClasses, "CSCReg")
+        %assign cscPackages = FIELDNAMES(::CompiledModel.CustomStorageClasses.CSCReg)
+        %assign cscPackageList = GenStringVarListForListOfValues(cscPackages)
+      %else
+        %assign cscPackageList = "\"\""
+      %endif
+      
+      %% Add GlobalParamInfo
+      %with ModelParameters
+	%createrecord globalParamInfo { \
+	  VarList  %<varList> \
+          CollapsedTunableList %<tunVarList> \
+          CSCPackageList %<cscPackageList> \
+	}
+      %endwith %% ModelParameters
+      %addtorecord blkInterface GlobalParamInfo %<globalParamInfo>
+
+      %if ISFIELD(::CompiledModel.ModelParameters, "ProtectedModelInterfaceVariables")
+        %assign values = ::CompiledModel.ModelParameters.ProtectedModelInterfaceVariables
+        %assign varList = GenStringVarListForListOfValues(values)
+        %addtorecord blkInterface ProtectedModelInterfaceVariables %<varList>
+      %endif
+    %endwith %% interface
+    
+  %endwith %% ::CompiledModel
+  
+  %<CacheDataInMatInfoFile(Name, "addGlobalsInfo", blkInterface)>
+%endfunction
+
+%% Function: CacheDataInMatInfoFile  =============================
+%% Abstract:
+%%      Store data in .mat file.
+
+%function CacheDataInMatInfoFile(mdlref, type, interface) void
+  
+  %if IsModelReferenceTarget()
+    %assign targetType = IsModelReferenceSimTarget() ? "SIM" : "RTW"
+  %else
+    %assign targetType = "NONE"
+  %endif
+  %assign rtwinfomat = FEVAL("coder.internal.infoMATFileMgr", ...
+    type, "binfo", "%<mdlref>", "%<targetType>", interface)
+
+
+%endfunction
+
+%endif %% _CACHEGLOBALPARAMS_

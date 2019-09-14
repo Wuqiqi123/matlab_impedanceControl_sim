@@ -1,0 +1,14 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2002 The MathWorks, Inc.
+%%
+%% Abstract: This file specifies the version of MATLAB and SIMULINK 
+%%           that the fixed point blockset TLC files should be compatible
+%%           with.
+%%
+
+%assign FixPtBlocksetCompatibleRelease = 13
+
+%% [EOF] 

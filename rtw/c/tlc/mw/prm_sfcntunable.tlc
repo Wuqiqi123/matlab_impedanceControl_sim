@@ -1,0 +1,68 @@
+%% ============================================================================
+%% File: prm_sfcntunable.tlc
+%%
+%% Abstract:
+%%   
+%%   
+%%  
+%% 
+%%
+%% Copyright 1994-2009 The MathWorks, Inc.
+%% 
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PRM_SFCNTUNABLE_") == 0
+%assign _PRM_SFCNTUNABLE_ = 1
+
+%include "prm_cacheutils.tlc"
+
+
+%% Function: SLibCacheSfcnTunablePrmBuffers ===================================
+%% Abstract:
+%%   Generate the definition & instantiation buffers for SfcnTunable parameters
+%%
+%function SLibCacheSfcnTunablePrmBuffers() void
+
+  %% Create parameter buffers
+  %<SLibCreatePrmBuffer("SfcnTunable", "Decl")>
+
+  %% Generate the parameter definition buffer
+  %assign declBuffer = FcnGenSfcnTunableParamDecl()
+  %<SLibSetPrmBufferPart("SfcnTunable", "Decl", "Code", declBuffer)>
+  
+%endfunction %% SLibCacheSfcnTunablePrmBuffers
+
+
+%% Function: FcnGenSfcnTunableParamDecl =======================================
+%% Abstract:
+%%   Generate the SfcnTunable parameters definition buffer
+%%
+%function FcnGenSfcnTunableParamDecl() void
+
+  %assign cacheBuffer = ""
+  %if CodeFormat == "S-Function" && !Accelerator
+    %openfile cacheBuffer
+    %foreach prmIdx = NumParameters
+      %assign mdlParam = Parameter[prmIdx]
+      %assign pName = LibGetRecordIdentifier(mdlParam)
+      %if mdlParam.StorageClass == "Auto_SFCN"
+	%assert !LibGetRecordIsComplex(mdlParam)
+	%assert LibIsBuiltInDataType(mdlParam.OriginalDataTypeIdx)
+	#define %<pName>(S) _ssGetSFcnParam(S,%<ModelParameters.SfcnParamIdx>)
+	%assign ::CompiledModel.ModelParameters.SfcnParamIdx = ...
+	  ModelParameters.SfcnParamIdx + 1
+      %endif
+    %endforeach
+    %closefile cacheBuffer
+  %endif
+
+  %return cacheBuffer
+  
+%endfunction %% FcnGenSfcnTunableParamDecl
+
+
+%endif %% EXISTS("_PRM_SFCNTUNABLE_")
+
+
+%% [EOF] prm_sfcntunable.tlc

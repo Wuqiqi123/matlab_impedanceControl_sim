@@ -1,0 +1,371 @@
+%% 
+%% 
+%% 
+%% Copyright 1994-2016 The MathWorks, Inc.
+%%
+%% Abstract: Opaque block target file
+
+%implements Opaque "C"
+
+%% Function: BlockTypeSetup ====================================================
+%% Abstract:
+%%
+%function BlockTypeSetup(block,system) void
+  %assign protoBuf  = GetModelUserFcnPrototypes()
+  %<SLibCacheCodeToFile("baseMdl_data_typedef", protoBuf)>
+%endfunction
+
+%% Fucntion: generateType ======================================================
+%% Abstract:
+%%
+%function generateType(block, system, fcnType) Output
+  %assign fileName = TLCFileName + "_" + fcnType
+  %<GENERATE_TYPE(block, fcnType, fileName, system)>
+  %assign unused = UNLOAD_GENERATE_TYPE(block, fileName)
+%endfunction
+
+%% Fucntion: generateTypeForTID ================================================
+%% Abstract:
+%%
+%function generateTypeForTID(block, system, fcnType,tid) Output
+  %assign fileName = TLCFileName + "_" + fcnType
+  %assign fcnName = "%<fcnType>ForTID"
+  %<GENERATE_TYPE(block, fcnName, fileName, system,tid)>
+  %assign unused = UNLOAD_GENERATE_TYPE(block, fileName)
+%endfunction
+
+
+%% Fucntion: generateTypeForSetDims ============================================
+%% Abstract:
+%%
+%function generateTypeForSetDims(block, system, fcnType, oidx, ridx) Output
+  %assign fileName = TLCFileName + "_" + fcnType
+  %assign fcnName = "%<fcnType>"
+  %<GENERATE_TYPE(block, fcnName, fileName, system, oidx, ridx)>
+  %assign unused = UNLOAD_GENERATE_TYPE(block, fileName)
+%endfunction
+
+
+%% Function: BlockInstanceSetup ================================================
+%% Abstract:
+%%
+%function BlockInstanceSetup(block, system) void
+  %<LibBlockSetIsExpressionCompliant(block)>
+  %<LibBlockSetCustomStorageComplianceLevel(block, 2)>
+  %if GenerateASAP2
+    %% Create a parameter group for ASAP2 data definition
+    %foreach prmIdx = Parameters[0]
+      %if Parameter[prmIdx].Name == "InputValues"
+        %assign group   = SLibCreateParameterGroup(block,"Lookup1D")
+        %assign tmpVar  = SLibAddMember(block,group,Parameter[prmIdx])
+        %assign tmpVar  = SLibAddMember(block,group,Parameter[prmIdx+1])
+      %elseif Parameter[prmIdx].Name == "RowIndex"
+        %assign group   = SLibCreateParameterGroup(block,"Lookup2D")
+        %assign tmpVar  = SLibAddMember(block, group, Parameter[prmIdx])
+        %assign tmpVar  = SLibAddMember(block, group, Parameter[prmIdx+1])
+        %assign tmpVar  = SLibAddMember(block, group, Parameter[prmIdx+2])
+      %endif
+    %endforeach
+  %endif
+  %assign skipLast = IsModelReferenceTarget()
+  %foreach moduleIdx = ::CompiledModel.RTWCGModules.NumRTWCGModules - (skipLast ? 1 : 0)
+    %assign moduleRec   = ::CompiledModel.RTWCGModules.RTWCGModule[moduleIdx]
+    %if moduleRec.RTWFcnConst.HasInstanceSetup == "yes"
+      %assign fileName    = "%<moduleRec.TLCFileName>_BlockInstanceSetup"
+      %assign origModuleIdx = ::CurrentModuleIdx
+      %assign ::CurrentModuleIdx = system.CGIRModuleIdx
+      %<GENERATE_TYPE(block, "BlockInstanceSetup", fileName, system)>
+      %assign ::CurrentModuleIdx = origModuleIdx
+      %assign unused = UNLOAD_GENERATE_TYPE(block, fileName)
+    %endif
+  %endforeach
+%endfunction
+
+%% Function: Start =============================================================
+%% Abstract:
+%%   This function calls the generated start function of the opaques
+%%   block TLC implementation.
+%%
+%function Start(block, system) Output
+  %if block.OpaqueBlockMethode.HasStart
+    %<generateType(block, system, "Start")>
+  %endif
+%endfunction
+
+%%   This function calls the generated SetupRuntimeResources function of the
+%% opaque block's TLC implementation.
+%%
+%function SetupRuntimeResources(block, system) Output
+  %if block.OpaqueBlockMethode.HasSetupRuntimeResources
+    %<generateType(block, system, "SetupRuntimeResources")>
+  %endif
+%endfunction
+
+%% Function: InitializeConditions  =============================================
+%% Abstract:
+%%   This function calls the generated initialize conditions function of the
+%%   opaques block TLC implementation.
+%%
+%function InitializeConditions(block, system) Output
+  %if block.OpaqueBlockMethode.HasInitializeConditions
+    %<generateType(block, system, "InitializeConditions")>
+  %endif
+%endfunction
+
+%% Function: SystemInitialize  =============================================
+%% Abstract:
+%%   This function calls the generated system initialize function of the
+%%   opaques block TLC implementation.
+%%
+%function SystemInitialize(block, system) Output
+  %if block.OpaqueBlockMethode.HasSystemInitialize
+    %<generateType(block, system, "SystemInitialize")>
+  %endif
+%endfunction
+
+%% Function: SystemReset  =============================================================
+%% Abstract:
+%%   This function calls the generated system reset function of the
+%%   opaques block TLC implementation.
+%%
+%function SystemReset(block, system) Output
+  %if block.OpaqueBlockMethode.HasSystemReset
+    %<generateType(block, system, "SystemReset")>
+  %endif
+%endfunction
+
+%% Function: SharedInitialize  =============================================================
+%% Abstract:
+%%   This function calls the generated shared initialize function of the
+%%   opaques block TLC implementation.
+%%
+%function SharedInitialize(block, system) Output
+  %if block.OpaqueBlockMethode.HasSharedInitialize
+    %<generateType(block, system, "SharedInitialize")>
+  %endif
+%endfunction
+
+%% Function: OpaqueBlkSingleRateBecauseTID01EQ =============================
+%% Absbract: 
+%%   Return true if the opaque block has two tids [0,1], and tid01eq is true
+%%   
+%function OpaqueBlkSingleRateBecauseTID01EQ(block)
+  %assign tid01Eq = ISEQUAL(SolverType, "FixedStep") && FixedStepOpts.TID01EQ
+  %% ModelReference target ignore tid01eq flag.
+  %if !IsModelReferenceTarget() && tid01Eq
+    %with block
+      %return SIZE(TID,1) == 2 && TID[0] == 0 && TID[1] == 1
+    %endwith
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+%% Function: Update ============================================================
+%% Abstract:
+%%   This function calls the generated update function of the opaques
+%%   block TLC implementation.
+%%
+%function Update(block, system) Output
+  %if block.OpaqueBlockMethode.HasUpdate
+      %<generateType(block, system, "Update")>
+    %endif
+%endfunction
+
+%% Function: UpdateForTID ======================================================
+%% Abstract: 
+%%   This function calls the generate updateForTID function of the opaque block.
+%%   This function is similar with Update, except only generating code for 
+%%   specific tid.
+%%
+%function UpdateForTID(block, system, tid) Output 
+  %assert(SIZE(block.TID,1) > 1) 
+  %if block.OpaqueBlockMethode.HasUpdate
+    %if OpaqueBlkSingleRateBecauseTID01EQ(block)
+      %%    If the opaque block is single rate because tid01eq is true,
+      %%  call Outputs function instead of OutputForTID function. 
+      %%  Call Outputs function only when tid=0 because code of tid0 
+      %%  and tid1 is grouped together and put with tid0. 
+      %if tid == 0 
+        %<generateType(block, system, "Update")>
+      %endif
+      %assert(tid == 0 || tid == 1)
+    %else
+      %<generateTypeForTID(block, system, "Update", tid)>
+    %endif
+  %endif
+%endfunction
+
+%% Function: Outputs ===========================================================
+%% Abstract:
+%%   This function calls the generated output function of the opaques
+%%   block TLC implementation.
+%%
+%function Outputs(block, system) Output 
+  %if block.OpaqueBlockMethode.HasOutputs
+    %<generateType(block, system, "Outputs")>
+  %endif
+%endfunction
+
+%% Function: OutputsForTID =====================================================
+%% Abstract:
+%%   This function is similar with Outputs, except only generating code for 
+%%   specific tid. When code of block is rate grouped, this function is called
+%%   instead of Outputs
+%%
+%function OutputsForTID(block, system, tid) Output 
+  %assert(SIZE(block.TID,1) > 1) 
+  %if block.OpaqueBlockMethode.HasOutputs
+    %if OpaqueBlkSingleRateBecauseTID01EQ(block)
+      %%    If the opaque block is single rate because tid01eq is true,
+      %%  call Outputs function instead of OutputForTID function. 
+      %%  Call Outputs function only when tid=0 because code of tid0 
+      %%  and tid1 is grouped together and put with tid0. 
+      %if tid == 0 
+        %<generateType(block, system, "Outputs")>
+      %endif
+      %assert(tid == 0 || tid == 1)
+    %else
+      %<generateTypeForTID(block, system, "Outputs", tid)>
+    %endif
+  %endif
+%endfunction
+
+%% Function: Derivatives =======================================================
+%% Abstract:
+%%   This function calls the generated derivatives function of the opaques
+%%   block TLC implementation.
+%%
+%function Derivatives(block, system) Output
+  %if block.OpaqueBlockMethode.HasDerivatives
+    %<generateType(block, system, "Derivatives")>
+  %endif
+%endfunction
+
+%% Function: ForcingFunction ===================================================
+%% Abstract:
+%%   This function calls the generated forcing function of the opaques
+%%   block TLC implementation.
+%%
+%function ForcingFunction(block, system) Output
+  %if block.OpaqueBlockMethode.HasForcingFunction
+    %<generateType(block, system, "ForcingFunction")>
+  %elseif ::CompiledModel.ModelIsLinearlyImplicit == "yes" 
+    %<Derivatives(block, system)>
+  %endif
+%endfunction
+
+%% Function: MassMatrix ========================================================
+%% Abstract:
+%%   This function calls the generated mass matrix function of the opaques
+%%   block TLC implementation.
+%%
+%function MassMatrix(block, system) Output
+  %if block.OpaqueBlockMethode.HasMassMatrix
+    %<generateType(block, system, "MassMatrix")>
+  %endif
+%endfunction
+
+%% Function: Projection ========================================================
+%% Abstract:
+%%   This function calls the generated projection function of the opaques
+%%   block TLC implementation.
+%%
+%function Projection(block, system) Output
+  %if block.OpaqueBlockMethode.HasProjection
+    %<generateType(block, system, "Projection")>
+  %endif
+%endfunction
+
+%% Function: ZeroCrossings =====================================================
+%% Abstract:
+%%   This function calls the generated zero crossings function of the opaques
+%%   block TLC implementation.
+%%
+%function ZeroCrossings(block, system) Output
+  %if block.OpaqueBlockMethode.HasZeroCrossings
+    %<generateType(block, system, "ZeroCrossings")>
+  %endif
+%endfunction
+
+%% Function: Enable ============================================================
+%% Abstract:
+%%   This function calls the generated enable function of the opaques
+%%   block TLC implementation.
+%%
+%function Enable(block, system) Output
+  %if block.OpaqueBlockMethode.HasEnable
+    %<generateType(block, system, "Enable")>
+  %endif
+%endfunction
+
+%% Function: Disable ===========================================================
+%% Abstract:
+%%   This function calls the generated disable function of the opaques
+%%   block TLC implementation.
+%%
+%function Disable(block, system) Output
+  %if block.OpaqueBlockMethode.HasDisable
+    %<generateType(block, system, "Disable")>
+  %endif
+%endfunction
+
+
+%%  This function calls the generated CleanupRuntimeResources function of the
+%%  opaque block's TLC implementation.
+%%
+%function CleanupRuntimeResources(block, system) Output
+  %if block.OpaqueBlockMethode.HasCleanupRuntimeResources
+    %<generateType(block, system, "CleanupRuntimeResources")>
+  %endif
+%endfunction
+
+%% Function: Terminate =========================================================
+%% Abstract:
+%%   This function calls the generated terminate function of the opaques
+%%   block TLC implementation.
+%%
+%function Terminate(block, system) Output
+  %if block.OpaqueBlockMethode.HasTerminate
+    %<generateType(block, system, "Terminate")>
+  %endif
+%endfunction
+
+%% Function: SetDims ===========================================================
+%% Abstract:
+%%   This function calls the generated setdims function of the opaques
+%%   block TLC implementation.
+%%
+%function SetDims(block, system, oidx, ridx) Output
+  %if block.OpaqueBlockMethode.HasSetDims
+    %<generateTypeForSetDims(block, system, "SetDims", oidx, ridx)>
+  %endif
+%endfunction
+
+%% Function: FinalizeAllDims ===================================================
+%% Abstract:
+%%   This function calls the generated finalizealldims function of the opaques
+%%   block TLC implementation.
+%%
+%function FinalizeAllDims(block, system) Output
+  %if block.OpaqueBlockMethode.HasFinalizeAllDims
+    %<generateType(block, system, "FinalizeAllDims")>
+  %endif
+%endfunction
+
+%% Function: ConstCode =====================-===================================
+%% Abstract:
+%%   This function calls the generated ConstCode function of the opaques
+%%   block TLC implementation.
+%%
+%%   Instead of putting constant tid code with tid0, opaque block puts 
+%%   constant tid code in a seperate function ConstCode. This function 
+%%   is called to generate constant tid code in model Start function.
+%%
+%function ConstCode(block, system) Output
+  %if block.OpaqueBlockMethode.HasConstCode
+    %<generateType(block, system, "ConstCode")>
+  %endif
+%endfunction
+
+%% [EOF] opaque.tlc

@@ -1,0 +1,1592 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%% Description: This TLC library file contains functions to
+%%              hook user code into the TMW generated code.
+%%
+
+%if EXISTS("_HOOKSLIB_") == 0
+%assign _HOOKSLIB_ = 1
+
+%% sysbodlib needs to be included here in case hookslib
+%% gets included standalone in a system target file
+%%
+%% needed for LibAddToSystem function
+%include "sysbodlib.tlc"
+
+%with ::CompiledModel 
+
+%%
+%% Note: XYZCacheAssert identifier is used to trap when user
+%% code function is not called after cache is dumped.
+%%
+
+%addtorecord ::CompiledModel CustomCode \
+  {\
+    BeginGuard               "";\
+    EndGuard                 "";\
+    HeaderFileHeader         "";\
+    HeaderFileTrailer        "";\
+    ExportFileHeader         "";\
+    ExportFileTrailer        "";\
+    PrmFileHeader            "";\
+    PrmFileTrailer           "";\
+    SourceFileHeader         "";\
+    SourceFileTrailer        "";\
+    RegFileHeader            "";\
+    RegFileTrailer           "";\
+    RegFcnHeader             "";\
+    RegFcnBody               "";\
+    RegFcnTrailer            ""\
+ }
+
+%if !EXISTS(Accelerator)
+  %assign Accelerator = 0
+%endif
+%if !EXISTS(AlwaysIncludeCustomSrc)
+  %assign AlwaysIncludeCustomSrc = 0
+%endif
+
+%if !Accelerator && EXISTS(CodeFormat)
+  %if !AlwaysIncludeCustomSrc && CodeFormat ==  "S-Function"
+    %assign CustomCode.BeginGuard = "#ifndef MATLAB_MEX_FILE" + "\n"
+    %assign CustomCode.EndGuard   = "\n" + "#endif" + "\n"
+  %endif
+%endif
+
+%% DocFunction{Obsolete}: LibHeaderFileCustomCode ==============================
+%%
+%% NOTE: This function is obsolete.  Use LibSetSourceFileSection instead.
+%%
+%% Purpose:
+%%	Place code at the top or bottom of the model's header file 
+%%      (<model>.h) by specifying "header" or "trailer", respectively.
+%%      model.h is included by all other system files, so subsystem
+%%      files can see any necessary typedefs and defines.
+%%
+%% Syntax:
+%%	LibHeaderFileCustomCode(buffer, location)	
+%%
+%% Arguments:
+%%      buffer:   Buffer to append to internal cache buffer
+%%      location:
+%%	  "header"  to place buffer at top of file
+%%        "trailer" to place buffer at bottom of file
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibHeaderFileCustomCode places custom code in the model's header
+%%      file (<model>.h). Each call to this function appends your
+%%      buffer to the internal cache buffer.
+%%
+%function LibHeaderFileCustomCode(buffer, location) void
+  %assign cc = ::CompiledModel.CustomCode
+  %switch location
+    %case "header"
+      %if !WHITE_SPACE(cc.HeaderFileHeader)
+        %% HeaderFileHeader may already contain custom code from another source;
+        %% add a separate for better layout
+        %assign cc.HeaderFileHeader = cc.HeaderFileHeader + "\n" + buffer
+      %else
+        %assign cc.HeaderFileHeader = buffer
+      %endif       
+      %break
+    %case "trailer"
+      %assign cc.HeaderFileTrailer = cc.HeaderFileTrailer + buffer
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Obsolete}: LibExportFileCustomCode =============================
+%%
+%% NOTE: This function is obsolete.  Use LibSetSourceFileSection instead.
+%%
+%% Purpose:
+%%	Place code at the top or bottom of the model's header file
+%%      (<model>.h) by specifying "header" or "trailer", respectively.
+%%
+%% Syntax:
+%%	LibExportFileCustomCode(buffer, location)	
+%%
+%% Arguments:
+%%      buffer:   Buffer to append to internal cache buffer
+%%      location:
+%%	  "header"  to place buffer at top of file
+%%        "trailer" to place buffer at bottom of file
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibExportFileCustomCode places custom code in the model's header
+%%      file (<model>.h). Each call to this function appends your buffer
+%%      to the internal cache buffer.
+%%
+%function LibExportFileCustomCode(buffer, location) void
+  %assign cc = ::CompiledModel.CustomCode
+  %switch location
+    %case "header"
+      %assign cc.ExportFileHeader = cc.ExportFileHeader + buffer
+      %break
+    %case "trailer"
+      %assign cc.ExportFileTrailer = cc.ExportFileTrailer + buffer
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Obsolete}: LibPrmFileCustomCode  ===============================
+%%
+%% NOTE: This function is obsolete.  Use LibSetSourceFileSection instead.
+%%
+%% Purpose:
+%%      Place code at the top or bottom of the model's source file 
+%%      (model.c) by specifying "header" or "trailer", respectively.
+%%      Note that this data is only visible to model.c, not any subsytsem
+%%      files.
+%%
+%% Syntax:
+%%      LibPrmFileCustomCode(buffer, location)
+%%
+%% Arguments:
+%%      buffer: Buffer to append to internal cache buffer
+%%      location: 
+%%	  "header"  to place buffer at top of file
+%%        "trailer" to place buffer at bottom of file
+%%	
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibPrmFileCustomCode places custom code in the model's source
+%%      file (model.c).  Each call to this function appends your buffer
+%%      to the internal cache buffer.
+%%
+%function LibPrmFileCustomCode(buffer, location) void
+  %assign cc = ::CompiledModel.CustomCode
+  %switch location
+    %case "header"
+      %assign cc.PrmFileHeader = cc.PrmFileHeader + buffer
+      %break
+    %case "trailer"
+      %assign cc.PrmFileTrailer = cc.PrmFileTrailer + buffer
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Obsolete}: LibSourceFileCustomCode =========================
+%%
+%% NOTE: This function is obsolete.  Use LibSetSourceFileSection instead.
+%%
+%% Purpose:
+%%      Place code at the top or bottom of the model's source file (<model>.c)
+%%      by specifying "header" or "trailer", respectively.
+%%
+%% Syntax:
+%%      LibSourceFileCustomCode(buffer, location)
+%%
+%% Arguments:
+%%      buffer: Buffer to append to internal cache buffer
+%%      location:
+%%	  "header"  to place buffer at top of file
+%%        "trailer" to place buffer at bottom of file
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibSourceFileCustomCode places custom code in the model's source file
+%%      (<model>.c).  Each call to this function appends your buffer to the
+%%      internal cache buffer.
+%%
+%% Note:
+%%      Take care when placing code in <model>.c if the file is
+%%      expected to split.  When code is needed in each split file, place it
+%%      in <model>.h instead of <model>.c.
+%%
+%function LibSourceFileCustomCode(buffer, location) void
+  %assign cc = ::CompiledModel.CustomCode
+  %switch location
+    %case "header"
+      %if !WHITE_SPACE(cc.SourceFileHeader)
+        %% SourceFileHeader may already contain custom code from another source;
+        %% add a separate for better layout
+        %assign cc.SourceFileHeader = cc.SourceFileHeader + "\n" + buffer
+      %else
+        %assign cc.SourceFileHeader = buffer        
+      %endif
+      %break
+    %case "trailer"
+      %assign cc.SourceFileTrailer = cc.SourceFileTrailer + buffer
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Obsolete}: LibRegFileCustomCode ===============================
+%%
+%% NOTE: This function is obsolete.  Use LibSetSourceFileSection instead.
+%%
+%% Purpose:
+%%	Place code at the top or bottom of the model's source file
+%%      (<model>.c) by specifying "header" or "trailer", respectively.
+%%      All of the reg functions now are placed at the bottom of model.c
+%% Syntax:
+%%      LibRegFileCustomCode(buffer, location)
+%%
+%% Arguments:
+%%	buffer: Buffer to append to internal cache buffer
+%%      location:
+%%	  "header"  to place buffer at top of file
+%%        "trailer" to place buffer at bottom of file
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibRegFileCustomCode places custom code in the model's source
+%%	file (<model>.c).  Each call to this function appends your buffer
+%%      to the internal cache buffer.
+%%
+%function LibRegFileCustomCode(buffer, location) void
+  %assign cc = ::CompiledModel.CustomCode
+  %switch location
+    %case "header"
+      %assign cc.RegFileHeader = cc.RegFileHeader + buffer
+      %break
+    %case "trailer"
+      %assign cc.RegFileTrailer = cc.RegFileTrailer + buffer
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibMdlStartCustomCode ===========
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside the start
+%%      function.  Start code is executed once, during the model initialization
+%%      phase.
+%%
+%% Syntax:
+%%	LibMdlStartCustomCode(buffer, location)
+%%
+%% Arguments:
+%%      buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function)
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibMdlStartCustomCode places declaration statements and executable code
+%%	inside the start function.
+%%
+%%      This code gets output into the following functions depending on
+%%      the current code format:
+%%
+%%      Function Name         Code Format
+%%      ---------------------------------
+%%      <model>_initialize    Embedded-C (if not ModelReferenceRTWTarget)
+%%      mdlStart              Embedded-C (if ModelReferenceRTWTarget)
+%%      mdlStart              S-function
+%%      MdlStart              RealTime, RealTimeMalloc
+%%
+%%      Each call to this function appends your buffer to the internal
+%%      cache buffer.
+%%
+%function LibMdlStartCustomCode(buffer, location) void
+  %assign ss = System[NumSystems-1]
+
+  %if IsModelReferenceTarget()
+    %assign ss = ::CompiledModel.System[GetBaseSystemIdx()]
+    %% Tell TLC that this system has user data for start function
+    %if !ISEMPTY(buffer)
+      %if !ISFIELD(ss, "StartMethodHasUserData")
+        %<SETFIELD(ss, "StartMethodHasUserData", TLC_TRUE)>
+      %else
+        %assign ss.StartMethodHasUserData = TLC_TRUE
+      %endif
+    %endif
+  %endif
+
+  %switch location
+    %case "header"
+    %case "declaration"
+      %<LibAddToSystemField(ss, "StartHeader",  buffer)>
+      %break
+    %case "execution"
+      %<LibAddToSystemField(ss, "StartBody",    buffer)>
+      %break
+    %case "trailer"
+      %<LibAddToSystemField(ss, "StartTrailer", buffer)>
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibMdlTerminateCustomCode =========
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside the terminate
+%%      function.
+%%
+%% Syntax:
+%%	LibMdlTerminateCustomCode(buffer, location)
+%%
+%% Arguments:
+%%      buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function)
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibMdlTerminateCustomCode places declaration statements and executable
+%%	code inside the terminate function.
+%%
+%%      This code gets output into the following functions depending on
+%%      the current code format:
+%%
+%%      Function Name         Code Format
+%%      ---------------------------------
+%%      <model>_terminate     Embedded-C
+%%      mdlTerminate          S-function
+%%      MdlTerminate          RealTime, RealTimeMalloc
+%%
+%%      Each call to this function appends your buffer to the internal
+%%      cache buffer. 
+%%
+%function LibMdlTerminateCustomCode(buffer, location) void
+  %assign ss = System[GetBaseSystemIdx()]
+  %switch location
+    %case "header"
+    %case "declaration"
+      %<LibAddToSystemField(ss, "TerminateHeader",  buffer)>
+      %break
+    %case "execution"
+      %<LibAddToSystemField(ss, "TerminateBody",    buffer)>
+      %break
+    %case "trailer"
+      %<LibAddToSystemField(ss, "TerminateTrailer", buffer)>
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibMdlRegCustomCode =============
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside registration
+%%	function.
+%%	
+%% Syntax:
+%%      LibMdlRegCustomCode(buffer, location)
+%%
+%% Arguments:
+%%      buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function)
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibMdlRegCustomCode places declaration statements and executable
+%%	code inside the registration function.
+%%
+%%      This code gets output into the following functions depending on
+%%      the current code format:
+%%
+%%      Function Name         Code Format
+%%      ---------------------------------
+%%      <model>_initialize    Embedded-C
+%%      <model>_malloc        S-function
+%%      <model>               RealTime, RealTimeMalloc
+%%
+%%      When using the S-function code format, code placed in this function
+%%      will also be placed in the registration function of any model that
+%%      includes this S-function block.
+%%
+%%      Each call to this function appends your buffer to the internal
+%%      cache buffer.
+%%
+%function LibMdlRegCustomCode(buffer, location) void
+  %assign cc = ::CompiledModel.CustomCode
+  %switch location
+    %case "header"
+    %case "declaration"
+      %assign cc.RegFcnHeader = cc.RegFcnHeader + buffer
+      %break
+    %case "execution"
+      %assign cc.RegFcnBody = cc.RegFcnBody + buffer
+      %break
+    %case "trailer"
+      %assign cc.RegFcnTrailer = cc.RegFcnTrailer + buffer
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% Function: FcnSystemHooksCacheAssert =========================================
+%%
+%% Purpose:
+%%   Assert if user caches code after cache has been written.  This generally
+%%   happens as a result of function inlining.
+%%
+%% Syntax:
+%%   FcnSystemHooksCacheAssert(system, func, tid)
+%%
+%% Arguments:
+%%   system: system in which code is cached
+%%   func:   Function type: "Initialize", "Output", etc.
+%%
+%function FcnSystemHooksCacheAssert(system, func, tid) void
+  
+  %if (LibGetSystemField(system, func + "CacheAssert" + tid))
+    %assign errTxt = "\n\nAttempt to place a user hook after a function has " ...
+      "been created: %<func> of %<system.Type> %<system.Name>.\n\n" ...
+      "Note: This may be a result of function inlining."
+    %<LibReportError(errTxt)>
+  %endif
+%endfunction
+
+%% Function: FcnErrorOutIfMethodHasNoUserData =================
+%%   Abstract:
+%%     This function issues warning message if a system does not
+%% register user data for the method but a block TLC file is trying to
+%% dump custom code in this system 
+%% 
+%function FcnErrorOutIfMethodHasNoUserData(system, fcnName, buffer) void
+  %if !WHITE_SPACE(buffer)
+    %if fcnName == "OutputUpdate"
+      %assign fcnName = "Output"
+    %endif
+    %if (system.RTWSystemCode == 0) 
+      %% custom code is not supported for inlined subsystem 
+      %assign fieldname = "%<fcnName>MethodHasUserData"
+      %if (ISFIELD(system,"HasRTWUserData") && GETFIELD(system, "HasRTWUserData")) || ...
+        (ISFIELD(system, fieldname) && GETFIELD(system, fieldname))
+        %% do nothing, 
+      %else
+        %if EXISTS(Type) && EXISTS(Name)
+          %% in block scope
+          %assign errTxt = "Block TLC file indirectly calls "...
+            "LibSystem%<fcnName>CustomCode to insert custom code. "...
+            "To ensure the custom code is inserted, "...
+            "the block TLC file must directly call this "...
+            "TLC function at least once or include the string "...
+            "'LibSystem%<fcnName>CustomCode()' in a TLC comment line "...
+            "at least once."
+          %<LibBlockReportError([], errTxt)>
+        %else
+          %assign errTxt = "LibSystem%<fcnName>CustomCode is called "...
+            "to insert custom code in system %<system.Name>. "...
+            "To ensure the custom code is inserted, "...
+            "this function must : \n"...
+            "1. be called from a block, or; \n"...
+            "2. be called to insert custom code for an non-inlined subsystem, or; \n" ...
+            "3. be called to insert custom code for a virtual subsystem that has RTWData."
+          %<LibReportError(errTxt)>
+        %endif
+      %endif
+    %endif 
+    
+    %if SLibSystemFcnPeriodicRateGrouping(system, fcnName)
+      %assign systemTid = LibGetSubsystemTID(system, TLC_FALSE)
+      %if TYPE(systemTid) == "Vector"
+        %assign callSites = system.CallSites
+        %assign graphParentSys = ::CompiledModel.System[callSites[0][2]]
+        %assign ssBlock        = graphParentSys.Block[callSites[0][3]]
+        %assign customCodeTid = ssBlock.CustomCodeTID
+        %if ssBlock.firstEntryOfTsMapIsGCD == "no" && ...
+          !LibAsynchronousTriggeredTID(customCodeTid)
+          %assign errTxt = "LibSystem%<fcnName>CustomCode is called "...
+            "to insert custom code in system %<system.Name> for "...
+            "subsystem fundamental tid %<customCodeTid>. "...
+            "However, no block in the subsystem running at the rate of that tid. "...
+            "Consider putting a block running at subsystem fundamental rate in "...
+            "the system."
+          %<LibReportError(errTxt)>
+        %endif
+      %endif
+    %endif
+ %endif
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibSystemInitializeCustomCode =====
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside the system's
+%%      initialize function.
+%%
+%% Syntax:
+%%	LibSystemInitializeCustomCode(system, buffer, location)
+%%
+%% Arguments:
+%%	system: Reference to a system
+%%      buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function)
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibSystemInitializeCustomCode places declaration statements and 
+%%	executable inside the system's initialize function.
+%%
+%%      This code gets output into the following functions for the root system 
+%%      depending on the current code format:
+%%
+%%      Function Name             Code Format
+%%      -------------------------------------
+%%      <model>_initialize        Embedded-C
+%%      mdlInitializeConditions   S-function
+%%      MdlStart                  RealTime, RealTimeMalloc
+%%
+%%      Code for a subsystem gets output into the subsystem's initialization
+%%      function.
+%%
+%%      Each call to this function appends your buffer to the internal
+%%      cache buffer.
+%%
+%%	Note that enable systems which are not configured to reset on enable
+%%      get inlined into MdlStart.  For this case, the system's custom code is
+%%      found in MdlStart above and below the enable system's initialization
+%%      code.
+%%
+%function LibSystemInitializeCustomCode(system, buffer, location) void
+  %<FcnSystemHooksCacheAssert(system, "Initialize", "")>
+  %<FcnErrorOutIfMethodHasNoUserData(system, "Initialize",buffer)>
+  %switch location
+    %case "header"
+    %case "declaration"
+      %<LibAddToSystemField(system, "InitializeHeader", buffer)>
+      %break
+    %case "execution"
+      %<LibAddToSystemField(system, "InitializeBody", buffer)>
+      %break
+    %case "trailer"
+      %<LibAddToSystemField(system, "InitializeTrailer", buffer)>
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibSystemOutputCustomCode =========
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside the system's
+%%      output function.
+%%
+%% Syntax:
+%%	LibSystemOutputCustomCode(system, buffer, location)
+%%
+%% Arguments:
+%%      system: Reference to a system
+%%      buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function)
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibSystemOutputCustomCode places declaration statements and executable 
+%%	code inside the system's output function.
+%%
+%%      This code gets output into the following functions depending on
+%%      the current code format:
+%%
+%%      Function Name         Code Format
+%%      ---------------------------------
+%%      <model>_step          Embedded-C (CombineOutputUpdateFcns is one)
+%%      <model>_output        Embedded-C (CombineOutputUpdateFcns is zero)
+%%      mdlOutputs            S-function
+%%      MdlOutputs            RealTime, RealTimeMalloc
+%%
+%%      Each call to this function appends your buffer to the internal cache
+%%      buffer.
+%%
+%function LibSystemOutputCustomCode(system, buffer, location) void
+  %assign fcnType = EXISTS(::BlockFcn) ? ::BlockFcn : "Unknown"
+  %assign tid = "%<SLibSystemTidUsedByRateGroup(system, fcnType)>"
+  %<FcnSystemHooksCacheAssert(system, "Output", tid)>
+  %<FcnErrorOutIfMethodHasNoUserData(system, "Output",buffer)>
+  %switch location
+    %case "header"
+    %case "declaration"
+      %<LibAddToSystemField(system, "OutputHeader" + tid, buffer)>
+      %break
+    %case "execution"
+      %<LibAddToSystemField(system, "OutputBody" + tid, buffer)>
+      %break
+    %case "trailer"
+      %<LibAddToSystemField(system, "OutputTrailer" + tid, buffer)>
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+  %if ::CompiledModel.NeedTID && !ISFIELD(system,"OutputCutomCodeNeedTid")
+    %addtorecord system OutputCutomCodeNeedTid TLC_TRUE
+  %endif
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibSystemUpdateCustomCode =========
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside the system's
+%%      update function.
+%%
+%% Syntax:
+%%	LibSystemUpdateCustomCode(system, buffer, location)
+%%
+%% Arguments:
+%%      system: Reference to a system
+%%	buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function)
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%	LibSystemUpdateCustomCode places declaration statements and executable 
+%%	code inside the system's update function.
+%%
+%%      This code gets output into the following functions depending on
+%%      the current code format:
+%%
+%%      Function Name         Code Format
+%%      ---------------------------------
+%%      <model>_step          Embedded-C (CombineOutputUpdateFcns is one)
+%%      <model>_update        Embedded-C (CombineOutputUpdateFcns is zero)
+%%      mdlUpdate             S-function
+%%      MdlUpdate             RealTime, RealTimeMalloc
+%%
+%%      Each call to this function appends your buffer to the internal
+%%      cache buffer.
+%%
+%function LibSystemUpdateCustomCode(system, buffer, location) void
+  %assign fcnType = EXISTS(::BlockFcn) ? ::BlockFcn : "Unknown"
+  %assign tid = "%<SLibSystemTidUsedByRateGroup(system, fcnType)>"
+  %<FcnSystemHooksCacheAssert(system, "Update", tid)>
+  %<FcnErrorOutIfMethodHasNoUserData(system, "Update",buffer)>
+  %switch location
+    %case "header"
+    %case "declaration"
+      %<LibAddToSystemField(system, "UpdateHeader" + tid, buffer)>
+      %break
+    %case "execution"
+      %<LibAddToSystemField(system, "UpdateBody" + tid, buffer)>
+      %break
+    %case "trailer"
+      %<LibAddToSystemField(system, "UpdateTrailer" + tid, buffer)>
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+  %if ::CompiledModel.NeedTID && !ISFIELD(system,"UpdateCutomCodeNeedTid")
+    %addtorecord system UpdateCutomCodeNeedTid TLC_TRUE
+  %endif
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibSystemDerivativeCustomCode =====
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside the system's
+%%      derivative function.
+%%
+%% Syntax:
+%%      LibSystemDerivativeCustomCode(system, buffer, location)
+%%
+%% Arguments:
+%%      system: Reference to a system
+%%	buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function)
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibSystemDerivativeCustomCode places declaration statements and
+%%      executable code inside the system's derivative function.
+%%
+%%      This code gets output into the following functions depending on
+%%      the current code format:
+%%
+%%      Function Name         Code Format
+%%      ---------------------------------
+%%      mdlDerivatives        S-function
+%%      MdlDerivatives        RealTime, RealTimeMalloc
+%%
+%%      This function is not relevant for the Embedded-C code format since
+%%      blocks with continuous states cannot be used.
+%%
+%%      Each call to this function appends your buffer to the internal cache
+%%      buffer.
+%%
+%%      An error is generated if you attempt to add code to a subsystem that
+%%      does not have any continuous states.
+%%
+%function LibSystemDerivativeCustomCode(system, buffer, location) void
+  %if !ISFIELD(system, "DerivativeFcn") && system.Type != "root"
+    %assign errTxt = "System %<system.Name> does not have Derivatives function"
+    %<LibReportError(errTxt)>
+  %endif
+  %<FcnSystemHooksCacheAssert(system, "Derivative", "")>
+  %<FcnErrorOutIfMethodHasNoUserData(system, "Derivative",buffer)>
+  %switch location
+    %case "header"
+    %case "declaration"
+      %<LibAddToSystemField(system, "DerivativeHeader", buffer)>
+      %break
+    %case "execution"
+      %<LibAddToSystemField(system, "DerivativeBody", buffer)>
+      %break
+    %case "trailer"
+      %<LibAddToSystemField(system, "DerivativeTrailer", buffer)>
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibSystemEnableCustomCode =========
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside the system's
+%%      enable function.
+%%
+%% Syntax:
+%%      LibSystemEnableCustomCode(system, buffer, location)
+%%
+%% Arguments:
+%%      system: Reference to a system
+%%	buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function)
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibSystemEnableCustomCode places declaration statements and
+%%      executable code inside the system's enable function,
+%%
+%%      Each call to this function appends your buffer to the internal cache
+%%      buffer.
+%%
+%%      An error is generated if you attempt to add code to a subsystem that
+%%      does not have an enable function.
+%%
+%function LibSystemEnableCustomCode(system, buffer, location) void
+  %if !ISFIELD(system, "EnableFcn") && system.Type != "root"
+    %assign errTxt = "System %<system.Name> does not have Enable function"
+    %<LibReportError(errTxt)>
+  %endif
+  %<FcnSystemHooksCacheAssert(system, "Enable", "")>
+  %<FcnErrorOutIfMethodHasNoUserData(system, "Enable",buffer)>
+  %switch location
+    %case "header"
+    %case "declaration"
+      %<LibAddToSystemField(system, "EnableHeader", buffer)>
+      %break
+    %case "execution"
+      %<LibAddToSystemField(system, "EnableBody", buffer)>
+      %break
+    %case "trailer"
+      %<LibAddToSystemField(system, "EnableTrailer", buffer)>
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibSystemDisableCustomCode ========
+%%
+%% Purpose:
+%%	Place declaration statements and executable code inside the system's
+%%      disable function.
+%%
+%% Syntax:
+%%      LibSystemDisableCustomCode(system, buffer, location)
+%%
+%% Arguments:
+%%      system: Reference to a system
+%%	buffer: String buffer to append to internal cache buffer
+%%      location:
+%%        "header"      to place buffer at top of function
+%%        "declaration" same as specifying header
+%%        "execution"   to place buffer at top of function, but after header
+%%        "trailer"     to place buffer at bottom of function
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibSystemDisableCustomCode places declaration statements and
+%%      executable code inside the system's disable function,
+%%
+%%      Each call to this function appends your buffer to the internal cache
+%%      buffer.
+%%
+%%      An error is generated if you attempt to add code to a subsystem that
+%%      does not have a disable function.
+%%
+%function LibSystemDisableCustomCode(system, buffer, location) void
+  %if !ISFIELD(system, "DisableFcn") && system.Type != "root"
+    %assign errTxt = "System %<system.Name> does not have Disable function"
+    %<LibReportError(errTxt)>
+  %endif
+  %<FcnSystemHooksCacheAssert(system, "Disable", "")>
+  %<FcnErrorOutIfMethodHasNoUserData(system, "Disable",buffer)>
+  %switch location
+    %case "header"
+    %case "declaration"
+      %<LibAddToSystemField(system, "DisableHeader", buffer)>
+      %break
+    %case "execution"
+      %<LibAddToSystemField(system, "DisableBody", buffer)>
+      %break
+    %case "trailer"
+      %<LibAddToSystemField(system, "DisableTrailer", buffer)>
+      %break
+    %default
+      %assign errTxt = "Invalid location: %<location>"
+      %<LibReportError(errTxt)>
+  %endswitch
+%endfunction
+
+
+%% Function: FcnSysNeedDumpUserCode ============================================
+%% Abstract:
+%%    helper function
+%%    Return true if:
+%%    1. System current tid is periodic
+%%    2. System current tid is asynchronous, equal to system own tid
+%%
+%function FcnSysNeedDumpUserCode(system) void
+  %if LibAsynchronousTriggeredTID(system.CurrentTID)
+    %assign subsysTid = FcnGetSubsystemCodeBufTID(system)
+    %return (SIZE(subsysTid,1) == 1) && (system.CurrentTID == subsysTid)
+  %else
+    %return 1
+  %endif
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibDumpSystemUserCode ============
+%%
+%% Purpose:
+%%	Output custom user code cache for the system to the current output
+%%      buffer.
+%%
+%% Syntax:
+%%	LibDumpSystemUserCode(system, function, location)
+%%
+%% Arguments:
+%%      system:   Reference to a system
+%%      function: Name of function for which to dump code
+%%                One of {"Initialize", "Start", "Terminate", "Output",
+%%                "Update", "Derivative", "Enable", "Disable", "OutputUpdate"}
+%%                Specifying "OutputUpdate" is the same as "Output".
+%%      location: Location where code should be put
+%%                One of {"Header", "Body", "Trailer"}
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpSystemUserCode empties the specified user custom code cache
+%%      for the system.
+%%
+%function LibDumpSystemUserCode(system, function, location) Output
+  %assign fcnName = function
+  %if fcnName == "OutputUpdate"
+    %assign fcnName = "Output"
+  %endif
+  
+  %assign fieldname = "%<fcnName>UserDataTLCInserted"
+  %assign codeEmittedThroughIR = TLC_TRUE
+  
+  %if ISFIELD(system, fieldname)
+    %assign codeEmittedThroughIR = (GETFIELD(system, fieldname) ? TLC_TRUE : TLC_FALSE)
+  %endif
+
+  %if !codeEmittedThroughIR
+    %return LibDumpSystemUserCodeNoCheck(system, function, location)
+  %endif
+%endfunction
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Get list of subsystem parameter structure name and sysIdx
+%%
+%function FcnGetChilsSystemParamStructName(namePrefix, sysIdx) void
+  %assign childsysTypedefs = ""
+  %with ::CompiledModel.System[sysIdx]
+    %if NumChildSystems > 0
+      %assign childSystems = ChildPrmStructs
+      %openfile childsysTypedefs
+      %foreach childIdx = NumChildSystems
+        %assign chIdx = childSystems[childIdx]
+        %if chIdx[1] == 0 && chIdx[3] > -1
+          %assign blk = System[chIdx[2]].Block[chIdx[3]]
+          %with blk
+            %assign childSys = System[CallSiteInfo.SystemIdx]
+            %% If a child is a standalone subsystem, do not
+            %% include it in this hierarchy.
+            %if childSys.StandaloneSubsystem
+              %continue
+            %endif
+            %if !SLibSystemHasOwnDataScope(childSys)
+              %<SLibLegacySymbolInSystem(namePrefix + ".", childSys.SystemIdx)>
+            %elseif childSys.HasParametersArg
+              %assign varGroupIdx = ...
+                FcnSysVarGroupIndex(childSys, "Parameter", blk.CallSiteIdx)
+              %assign indenti = SLibVarGroupName(varGroupIdx)
+              %<SLibIfLocalPreprocessorCondition(blk)>
+              %<SLibLegacySymbolInSystem(namePrefix + indenti + ".", ...
+                childSys.SystemIdx)>
+              %<SLibEndIfLocalPreprocessorCondition(blk)>
+            %endif
+          %endwith
+        %endif
+      %endforeach
+      %closefile childsysTypedefs
+    %endif
+  %endwith
+  %return childsysTypedefs
+%endfunction %% FcnGetChilsSystemParamStructName
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Generate code to dump legacy symbol value into parameter structure of a system
+%function SLibLegacySymbolInSystem(namePrefix, sysIdx) void
+  %assign sysParams = ""
+
+  %openfile sysParams
+
+  %% First visit each parameter of this system
+  %assign paramArg = System[sysIdx].Interface.ParameterArgDef
+  %if paramArg.NumFlatFields > 0
+    %with ::CompiledModel.ModelParameters
+      %foreach prmIdx = paramArg.NumFlatFields
+        %assign prm = Parameter[paramArg.FirstLocation + prmIdx]
+        %if (SLibGetWidthOfValueFromParamRec(prm) > 0) && !SLibOmitParameter(prm) && (prm.DefinedInLegacyCode == 1)
+          %assign prmWidth = LibGetRecordWidth(prm)
+          
+          %if prmWidth > 0
+            %assign dataType = SLibGetRecordDataTypeName(prm, "")
+            %assign id = LibGetRecordIdentifier(prm)
+            %if prm.LegacyDimensions > 1
+              %% The parameter maps to a ND C array
+              %assign legacyId = ""
+              %foreach i = prm.LegacyDimensions
+                %assign legacyId = legacyId + "[0]"
+              %endforeach
+              %assign legacyId = prm.LegacySymbolName + legacyId
+              %if prmWidth == 1
+                %<namePrefix>%<id> = (%<dataType>) %<legacyId>;
+              %else
+                %assign fakeBlk = BLOCK { Name "" }
+                %roll idx=[0:%<prmWidth-1>], lcv=RollThreshold, fakeBlk, "Roller", ""
+                  %assign locIdx = (lcv == "") ? idx : lcv
+                  %<namePrefix>%<id>[%<locIdx>] = (%<dataType>) (&%<legacyId>)[%<locIdx>];
+                %endroll
+              %endif
+            %else
+              %% The parameter maps to a scalar or 1D C array
+              %if prmWidth == 1
+                %if prm.LegacyDimensions == 1
+                  %% Special case for 1D C array with only 1 element
+                  %<namePrefix>%<id> = (%<dataType>) %<prm.LegacySymbolName>[0];
+                %else
+                  %% "True" scalar
+                  %<namePrefix>%<id> = (%<dataType>) %<prm.LegacySymbolName>;
+                %endif
+              %else
+                %assert prm.LegacyDimensions == 1
+                %assign fakeBlk = BLOCK { Name "" }
+                %roll idx=[0:%<prmWidth-1>], lcv=RollThreshold, fakeBlk, "Roller", ""
+                  %assign locIdx = (lcv == "") ? idx : lcv
+                  %<namePrefix>%<id>[%<locIdx>] = (%<dataType>) %<prm.LegacySymbolName>[%<locIdx>];
+                %endroll
+              %endif
+            %endif
+          %endif
+        %endif
+      %endforeach
+    %endwith
+  %endif
+
+  %% Second, recursively visit each subsystem instances under this system
+  %<FcnGetChilsSystemParamStructName(namePrefix, sysIdx)>
+
+  %closefile sysParams
+  %return sysParams
+%endfunction
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%function LibDumpLegacySymbolValueIntoRTP() void
+
+  %% Get root parameter structure name
+  %assign rootSystem = System[NumSystems-1]
+  %assign isPeriodicRateGrouping = SLibSystemFcnPeriodicRateGrouping(rootSystem, "Initialize")
+  %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  %with rootSystem.Interface
+    %assign tmpBlockFcn = ::BlockFcn
+    %assign ::BlockFcn  = "Output"
+    %if !reqInsts.ParamsInst && FcnArgNeeded(ParameterArgDef,...
+      rootSystem.CurrentTID,isPeriodicRateGrouping) && !GenerateClassInterface
+      %assign rootPrmName = SLibGetParametersStruct(0) + "->"
+    %else
+      %assign oldStrNames = SLibGetOldStrNames()
+      %assign rootPrmName = SLibGetPrmsName(oldStrNames) + "."
+    %endif
+    %assign ::BlockFcn = tmpBlockFcn 
+  %endwith
+
+  %% Visit instances of subsystems recursively
+  %return SLibLegacySymbolInSystem(rootPrmName, NumSystems-1)
+%endfunction
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%function LibDumpSystemUserCodeNoCheck(system, function, location) Output
+  %if !FcnSysNeedDumpUserCode(system)
+    %return
+  %endif
+  %%
+  %% OutputUpdate == Output.
+  %%
+  %if function == "OutputUpdate"
+    %assign function = "Output"
+  %endif
+  %assign  tid = "%<SLibSystemTidUsedByRateGroup(system, function)>"
+  %if WHITE_SPACE(tid)
+    %assign code = LibGetSystemField(system, function + location)
+  %else
+    %assign code = LibGetSystemField(system, function + location) + ...
+      LibGetSystemField(system, function + location + tid)
+  %endif
+  %if !Accelerator
+    %if !WHITE_SPACE(code)
+      %if !ISEMPTY(tid)
+        /* user code (%<function> function %<location> for TID%<tid>) */
+      %else
+        /* user code (%<function> function %<location>) */
+      %endif
+    %endif
+
+    %if ISEQUAL(function, "Output") && ISEQUAL(location, "Trailer")
+      %if !WHITE_SPACE(code)
+        %<code>
+      %endif
+    %else
+      %if !WHITE_SPACE(code)
+        %<CustomCode.BeginGuard>%<code>%<CustomCode.EndGuard>
+      %endif
+
+      %if (system.SystemIdx == (NumSystems-1)) && InlineParameters == 0 && ...
+          ISEQUAL(function, "Initialize") && ISEQUAL(location, "Body")
+        %assign initrtp = LibDumpLegacySymbolValueIntoRTP()
+        %if !WHITE_SPACE(initrtp)
+          /* Copy legacy symbol value into global parameter structure */
+          %<initrtp>
+        %endif
+      %endif
+    %endif
+  %endif
+  %%
+  %% Set cache assert field to 1 to catch future (invalid) calls to hooks
+  %% function.
+  %%
+  %if (function == "Output" || function == "Update") && ...
+     ISFIELD(system, "%<function>CutomCodeNeedTid")
+    %<LibNeedTID()>
+  %endif
+  %<LibSetSystemField(system, function + "CacheAssert", TLC_TRUE)>\
+  %<LibSetSystemField(system, function + "CacheAssert" + tid, TLC_TRUE)>\
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibSystemUserCodeIsEmpty =======
+%%
+%% Purpose:
+%%	Determine if the system user code buffer is empty (i.e. contains only
+%%      whitespace).
+%%
+%% Syntax:
+%%	LibSystemUserCodeIsEmpty(system, function, location)
+%%
+%% Arguments:
+%%      system:   Reference to a system
+%%      function: Name of function for which to check
+%%                One of {"Initialize", "Start", "Terminate", "Output",
+%%                "Update", "Derivative", "Enable", "Disable", "OutputUpdate"}
+%%                Specifying "OutputUpdate" is the same as specifying "Output".
+%%      location: Location for which to check
+%%                One of {"Header", "Body", "Trailer"}
+%%
+%% Returns:
+%%	1 if the code buffer is empty or contains only whitespace
+%%      0 otherwise
+%%
+%% Description:
+%%      LibSystemUserCodeIsEmpty returns one if the code buffer is empty or
+%%      contains only whitespace and zero otherwise.
+%%
+%function LibSystemUserCodeIsEmpty(system, function, location) Output
+  %if function == "OutputUpdate"
+    %assign function = "Output"
+  %endif
+  %if (function == "Output" || function == "Update") && ...
+    !FcnSysNeedDumpUserCode(system) 
+    %return 1
+  %else 
+    %assign tid = "%<SLibSystemTidUsedByRateGroup(system, function)>"
+    %if !WHITE_SPACE(tid)
+      %return WHITE_SPACE(LibGetSystemField(system, function + location)) && ...
+        WHITE_SPACE(LibGetSystemField(system, function + location + tid))
+    %else
+      %return WHITE_SPACE(LibGetSystemField(system, function + location))
+    %endif
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpTopOfPrmFileUserCode ====
+%%
+%% Purpose:
+%%	Output the user custom code cache for the top of the mode;.c file 
+%%      to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpTopOfPrmFileUserCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpTopOfPrmFileUserCode dumps the user custom code cache for the
+%%      top of the model.c file to the output buffer.
+%%
+%function LibDumpTopOfPrmFileUserCode() Output
+  %assert(!Accelerator && !IsModelReferenceSimTarget())
+  %if !WHITE_SPACE(CustomCode.PrmFileHeader)
+    
+    /* user code (top of parameter file) */
+    %<CustomCode.BeginGuard>%<CustomCode.PrmFileHeader>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpBottomOfPrmFileUserCode ==
+%%
+%% Purpose:
+%%	Output the user custom code cache for parameters.  This will go
+%%      after the "header" parameter user code, but at the top of model.c
+%%
+%% Syntax:
+%%	LibDumpBottomOfPrmFileUserCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpBottomOfPrmFileUserCode dumps the user custom code for paramters
+%%      after the "header" parameter custom code, at the top of model.c
+%%
+%function LibDumpBottomOfPrmFileUserCode() Output
+  %assert(!Accelerator && !IsModelReferenceSimTarget())
+  %if !WHITE_SPACE(CustomCode.PrmFileTrailer) 
+    
+    /* user code (bottom of parameter file) */
+    %<CustomCode.BeginGuard>%<CustomCode.PrmFileTrailer>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpTopOfHdrFileUserCode ====
+%%
+%% Purpose:
+%%	Output the user custom code cache for the top of the model.h 
+%%      file to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpTopOfHdrFileUserCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpTopOfHdrFileUserCode dumps the user custom code cache for the
+%%      top of the model.h file to the output buffer.
+%%
+%function LibDumpTopOfHdrFileUserCode() Output
+  %assert(!Accelerator)
+  %if !WHITE_SPACE(CustomCode.HeaderFileHeader)
+    
+    /* user code (top of header file) */
+    %<CustomCode.BeginGuard>%<CustomCode.HeaderFileHeader>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpBottomOfHdrFileUserCode ==
+%%
+%% Purpose:
+%%	Output the user custom code cache for the bottom of the 
+%%      model.h file to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpBottomOfHdrFileUserCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpBottomOfHdrFileUserCode dumps the user custom code cache for the
+%%      bottom of the model.h file to the output buffer.
+%%
+%function LibDumpBottomOfHdrFileUserCode() Output
+  %assert(!Accelerator && !IsModelReferenceSimTarget())
+  %if !WHITE_SPACE(CustomCode.HeaderFileTrailer)
+    
+    /* user code (bottom of header file) */
+    %<CustomCode.BeginGuard>%<CustomCode.HeaderFileTrailer>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+
+%% Function: SLibDumpTopOfExportFileUserCode ===================================
+%%
+%% Purpose:
+%%   Output the user custom code cache at the top of model.h.
+%%
+%function SLibDumpTopOfExportFileUserCode() Output
+  %assert(!Accelerator && !IsModelReferenceSimTarget())
+  %if !WHITE_SPACE(CustomCode.ExportFileHeader)
+    
+    /* user code (top of export header file) */
+    %<CustomCode.BeginGuard>%<CustomCode.ExportFileHeader>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+
+%% Function: SLibDumpBottomOfExportFileUserCode ================================
+%%
+%% Purpose:
+%%   Output the user custom code cache at the bottom of model.h.
+%%
+%function SLibDumpBottomOfExportFileUserCode() Output
+  %assert(!Accelerator && !IsModelReferenceSimTarget())
+  %if !WHITE_SPACE(CustomCode.ExportFileTrailer) 
+    
+    /* user code (bottom of export header file) */
+    %<CustomCode.BeginGuard>%<CustomCode.ExportFileTrailer>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpRegFcnUserDeclarationCode =
+%%
+%% Purpose:
+%%	Output the user custom code cache for the model registration function
+%%      declarations to the output buffer. This code goes at the bottom of
+%%      model.c
+%%
+%% Syntax:
+%%	LibDumpRegFcnUserDeclarationCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpRegFcnUserDeclarationCode dumps the user custom code cache
+%%      for the model registration function declarations to the output buffer.
+%%
+%function LibDumpRegFcnUserDeclarationCode() Output
+  %if !WHITE_SPACE(CustomCode.RegFcnHeader) && ...
+    !Accelerator && !IsModelReferenceSimTarget()
+    
+    /* user code (registration function declaration) */
+    %<CustomCode.BeginGuard>%<CustomCode.RegFcnHeader>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibRegFcnUserDeclarationIsEmpty =
+%%
+%% Purpose:
+%%	Determine if the user custom code cache for the model registration
+%%      function declarations is empty (i.e. contains only whitespace).
+%%
+%% Syntax:
+%%	LibRegFcnUserDeclarationIsEmpty()
+%%
+%% Arguments:
+%%      None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibRegFcnUserDeclarationIsEmpty returns one if the custom code cache
+%%      for the model registration function declarations is empty or contains
+%%      only whitespace and zero otherwise.
+%%
+%function LibRegFcnUserDeclarationIsEmpty() Output
+  %return WHITE_SPACE(CustomCode.RegFcnHeader)
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibDumpRegFcnUserEntryCode ======
+%%
+%% Purpose:
+%%	Output the user custom code cache for the model registration function
+%%      entry code to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpRegFcnUserEntryCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpRegFcnUserEntryCode dumps the user custom code cache
+%%      for the model registration function entry code to the output buffer.
+%%
+%function LibDumpRegFcnUserEntryCode() Output
+  %if !WHITE_SPACE(CustomCode.RegFcnBody) && ...
+    !Accelerator && !IsModelReferenceSimTarget()
+    /* user code (registration function entry) */
+    
+    %<CustomCode.RegFcnBody>\
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpRegFcnUserExitCode ======
+%%
+%% Purpose:
+%%	Output the user custom code cache for the model registration function
+%%      exit code to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpRegFcnUserExitCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpRegFcnUserExitCode dumps the user custom code cache
+%%      for the model registration function exit code to the output buffer.
+%%
+%function LibDumpRegFcnUserExitCode() Output
+  %if !WHITE_SPACE(CustomCode.RegFcnTrailer) && ...
+    !Accelerator && !IsModelReferenceSimTarget()
+    
+    /* user code (registration function exit) */
+    %<CustomCode.RegFcnTrailer>\
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpTopOfRegFileUserCode =====
+%%
+%% Purpose:
+%%	Output the user custom code cache for the top of the registration file
+%%      to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpTopOfRegFileUserCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpTopOfRegFileUserCode dumps the user custom code cache for the
+%%      top of the registration file to the output buffer.
+%%
+%function LibDumpTopOfRegFileUserCode() Output
+  %if !WHITE_SPACE(CustomCode.RegFileHeader) && ...
+    !Accelerator && !IsModelReferenceSimTarget()
+    
+    /* user code (top of registration file) */
+    %<CustomCode.BeginGuard>%<CustomCode.RegFileHeader>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpBottomOfRegFileUserCode ==
+%%
+%% Purpose:
+%%	Output the user custom code cache for the bottom of the registration 
+%%      file to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpBottomOfRegFileUserCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpBottomOfRegFileUserCode dumps the user custom code cache for the
+%%      bottom of the registration file to the output buffer.
+%%
+%function LibDumpBottomOfRegFileUserCode() Output
+  %if !WHITE_SPACE(CustomCode.RegFileTrailer) && ...
+    !Accelerator && !IsModelReferenceSimTarget()
+
+    /* user code (bottom of registration file) */
+    %<CustomCode.RegFileTrailer>\
+  %endif
+%endfunction
+
+
+%% DocFunction{Code Configuration Functions}: LibDumpTopOfSourceFileUserCode ==
+%%
+%% Purpose:
+%%	Output the user custom code cache for the top of the source file
+%%      to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpTopOfSourceFileUserCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpTopOfSourceFileUserCode dumps the user custom code cache for the
+%%      top of the source file to the output buffer.
+%%
+%function LibDumpTopOfSourceFileUserCode() Output
+  %assert(!Accelerator)
+  %if !WHITE_SPACE(CustomCode.SourceFileHeader)
+    
+    /* user code (top of source file) */
+    %<CustomCode.BeginGuard>%<CustomCode.SourceFileHeader>%<CustomCode.EndGuard>\
+  %endif
+%endfunction
+
+%% DocFunction{Code Configuration Functions}: LibDumpBottomOfSourceFileUserCode
+%%
+%% Purpose:
+%%	Output the user custom code cache for the bottom of the source file
+%%      to the output buffer.
+%%
+%% Syntax:
+%%	LibDumpBottomOfSourceFileUserCode()
+%%
+%% Arguments:
+%%	None
+%%
+%% Returns:
+%%	Nothing
+%%
+%% Description:
+%%      LibDumpBottomOfSourceFileUserCode dumps the user custom code cache
+%%      for the bottom of the source file to the output buffer.
+%%
+%function LibDumpBottomOfSourceFileUserCode() Output
+  %assert(!Accelerator && !IsModelReferenceSimTarget())
+  %if !WHITE_SPACE(CustomCode.SourceFileTrailer) 
+    
+    /* user code (bottom of source file) */
+    %<CustomCode.SourceFileTrailer>\
+  %endif
+%endfunction
+
+%%=============================================================================
+%% End
+%%
+
+%endwith  %% ::CompiledModel
+
+%endif %% _HOOKSLIB_
+
+%% [EOF] hookslib.tlc

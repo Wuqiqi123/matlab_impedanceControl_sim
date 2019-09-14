@@ -1,0 +1,81 @@
+%%
+%% This file contains tlc code for generation of
+%% fixed point casting
+%%
+%% Copyright 1994-2011 The MathWorks, Inc.
+%%
+
+%% Function: FixPt_Fix2FixAlwaysOutput ========================================
+%%
+%% Abstract:
+%%   Same as FixPt_Fix2Fix except that conversion is always output
+%%   With FixPt_Fix2Fix, if the conversion is simple then the conversion
+%%   is returned in a string that can be inserted into downstream operations.
+%%   This is useful for optimizations, but makes use of the function more
+%%   difficult when the optimizations are not wanted/needed.
+%%
+%% CAUTION
+%%   uLabel must be a "precedence immune expression" 
+%%       To prevent an explosion of unnecessary parentheses in the generated
+%%       code, defensive parentheses will NOT be wrapped around the input.
+%%       It is the callers responsiblility to include outer parentheses in
+%%       uLabel if there is any hypothetical way for the expression to give 
+%%       incorrect execution order when inserted in a larger expression.
+%% 
+%function FixPt_Fix2FixAlwaysOutput(yLabel,yDT,uLabel,uDT,roundMode,satMode) Output
+    %%
+    %<FixPt_WordLengthLimitationCheck(uDT)>\
+    %<FixPt_WordLengthLimitationCheck(yDT)>\
+    %%
+    %assign vecCGIR = FixPt_UnaryOp("Fix2Fix", yLabel, yDT, uLabel, uDT, ...
+      roundMode, satMode)
+    %%
+    %<vecCGIR[2]>
+%endfunction
+
+%% Function: FixPt_Fix2Fix ==========================================
+%%
+%% Abstract:
+%%  Fixed Point to Fixed Point Conversion
+%%
+%% Synopsis:
+%%      FixPt_Fix2Fix(yLabel,yDT,uLabel,uDT,roundMode,satMode)
+%%
+%%      yLabel,yDT = record describing output
+%%      uLabel,uDT = record describing input
+%%      roundMode  = string specifying round to "Zero", "Nearest", etc.
+%%      satMode    = string specifying "Wrap" or "Saturate" on overflow
+%%
+%% CAUTION
+%%   uLabel must be a "precedence immune expression" 
+%%       To prevent an explosion of unnecessary parentheses in the generated
+%%       code, defensive parentheses will NOT be wrapped around the input.
+%%       It is the callers responsiblility to include outer parentheses in
+%%       uLabel if there is any hypothetical way for the expression to give 
+%%       incorrect execution order when inserted in a larger expression.
+%% 
+%function FixPt_Fix2Fix(yLabel,yDT,uLabel,uDT,roundMode,satMode) Output
+  %%
+  %assign uLabel = SLibProcessSafeExpression(Name, uLabel, 1)
+  %% 
+  %% CGIR callback
+  %%
+  %<FixPt_WordLengthLimitationCheck(uDT)>\
+  %<FixPt_WordLengthLimitationCheck(yDT)>\
+  %%
+  %assign vecCGIR = FixPt_UnaryOp("Fix2Fix", yLabel, yDT, uLabel, uDT, ...
+    roundMode, satMode)
+  %%
+  %if !ISEMPTY(vecCGIR[1])
+    %% 
+    %% expression available
+    %%
+    %return ["%<vecCGIR[0]>", "%<vecCGIR[1]>", "%<vecCGIR[2]>"]
+  %else
+    %%
+    %% must use statements
+    %%
+    %<vecCGIR[2]>
+    %return ""
+  %endif
+%endfunction  %% FixPt_Fix2Fix

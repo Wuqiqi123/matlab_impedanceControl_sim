@@ -1,0 +1,117 @@
+%% 
+%% Copyright 1994-2016 The MathWorks, Inc.
+
+%if EXISTS("_GLOBALSETUP_") == 0
+%assign _GLOBALSETUP_ = 1
+
+%%===========================================================================
+%%    Move global variables from the nesting scope out to top level
+%%
+%%=========================================================================
+%% VALUE =======================
+%addtorecord ::CompiledModel FlattenAutoStorageVariables TLC_FALSE
+%assign ::tTID = ::CompiledModel.GlobalScope.tTID
+%assign ::tTIDType = ::CompiledModel.GlobalScope.tTIDType
+%assign ::tControlPortIdx = ::CompiledModel.GlobalScope.tControlPortIdx
+%assign ::tControlPortIdxType = ::CompiledModel.GlobalScope.tControlPortIdxType
+%assign ::tInf = ::CompiledModel.GlobalScope.tInf
+%assign ::tInfType = ::CompiledModel.GlobalScope.tInfType
+%assign ::tMinusInf = ::CompiledModel.GlobalScope.tMinusInf
+%assign ::tMinusInfType = ::CompiledModel.GlobalScope.tMinusInfType
+%assign ::tNaN = ::CompiledModel.GlobalScope.tNaN
+%assign ::tNaNType = ::CompiledModel.GlobalScope.tNaNType
+%assign ::tSelf = ::CompiledModel.GlobalScope.tSelf
+
+%% INVARIANT ===================
+%assign ::tChildSimStruct = ::CompiledModel.GlobalScope.tChildSimStruct
+
+
+
+%% CONST =====================
+%assign ::tConstBlockIOType = ::CompiledModel.GlobalScope.tConstBlockIOType
+%%%assign tConstBlockIODefine = ::CompiledModel.GlobalScope.tConstBlockIODefine
+%assign ::tConstParamType = ::CompiledModel.GlobalScope.tConstParamType
+%assign ::tConstParamStruct = ::CompiledModel.GlobalScope.tConstParamStruct
+%assign ::tConstParamWithInitType = ::CompiledModel.GlobalScope.tConstParamWithInitType
+%assign ::tConstParamWithInitStruct = ::CompiledModel.GlobalScope.tConstParamWithInitStruct
+%assign ::tInvariantSignals = ::CompiledModel.GlobalScope.tInvariantSignals
+
+
+
+%% TYPE =======================
+%assign ::tParametersType = ::CompiledModel.GlobalScope.tParametersType
+%assign ::tBlockIOType = ::CompiledModel.GlobalScope.tBlockIOType
+%assign ::tContStateType = ::CompiledModel.GlobalScope.tContStateType
+%assign ::tPeriodicStateIndType = ::CompiledModel.GlobalScope.tPeriodicStateIndType
+%assign ::tPeriodicStateRngType = ::CompiledModel.GlobalScope.tPeriodicStateRngType
+%assign ::tXdotType = ::CompiledModel.GlobalScope.tXdotType
+%assign ::tXdisType = ::CompiledModel.GlobalScope.tXdisType
+%assign ::tXAbsTolType = ::CompiledModel.GlobalScope.tXAbsTolType
+%assign ::tOutputType = ::CompiledModel.GlobalScope.tOutputType
+%assign ::tOutputSizeType = ::CompiledModel.GlobalScope.tOutputSizeType
+%assign ::tDWorkType = ::CompiledModel.GlobalScope.tDWorkType
+%assign ::tZCSignalValueType = ::CompiledModel.GlobalScope.tZCSignalValueType
+%assign ::tPrevZCStateType = ::CompiledModel.GlobalScope.tPrevZCStateType
+
+%assign ::tMassMatrixGlobalType = ::CompiledModel.GlobalScope.tMassMatrixGlobalType
+%foreach idx = ::CompiledModel.NumCoderDataGroups
+  %assign instanceToken = "::CompiledModel.GlobalScope.tCoderDataGroup" + ::CompiledModel.CoderDataGroup[idx].Name
+  %assign typeToken = "::CompiledModel.GlobalScope.tCoderDataGroup" + ::CompiledModel.CoderDataGroup[idx].Name + "Type"
+  %assign globalInstanceToken = "::tCoderDataGroup" + ::CompiledModel.CoderDataGroup[idx].Name
+  %assign globalTypeToken = "::tCoderDataGroup" + ::CompiledModel.CoderDataGroup[idx].Name + "Type"
+  %assign %<globalInstanceToken> = %<instanceToken>
+  %assign %<globalTypeToken> = %<typeToken>
+%endforeach
+  
+
+
+
+%% ID ==========================
+%assign ::tParameters = ::CompiledModel.GlobalScope.tParameters
+%assign ::tDefaultParameters = ::CompiledModel.GlobalScope.tDefaultParameters
+%assign ::tBlockIO = ::CompiledModel.GlobalScope.tBlockIO
+%assign ::tContState = ::CompiledModel.GlobalScope.tContState
+%assign ::tPeriodicStateInd = ::CompiledModel.GlobalScope.tPeriodicStateInd
+%assign ::tPeriodicStateRng = ::CompiledModel.GlobalScope.tPeriodicStateRng
+%assign ::tXdot = ::CompiledModel.GlobalScope.tXdot
+%assign ::tXdis = ::CompiledModel.GlobalScope.tXdis
+%assign ::tXAbsTol = ::CompiledModel.GlobalScope.tXAbsTol
+%assign ::tOutput = ::CompiledModel.GlobalScope.tOutput
+%assign ::tOutputSize = ::CompiledModel.GlobalScope.tOutputSize
+%assign ::tDWork = ::CompiledModel.GlobalScope.tDWork
+%assign ::tPrevZCState = ::CompiledModel.GlobalScope.tPrevZCState
+%assign ::tZCSignalValue = ::CompiledModel.GlobalScope.tZCSignalValue
+
+%assign ::tMassMatrixGlobal = ::CompiledModel.GlobalScope.tMassMatrixGlobal
+
+%assign ::tODE8Const = ::CompiledModel.GlobalScope.tODE8Const
+
+%% MDLREF ID =========================
+%assign ::tMdlRefTimingBridge = ::CompiledModel.GlobalScope.tMdlRefTimingBridge
+%assign ::tMdlRefGlobalTID = ::CompiledModel.GlobalScope.tMdlRefGlobalTID
+
+%% SPECIAL =========================
+%assign ::tInput = ::CompiledModel.GlobalScope.tInput
+%assign ::tInputType = ::CompiledModel.GlobalScope.tInputType
+%assign ::tInputSize = ::CompiledModel.GlobalScope.tInputSize
+%assign ::tInputSizeType = ::CompiledModel.GlobalScope.tInputSizeType
+
+%assign ::tConstBlockIOStruct = ::CompiledModel.GlobalScope.tConstBlockIOStruct
+%assign ::tConstBlockIODefine = ::CompiledModel.GlobalScope.tConstBlockIODefine
+%assign ::tSimStructTypeTag = ::CompiledModel.GlobalScope.tSimStructTypeTag
+%assign ::tSimStructPtr = ::CompiledModel.GlobalScope.tSimStructPtr
+
+%if SLibGetDoesSelfHasCoderDataGroup()
+  %assign selfVarGroupIndex = SLibGetSelfVarGroupIndex()
+  %assert selfVarGroupIndex != -1
+  %assign selfVarGroup = ::CompiledModel.VarGroups.VarGroup[selfVarGroupIndex]
+
+  %assign ::tSimStruct = selfVarGroup.SelfStructureArgumentName
+  %assign ::tSimStructType = selfVarGroup.SelfStructureTypeName
+%else
+  %assign ::tSimStruct = ::CompiledModel.GlobalScope.tSimStruct
+  %assign ::tSimStructType = ::CompiledModel.GlobalScope.tSimStructType
+%endif
+
+%endif  
+%% _GLOBALSETUP_

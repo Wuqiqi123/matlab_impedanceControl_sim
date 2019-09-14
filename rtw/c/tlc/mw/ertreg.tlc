@@ -1,0 +1,980 @@
+%% =============================================================================
+%% 
+%% Abstract:
+%%   This system file creates model_reg.h for the Embedded-C code format.
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%% ============================================================================
+%% The embedded real-time file model_reg.h is outlined below.Note the following:
+%%
+%% o The real-time model and timing engine only apply to multirate models
+%% o Function model_terminate is only generated if IncludeMdlTerminateFcn=1
+%% o Internal data is initialized only if InitInternalData=1
+%% o It's likely the initialize function is empty for single rate models
+%%
+%% /* File banner */
+%%
+%% User code ........................ LibRegFileCustomCode(buffer, "header")
+%%
+%% model_initialize(bool firstTime)
+%% {
+%%   if(firstTime) {
+%%     /* registration */
+%%     Declarations
+%%     User reg declarations ........ LibMdlRegCustomCode(buffer, "declaration")
+%%
+%%     Initialize real-time model
+%%     Initialize timing engine
+%%     Initialize internal data
+%%
+%%     User reg entry code .......... LibMdlRegCustomCode(buffer, "execution")
+%%     Non-finite assignments ....... LibCacheNonFiniteAssignment(buffer)
+%%     Block instance data .......... BlockInstanceData(block, system)
+%%     User reg exit code ........... LibMdlRegCustomCode(buffer, "trailer")
+%%
+%%     /* start */
+%%     {
+%%       Declarations
+%%       User start declarations .... LibMdlStartCustomCode("declarations")
+%%
+%%       User start entry code ...... LibMdlStartCustomCode("execution")
+%%       Start code ................. Start(block, system)
+%%       User start exit ............ LibMdlStartCustomCode("trailer")
+%%     }
+%%   }
+%%
+%%   /* state initialization */
+%%   {
+%%     Declarations
+%%     User init declarations ..... LibSystemInitializeCustomCode("declarations")
+%%
+%%     User initialize entry ...... LibSystemInitializeCustomCode("execution")
+%%     Enable root blocks ......... Enable(block, system)
+%%     State initialization ....... InitializeConditions(block, system)
+%%     Constant TID blocks ........ Output(block, system)
+%%     Virtual outports
+%%     User initialize exit ....... LibSystemInitializeCustomCode("trailer")
+%%   }
+%%
+%%   return *rtO
+%% }
+%%
+%% model_terminate() ................ hooks fcn: LibSystemTerminateCode()
+%%
+%% User code ........................ LibRegFileCustomCode(buffer, "trailer")
+%%
+%% /* [EOF] model_reg.h */
+%%
+
+%if EXISTS("_ERTREG_") == 0
+%assign _ERTREG_ = 1
+
+%realformat "CONCISE"
+
+%assign rootSystem = ::CompiledModel.System[::CompiledModel.NumSystems-1]
+
+%% ============================================================================
+%% Create an alias for the real-time model
+%%
+%assign S = ::tSimStruct
+
+
+%if GenerateClassInterface
+  %% We know we are in a member function body, so set the cpp object name to be
+  %% this. Will restore it to its original name when finishing constructing 
+  %% this function body.
+  %assign backUpCPPObjectName = ::CPPObjectName
+  %assign ::CPPObjectName = "this"
+%endif
+
+%% ============================================================================
+%% Registration code
+%%
+%% For ERT, the 'registration', 'start' and 'enable' code is actually all
+%% dumped to model_initialize().
+%%
+%%
+%openfile regCodeOnlyBuffer
+%assign emitReg = !UsingMalloc
+%with System[GetBaseSystemIdx()]
+  %<LibDumpERTAndModelrefRegExecution(emitReg, TLC_TRUE)>\
+%endwith
+
+%<LibDumpBlockInstanceData()>\
+%if !LibIsDeploymentDiagram() && ...
+    !SLibIsCPPEncapMdlRefBuild() %%for ModelRef C++ Class Generation, we put dump this in initializeRTM
+  %<LibDumpSFunctionRegistration()>\
+%endif
+%% user code
+%if !LibRegFcnUserDeclarationIsEmpty()
+  %<"{">
+  %<LibDumpRegFcnUserDeclarationCode()>
+%endif
+%<LibDumpRegFcnUserEntryCode()>\
+%<LibDumpRegFcnUserExitCode()>\
+%if !LibRegFcnUserDeclarationIsEmpty()
+  %<"}">
+%endif
+%closefile regCodeOnlyBuffer
+%if !WHITE_SPACE(regCodeOnlyBuffer) && SLibGetDoesSelfExist()
+  %assign regCodeOnlyBuffer = "{\n" + regCodeOnlyBuffer + "\n}\n"
+%endif
+%% Call the initialize function for non-finites if required, we have to do this after we
+%% generate the code above because it is possible we will use a nonfinite when 
+%% initializing memory.
+%openfile nonfiniteBuf
+%if SLibERTNeedNonFiniteInit()
+  
+  /* initialize non-finites */
+  %<LibGenMathFcnCall("initnonfinite", FcnGetDataTypeIdFromName("double"), ...
+    "sizeof(real_T)", "")>;\
+%endif
+%closefile nonfiniteBuf
+%openfile nonfiniteBufAssignment
+  %<LibDumpNonFiniteAssignmentCache()>\
+%closefile nonfiniteBufAssignment
+
+%openfile regCodeBuffer
+  %if GenerateClassInterface && IsModelReferenceTarget()
+    %<nonfiniteBuf>
+    %<regCodeOnlyBuffer>
+    %<nonfiniteBufAssignment>
+  %else
+    %<nonfiniteBuf>
+    %<nonfiniteBufAssignment>
+    %<regCodeOnlyBuffer>
+  %endif
+%closefile regCodeBuffer
+
+%assign haveRegCode = !WHITE_SPACE(regCodeBuffer)
+%addtorecord ::CompiledModel RegCodeBuffer regCodeBuffer
+%undef regCodeBuffer
+%undef nonfiniteBuf
+%undef regCodeOnlyBuffer
+
+%% ============================================================================
+%% Model initialize code
+%% 
+%assign mdlInitCodeBuffer = ""
+%assign localVars = ...
+    LibGetSystemLocalVars(rootSystem, "ModelInitialize", "") + ...
+    SLibGetFcnLocalVars(rootSystem, "ModelInitialize", "")
+%openfile mdlInitCodeBuffer
+%if !ISEMPTY(localVars)
+  {
+    %<localVars>
+    %<LibDumpSystemFcn(rootSystem, "ModelInitialize")>
+  }
+%else
+  %<LibDumpSystemFcn(rootSystem, "ModelInitialize")>
+%endif
+%closefile mdlInitCodeBuffer
+%assign hasMdlInitCode = !WHITE_SPACE(mdlInitCodeBuffer)
+
+%% ============================================================================
+%% Start code
+%%
+%assign startCodeBuffer = ""
+%if hasMdlInitCode
+  %assign haveStartCode = TLC_FALSE
+%else
+  %openfile startCodeBuffer
+  %assign localVars = IsModelReferenceTarget() ? "" : ...
+    LibGetSystemLocalVars(rootSystem, "Start", "") + ...
+    SLibGetFcnLocalVars(rootSystem, "Start", "")
+  %if !ISEMPTY(localVars) || ...
+    !LibSystemUserCodeIsEmpty(rootSystem, "Start", "Header")
+    %<"{">
+    %<localVars>
+  %endif
+
+  %% We don't dump Start function code in model_init for ModelReferenceRTWTarget
+  %% This is because, for ModelReferenceRTWTarget, we always have a separate Start Function
+  %% So, all user code goes to the Start function
+  %if !IsModelReferenceTarget()
+    %<LibDumpSystemUserCode(rootSystem, "Start", "Header")>\
+    %<LibDumpSystemUserCode(rootSystem, "Start", "Body")>\
+
+    %<LibDumpSystemFcn(rootSystem, "Start")>\
+    %%
+    %% Multi-Instance Stateflow chart initialization
+    %%
+    %% dboissy & vijay say:
+    %% Don't need this
+    %%<SLibDumpSFLibraryBlockInitialization()>\
+    %%
+    %<LibDumpSystemUserCode(rootSystem, "Start", "Trailer")>\
+  %endif
+
+  %if !ISEMPTY(localVars) || ...
+    !LibSystemUserCodeIsEmpty(rootSystem, "Start", "Header")
+    %<"}">
+  %endif
+  %closefile startCodeBuffer
+  %assign haveStartCode = !WHITE_SPACE(startCodeBuffer)
+%endif
+  
+%% ============================================================================
+%% Dump enable code separate from start or init code
+%%
+%assign codeBuf = ""
+%openfile codeBuf
+%assign localVars = IsModelReferenceTarget() ? "" : ...
+  LibGetSystemLocalVars(rootSystem, "Enable", "") + ...
+  SLibGetFcnLocalVars(rootSystem, "Enable", "")
+%if !ISEMPTY(localVars) || ...
+  !LibSystemUserCodeIsEmpty(rootSystem, "Enable", "Header")
+  %<"{">
+  %<localVars>
+%endif
+%<LibDumpSystemUserCode(rootSystem, "Enable", "Header")>\
+%<LibDumpSystemUserCode(rootSystem, "Enable", "Body")>\
+%if !IsModelReferenceTarget()
+  %<LibDumpSystemFcn(rootSystem, "Enable")>\
+%endif
+%<LibDumpSystemUserCode(rootSystem, "Enable", "Trailer")>\
+%if !ISEMPTY(localVars) || ...
+  !LibSystemUserCodeIsEmpty(rootSystem, "Enable", "Header")
+  %<"}">
+%endif
+%closefile codeBuf
+%assign haveEnableCode = !WHITE_SPACE(codeBuf)
+%assign enabCodeBuffer = codeBuf
+
+%% ============================================================================
+%% State initialization code
+%%
+%assign codeBuf = ""
+%openfile codeBuf
+%assign localVars = IsModelReferenceTarget() ? "" : ...
+  LibGetSystemLocalVars(rootSystem, "Initialize", "") + ...
+  SLibGetFcnLocalVars(rootSystem, "Initialize", "")
+%if !ISEMPTY(localVars) || ...
+  !LibSystemUserCodeIsEmpty(rootSystem, "Initialize", "Header")
+  %<"{">
+  %<localVars>
+%endif
+%<LibDumpSystemUserCode(rootSystem, "Initialize", "Header")>\
+%<LibDumpSystemUserCode(rootSystem, "Initialize", "Body")>\
+%if !IsModelReferenceTarget()
+  %<LibDumpSystemFcn(rootSystem, "Initialize")>\
+%endif
+%<LibDumpSystemUserCode(rootSystem, "Initialize", "Trailer")>\
+%if !IsModelReferenceTarget()
+    %<CachedCodeBuffsForRootSys.FirstInitCondition>\
+%endif
+%if !ISEMPTY(localVars) || ...
+  !LibSystemUserCodeIsEmpty(rootSystem, "Initialize", "Header")
+  %<"}">
+%endif
+%closefile codeBuf
+%assign haveInitCode = !WHITE_SPACE(codeBuf)
+%assign initCodeBuffer = codeBuf
+
+%% ============================================================================
+%% System initialization code
+%%
+%assign codeBuf = ""
+%openfile codeBuf
+%assign localVars = IsModelReferenceTarget() ? "" : ...
+  LibGetSystemLocalVars(rootSystem, "SystemInitialize", "") + ...
+  SLibGetFcnLocalVars(rootSystem, "SystemInitialize", "")
+%if !ISEMPTY(localVars) || ...
+  !LibSystemUserCodeIsEmpty(rootSystem, "Initialize", "Header")
+  %<"{">
+  %<localVars>
+%endif
+%<LibDumpSystemUserCode(rootSystem, "Initialize", "Header")>\
+%<LibDumpSystemUserCode(rootSystem, "Initialize", "Body")>\
+%if !IsModelReferenceTarget()
+  %<LibDumpSystemFcn(rootSystem, "SystemInitialize")>\
+%endif
+%<LibDumpSystemUserCode(rootSystem, "Initialize", "Trailer")>\
+%if !IsModelReferenceTarget()
+    %<CachedCodeBuffsForRootSys.FirstInitCondition>\
+%endif
+%if !ISEMPTY(localVars) || ...
+  !LibSystemUserCodeIsEmpty(rootSystem, "Initialize", "Header")
+  %<"}">
+%endif
+%closefile codeBuf
+%assign haveSystemInitCode = !WHITE_SPACE(codeBuf)
+%assign systemInitCodeBuffer = codeBuf
+
+%assign codeBuf = FncGenInitStatesInRootStart()
+%assign InitStatesBuffer = codeBuf
+
+%if GenerateGRTWrapper
+  %openfile GRTBuffer
+   %if UsingMalloc
+    %assign arg = "%<::tSimStructType>* %<::tSimStruct>"
+    %assign farg = ::tSimStruct
+  %else
+    %assign arg = "void"
+    %assign farg = ""
+  %endif
+  
+  %if !UsingMalloc
+  %assign fcnName = "MdlInitialize"
+  %assign fcnReturns = "%<SLibGetGRTWrapperLinkage()> void"
+  %assign fcnParams = arg
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "model"; GeneratedBy "ertreg.tlc"; Type "Initialize"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<addToBackupCodeMetrics(rootSystem, "ModelInitialize", fcnName, "")>
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\
+  %% AUTOSAR Compiler Abstraction not needed for MdlInitialize
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Post")>\
+  %endif %% !UsingMalloc
+  
+  %assign fcnName = "MdlStart"
+  %assign fcnReturns = "%<SLibGetGRTWrapperLinkage()> void"
+  %assign fcnParams = arg
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "model"; GeneratedBy "ertreg.tlc"; Type "Start"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<addToBackupCodeMetrics(rootSystem, "ModelInitialize", fcnName, "")>
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\
+  %% AUTOSAR Compiler Abstraction not needed for MdlStart
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %<GenerateModelInitFcnName()>(%<SLibModelFcnArgs("Initialize",TLC_TRUE,"")>);
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Post")>\
+
+  %closefile GRTBuffer
+  %assign ::CompiledModel.GRTWrapper = ::CompiledModel.GRTWrapper + GRTBuffer  
+  %if UsingMalloc
+    %assign hasMdlInitCode = TLC_FALSE
+    %assign haveStartCode  = TLC_FALSE
+    %assign haveInitCode   = TLC_FALSE
+    %assign haveSystemInitCode = TLC_FALSE
+    %assign haveEnableCode = TLC_FALSE
+  %endif
+%endif %% GenerateGRTWrapper
+
+%% ============================================================================
+%% Dump calls to initialize datagroups
+%%
+%assign childCoderDataGroupAssignment = ""
+%assign childCoderDataGroupAssignment = ::CompiledModel.ChildCoderDataGroupAssignment
+%assign haveChildCoderDataGroupAssignment = !WHITE_SPACE(childCoderDataGroupAssignment)
+%assign childCoderDataGroupMemcpy = ""
+%assign childCoderDataGroupMemcpy = ::CompiledModel.ChildCoderDataGroupMemcpy
+%assign haveChildCoderDataGroupMemcpy = !WHITE_SPACE(childCoderDataGroupMemcpy)
+
+%% ============================================================================
+%% Dump calls to model reference registration functions.
+%%
+%assign modelrefBuffer = ""
+%assign modelrefTermBuffer = ""
+%assign mdlRefBlks = ISFIELD(::CompiledModel,"ModelReferenceBlocks") ? ...
+  ::CompiledModel.ModelReferenceBlocks : []
+%assign tmpBlkFcn = ::BlockFcn
+%assign ::BlockFcn = "Registration"
+%assign modelrefBuffer = CallModelrefBlockRegFcns(mdlRefBlks)
+%assign ::BlockFcn = tmpBlkFcn
+%assign haveModelRefCode = !WHITE_SPACE(modelrefBuffer)
+
+%if ISFIELD(::CompiledModel,"ModelReferenceBlocks")
+  %assign tmpBlkFcn = ::BlockFcn
+  %assign ::BlockFcn = "Terminate"
+  %assign modelrefTermBuffer = ...
+    CallModelrefBlockFreeFullPaths(::CompiledModel.ModelReferenceBlocks)
+  %assign ::BlockFcn = tmpBlkFcn
+%endif
+%assign haveModelRefTermCode = !WHITE_SPACE(modelrefTermBuffer)
+
+%% ============================================================================
+%% Dump buffers to output
+%%
+
+%openfile includesBuffer
+%%
+%% ============================================================================
+%% Data type transition map
+%%
+%if (ExtMode == 1) && !ExtModeXCP
+
+  %assign DataTypeTransHdr = LibGetDataTypeTransHdrBaseName()
+  %if !UsingMalloc
+  #include "%<DataTypeTransHdr>.h"
+  %else
+    %% UsingMalloc uses model_reg_dt.h.  See commonentry.tlc and mrtmap.tlc
+%endif
+%endif
+%closefile includesBuffer
+
+%<SLibCacheCodeToFile("baseMdl_src_incl", includesBuffer)>
+
+%%
+%% ============================================================================
+%% Top of registration file custom code
+%%
+%openfile UserCodeTopBuffer
+
+%<LibDumpTopOfRegFileUserCode()>\
+
+%closefile UserCodeTopBuffer
+%<SLibCacheCodeToFile("custom_code_topOfSrc", UserCodeTopBuffer)>
+
+%assign prevZCStateBuffer = SLibInitPrevZCSignalStates()
+%if ::CompiledModel.StandaloneSubsystemTesting == 2
+%addtorecord ::CompiledModel PrevZCStateBuffer prevZCStateBuffer
+%endif
+%assign  havePrevZCBuffer = !WHITE_SPACE(prevZCStateBuffer)
+
+%assign sysRegCall = GenStandaloneRegistrationFunction()
+%addtorecord ::CompiledModel SystemRegistrationBuffer sysRegCall
+%assign  hasSSRegFcn =  !WHITE_SPACE(sysRegCall)
+%undef sysRegCall
+
+%% ============================================================================
+%% Initialize function
+%%
+%openfile fcnsBuffer
+
+%if NumChildSFunctions && IsModelReferenceSimTarget()
+%<SLibNoninlinedSfcnStaticFcn()>\
+%endif
+
+%% Dump all function definitions might be called in initialize function
+%if GenerateGRTWrapper
+  %<::CompiledModel.GRTWrapperFcnDef>
+%endif
+%assign fcnAbstract = "Model initialize function"
+%assign mdlRegFcnHasBody = haveRegCode || MatFileLogging || haveStartCode || ...
+  haveSystemInitCode || ...
+  haveEnableCode || ExtMode || haveModelRefCode || haveChildCoderDataGroupAssignment || ...
+  havePrevZCBuffer || hasSSRegFcn || hasMdlInitCode
+
+%if mdlRegFcnHasBody
+  %% Open a buffer to track use of firstTime before generating
+  %% function prototype
+  %openfile ModelInitializeBodyBuffer
+  
+    %if CPPEncapNeedsLocalVars(TLC_FALSE)
+      %assign cppEncapLocalVars = SLibGetCPPEncapInitLocalVars(TLC_FALSE)
+      %if !WHITE_SPACE(cppEncapLocalVars)
+        %<cppEncapLocalVars>
+      %endif
+    %endif
+    
+    %if IsModelReferenceTarget() && !GenerateClassInterface
+      %assign mrRootSys = System[GetBaseSystemIdx()]
+      %<FcnCacheMRRegFcnLocalVars(mrRootSys)>
+      %assign initVars = FcnDumpMRLocalVars(mrRootSys, "Registration", "")
+      %if !WHITE_SPACE(initVars)
+        %<initVars>
+      %endif
+    %endif
+    
+    %openfile moreRegBuffer   
+
+    %%
+    %% Coder data group assignment must be called before we call model reference
+    %% initialize functions.
+    %if haveChildCoderDataGroupAssignment
+      %<childCoderDataGroupAssignment>
+    %endif
+
+    %%
+    %% Model reference registration must be called before start
+    %if haveModelRefCode
+      
+      %<modelrefBuffer>\
+    %endif
+    
+    %if !WHITE_SPACE(::CompiledModel.SystemRegistrationBuffer)
+      %<::CompiledModel.SystemRegistrationBuffer>\
+    %endif
+    
+    %if MatFileLogging && !SeparateRegistrationFcn
+      
+      /* Matfile logging */
+      %<SLibGenLoggingStart()>
+    %endif
+    
+    %if ::GenerateGRTWrapper
+  
+      /* Initialize Sizes */
+      %<LibDumpModelInitializeSizes()>
+    %endif
+        
+    %closefile moreRegBuffer
+    
+    %% Open a buffer to track use of firstTime in if-statement first
+    %openfile tmpBuffer
+    
+    %% This must be called first because it declares 
+    %% some variables that are used when calling the 
+    %% submodels registration functions.
+    %if IsModelReferenceTarget()
+      %if IsModelReferenceForASimstructBasedTarget() && RTMIsVarStepSolver()
+        %<FcnInitializeNoncontSignals()>
+      %endif
+      %assign baseSysIdx = GetBaseSystemIdx()
+      %assign tmpBlkFcn = ::BlockFcn
+      %assign ::BlockFcn = "Registration"
+      %assign globalVars = LibInitializeGlobalVars(System[baseSysIdx], "Registration")
+      %<globalVars>
+      %assign ::BlockFcn = tmpBlkFcn
+    %endif
+    
+    %if CPPEncapNeedsLocalVars(TLC_FALSE)
+      %assign cppEncapCopyCode = SLibGetCPPEncapInitCopyCode(TLC_TRUE, TLC_FALSE)
+      %if !WHITE_SPACE(cppEncapCopyCode)
+        %<cppEncapCopyCode>
+      %endif
+    %endif
+    
+    %if !::SeparateRegistrationFcn
+      %% If registration and initialization functions are combined (that is, 
+      %% for non-malloc simplified call interface), dump registration code into
+      %% model_initialize()
+      %if !WHITE_SPACE(::CompiledModel.RegCodeBuffer)
+        /* Registration code */
+        %<::CompiledModel.RegCodeBuffer>\
+      %endif
+      %<moreRegBuffer>
+    %else
+      %% If registration and initialization functions are separate (that is, 
+      %% for classic call interface or malloc), dump registration code into
+      %% model()
+      %assign ::CompiledModel.RegCodeBuffer = ::CompiledModel.RegCodeBuffer ...
+        + moreRegBuffer
+    %endif
+
+    %%
+    %% Discrete Event registration.
+    %if EXISTS(CompiledModel.SupportSimEventsRegistration)
+        /* Initialize Discrete Event Systems*/
+        sldeInitialize();
+    %endif
+
+    %%
+    %% Coder data group memcpy must be called before start but after
+    %% initialize
+    %if haveChildCoderDataGroupMemcpy
+      %<childCoderDataGroupMemcpy>
+    %endif
+
+    %if hasMdlInitCode
+      
+      %<mdlInitCodeBuffer>\
+    %else
+      %if haveStartCode
+      
+        %<startCodeBuffer>\
+      %endif
+    %endif
+
+
+    %if havePrevZCBuffer
+      %<prevZCStateBuffer>\
+    %endif
+      
+    %if haveSystemInitCode
+      %<systemInitCodeBuffer>\
+    %endif
+    
+    %if haveEnableCode && ExportFunctionsMode != 1
+      
+      %<enabCodeBuffer>\
+    %endif
+    
+    %<InitStatesBuffer>\    
+    
+    %closefile tmpBuffer
+    %% If tracking shows firstTime was not used by an if-statement
+    %% yet we still need to pass it across the argument list, generate a 
+    %% void statement
+    %if !SLibGetNeedFirstTime() && ...
+      !IsModelReferenceForASimstructBasedTarget() && SLibIncludeERTFirstTime()
+      %% firstTime is not used but included in arg list
+      (void)%<SLibFirstTime()>;
+    %elseif SLibGetNeedFirstTime()
+      %% firstTime is used but not included in SCP runnable arg list
+      boolean_T firstTime = true;
+    %endif
+    %<tmpBuffer>
+    %if ExportFunctionsMode == 1 && ...
+      RTMFirstInitCondFlagIsReqFcn()
+      %% Need to turn off firstInitCond flag.
+      %% Normally this is done in the step function,
+      %% but exported function-call system has no
+      %% step function.
+
+      /* End of first time initialization. */
+      %<RTMSet("FirstInitCond", 0)>;
+    %endif
+  
+  %closefile ModelInitializeBodyBuffer
+%elseif IsModelReferenceTarget() && GenerateClassInterface && ...
+  !LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts").ParamsInst && ...
+  !SLibPrmBufferIsEmpty("SimulinkGlobal", "Instance")
+  %% need to initialize tunable parameters in the initialize function
+  %% instead of constructor to avoid the parent setting data to zero
+  %% if the model is referenced in a reusable subsystem.
+  %openfile ModelInitializeBodyBuffer
+  static const %<::tParametersType> %<::tParameters>_temp = {
+    %<SLibGetPrmBuffer("SimulinkGlobal", "Instance")>
+  }; /* Modifiable parameters */
+
+  /* Initialize tunable parameters */
+  %<::tParameters> = %<tParameters>_temp;
+  %closefile ModelInitializeBodyBuffer
+%else %% !mdlRegFcnHasBody
+  %% Nominally, include a firstTime flag for single-instance codegen
+  %% since users expect that interface to be stable.
+  %% track usage of firstTime flag
+  %openfile ModelInitializeBodyBuffer
+  
+    %if !::CompiledModel.MultiInstanceERTCode && SLibIncludeERTFirstTime()
+      (void)%<SLibFirstTime()>;
+    %endif
+    %if ::CompiledModel.ModelRefSimpInterface && SLibGetDoesSelfExist()
+      (void) (%<tSimStruct>);
+    %endif
+    /* (no initialization code required) */
+    %if IsModelReferenceTarget()
+	%if ::CompiledModel.SLCI == "off"
+          %<SLibSetEmptyModelRefInitializeFcn()>
+	%endif
+    %endif
+  
+  %closefile ModelInitializeBodyBuffer
+%endif
+
+%if GenerateClassInterface
+  %% We know we have finished constructing the initialize function body,
+  %% restore it to its original name as promised.
+
+  %assign ::CPPObjectName = backUpCPPObjectName
+%endif
+
+%% Now we can generate prototype since we've tracked use of firstTime
+%assign initNonEmpty = TLC_TRUE
+%if IsModelReferenceTarget()
+  %assign fcnName = "%<GetModelRefRegistrationFcnName()>"
+  %assign fcnReturns = "void"
+  %if GenerateClassInterface
+    %assign tmpfcnName = "%<::CPPClassName>::initialize"
+    %assign fcnParams = ""    
+  %else
+    %assign tmpfcnName = fcnName
+    %assign fcnParams = SLibModelReferenceRegFcnArgs()
+  %endif
+
+  %assign initNonEmpty = !SLibGetEmptyModelRefInitializeFcn()
+  %if initNonEmpty
+
+  %createrecord fcnRec {Name tmpfcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "model"; GeneratedBy "ertreg.tlc"; Type "Initialize"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<addToBackupCodeMetrics(rootSystem, "ModelInitialize", tmpfcnName, "")>
+  %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+    %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Initialize", "", "Pre")>\
+  %else
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\
+  %endif
+  %% AUTOSAR Compiler Abstraction not supported for model reference
+  %<fcnReturns> %<tmpfcnName>(%<fcnParams>)
+  {
+    %<ModelInitializeBodyBuffer>
+  }\
+  %endif
+%else
+  %assign fcnName = GenerateModelInitFcnName()
+
+  %% classname::initialize if CPP class generation
+  %if GenerateClassInterface
+      %assign fcnName = "%<::CPPClassName>::initialize"    
+  %endif
+  %assign fcnReturns = "void"
+  %if SLibIsERTFunctionStatic()
+    %assign fcnReturns = "static %<fcnReturns>"
+  %endif
+  %assign fcnParams = SLibModelFcnArgs("Initialize",TLC_FALSE,"")
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "model"; GeneratedBy "ertreg.tlc"; Type "Initialize"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}  
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<addToBackupCodeMetrics(rootSystem, "ModelInitialize", fcnName, "")>
+  %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled") || SLibAutosarActive()
+    %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Initialize", "", "Pre")>\
+  %else
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\
+  %endif
+  %<GenerateModelInitFcnHeader(fcnName)>
+  { 
+    %if ::UsingMalloc == 1
+      %% Export function model doesn't support this.
+      %assign fcns = ["ModelInitialize", "Start", "Enable", "SystemInitialize"]
+
+      %openfile localVariables
+      %<SLibDumpLocalVariablesForBlockFcn(rootSystem, fcns)>
+      %closefile localVariables
+      
+      %if !WHITE_SPACE(localVariables)
+        %<localVariables>
+      %endif
+      
+      %<mdlInitCodeBuffer>\
+      
+      %<startCodeBuffer>\
+      
+      %<systemInitCodeBuffer>\
+
+      %<enabCodeBuffer>\
+      
+      %<InitStatesBuffer>\ 
+      
+      %if SLibAutosarActive()
+        %<SLibDumpUnusedParameterForInstanceHandle(fcns)>
+      %else
+        %<SLibDumpUnusedParameterForRTM(fcns)>
+      %endif
+    %else
+      %<GenerateModelInitFcnBody(rootSystem, fcnName, fcnReturns, fcnParams)>
+    %endif
+  }\
+%endif
+%if initNonEmpty
+  %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled") || SLibAutosarActive()
+    %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Initialize", "", "Post")>\
+  %else
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Post")>\
+  %endif
+%endif
+
+%assign  ::DisableGenerated = 0
+
+%if SLibMdlEnableDisablePermitted() && ...
+  !LibSystemFcnIsEmpty(rootSystem,"Disable")
+  %assign ::DisableGenerated = 1
+  %if !GenerateClassInterface
+    %assign fcnName = "%<Name>_disable"
+    %assign fcnParams = SLibModelFcnArgs("Disable",TLC_FALSE,"")
+  %else
+    %%%% C++ encapsulation
+    %assign fcnName = "%<::CPPClassName>::disable"
+    %assign fcnParams = "void"
+  %endif   
+  %assign fcnReturns = "void"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "model"; GeneratedBy "ertreg.tlc"; Type "Disable"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %openfile localVariables
+  %if MultiInstanceERTCode && !GenerateClassInterface
+    %<SLibDumpLocalVariablesForBlockFcn(rootSystem,"Disable")>
+  %endif
+  %closefile localVariables 
+  
+  %% AUTOSAR Compiler Abstraction not needed for MdlDisable
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    %if !WHITE_SPACE(localVariables)
+      %<localVariables>
+    %endif    
+    %<LibDumpSystemSSVars(rootSystem,"Disable")>\
+    %<LibGetSystemLocalVars(rootSystem,"Disable","")>
+    %<SLibGetFcnLocalVars(rootSystem,"Disable","")>
+    %<LibDumpSystemUserCodeNoCheck(rootSystem,"Disable","Header")>\
+    %<LibDumpGlobalVars(rootSystem, "Disable")>\
+    %<LibDumpFcnBegin(rootSystem,"Disable")>\
+    %% disable code
+    %<LibDumpSystemUserCodeNoCheck(rootSystem,"Disable","Body")>\
+    %<LibDumpSystemFcn(rootSystem,"Disable")>\
+    %<LibDumpSystemUserCodeNoCheck(rootSystem,"Disable","Trailer")>\
+    %<SLibDumpUnusedParameterForRTM("Disable")>
+  }
+%endif
+
+%assign ::EnableGenerated = 0
+
+%if SLibMdlEnableDisablePermitted() && ...
+  !LibSystemFcnIsEmpty(rootSystem,"Enable")
+  %assign ::EnableGenerated = 1
+  %if !GenerateClassInterface
+    %assign fcnName = "%<Name>_enable"
+    %assign fcnParams = SLibModelFcnArgs("Enable",TLC_FALSE,"")
+  %else
+    %%%% C++ encapsulation
+    %assign fcnName = "%<::CPPClassName>::enable"
+    %assign fcnParams = "void"
+  %endif
+  %assign fcnReturns = "void"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "model"; GeneratedBy "ertreg.tlc"; Type "Enable"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %openfile localVariables
+  %if MultiInstanceERTCode && !GenerateClassInterface
+    %<SLibDumpLocalVariablesForBlockFcn(rootSystem,"Enable")>
+  %endif
+  %closefile localVariables 
+  
+  %% AUTOSAR Compiler Abstraction not needed for MdlEnable
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    %if !WHITE_SPACE(localVariables)
+      %<localVariables>
+    %endif 
+    %<LibDumpSystemSSVars(rootSystem,"Enable")>\
+    %<LibGetSystemLocalVars(rootSystem,"Enable","")>
+    %<SLibGetFcnLocalVars(rootSystem,"Enable","")>
+    %<LibDumpSystemUserCodeNoCheck(rootSystem,"Enable","Header")>\
+    %<LibDumpGlobalVars(rootSystem, "Enable")>\
+    %<LibDumpFcnBegin(rootSystem,"Enable")>\
+    %<LibDumpSystemUserCodeNoCheck(rootSystem,"Enable","Body")>\
+    %<LibDumpSystemFcn(rootSystem,"Enable")>\
+    %<LibDumpSystemUserCodeNoCheck(rootSystem,"Enable","Trailer")>\
+    %<SLibDumpUnusedParameterForRTM("Enable")>
+  }
+%endif
+
+%% ============================================================================
+%% Terminate function
+%%
+%if !IsModelReferenceTarget()
+  %if !GenerateClassInterface
+    %assign fcnName = GenerateNonClassicInterfaceModelTermFcnName()
+  %else
+    %assign fcnName = "%<::CPPClassName>::terminate"
+  %endif
+  %<GenerateModelTermFcnBody(rootSystem, fcnName)>
+%endif
+
+
+%openfile RegBuffer
+%if ::SeparateRegistrationFcn  
+  %assign fcnName = Name
+  %assign fcnReturns = ::tSimStructType
+  %assign fcnParams = SLibModelFcnArgs("Registration",TLC_FALSE,"")
+  %if GenerateGRTWrapper
+    %assign fcnAbstract = "Registration function"
+  %else
+    %assign fcnAbstract = "Model data allocation function"
+  %endif
+
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "model"; GeneratedBy "ertreg.tlc"; ...
+    Type "Registration"; GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  
+  %<SLibGetFcnMemSecPragma(Name, "MemSecFuncInitTerm", "Pre")>\
+  %if GenerateGRTWrapper
+    %<::ExternCPrefix> %<::tSimStructType> *%<Name>(%<fcnParams>) {
+  %else
+    %<::tSimStructType> *%<Name>(%<fcnParams>) {
+  %endif
+    %if UsingMalloc
+      %assign tmpBlkFcn = ::BlockFcn
+      %assign ::BlockFcn = "Registration"
+      %assign modelrefRefExecution = LibDumpERTAndModelrefRegExecution(TLC_TRUE, TLC_FALSE)
+      %if !ISEMPTY(modelrefRefExecution)
+        %<modelrefRefExecution>
+      %endif
+      %assign ::BlockFcn = tmpBlkFcn
+      %openfile localVariables
+      %<SLibDumpLocalVariablesForBlockFcn(rootSystem,"Registration")>
+      %closefile localVariables
+      %if !WHITE_SPACE(localVariables)
+        {
+          %<localVariables>
+      %endif 
+      %<::CompiledModel.RegCodeBuffer>\
+      %if !WHITE_SPACE(localVariables)
+        }
+      %endif
+    %else
+      %if !WHITE_SPACE(::CompiledModel.RegCodeBuffer)
+        /* Registration code */
+        %<::CompiledModel.RegCodeBuffer>\
+      %endif
+    %endif    
+    return %<S>;
+  }
+  %<SLibGetFcnMemSecPragma(Name, "MemSecFuncInitTerm", "Post")>\ 
+%endif
+%closefile RegBuffer
+
+%if GenerateGRTWrapper
+  %assign ::SystemFcnsForArgAccess = "WrapperFcn"
+
+  %openfile GRTTerminateBuffer
+    
+  %assign fcnName = "MdlTerminate"
+  %assign fcnReturns = "%<SLibGetGRTWrapperLinkage()> void"
+  %assign fcnParams = arg
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "model"; GeneratedBy "ertreg.tlc"; Type "Terminate"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\
+  %% AUTOSAR Compiler Abstraction not needed for GRT
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %if IncludeMdlTerminateFcn == 1
+      %<GenerateNonClassicInterfaceModelTermFcnName()>(%<SLibModelFcnArgs("Terminate",TLC_TRUE,"")>);
+    %endif
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Post")>\
+  
+  %closefile GRTTerminateBuffer
+  %assign ::CompiledModel.GRTWrapper = ::CompiledModel.GRTWrapper + GRTTerminateBuffer
+  
+  %assign ::CompiledModel.GRTWrapper = ::CompiledModel.GRTWrapper + RegBuffer
+  
+  %% Include the GRT interface code
+  /*========================================================================*
+   * Start of Classic call interface                                        *
+   *========================================================================*/
+   
+  %<::CompiledModel.GRTWrapper>
+  /*========================================================================*
+   * End of Classic call interface                                          *
+   *========================================================================*/
+   %assign ::SystemFcnsForArgAccess = []
+
+%else
+  
+  %<RegBuffer>
+   
+%endif %% GenerateGRTWrapper
+
+%closefile fcnsBuffer
+
+%<SLibCacheCodeToFile("baseMdl_fcn_defn", fcnsBuffer)>
+
+%%
+%% ============================================================================
+%% Custom trailer code
+%%
+%openfile UserCodeBottomBuffer
+
+%<LibDumpBottomOfRegFileUserCode()>\
+%closefile UserCodeBottomBuffer
+%<SLibCacheCodeToFile("custom_code_userBottom", UserCodeBottomBuffer)>
+
+%selectfile NULL_FILE
+
+%endif %% _ERTREG_
+
+%% [EOF] ertreg.tlc

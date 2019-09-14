@@ -1,0 +1,933 @@
+%% 
+%% 
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   Library file to create a sample main for ERT code format
+%%   calling grt wrapper for a given model.
+%%
+%selectfile NULL_FILE
+
+%% Function: FcnGenSTOneStepFcnForGRTWrapper ==========================
+%% Generate SingleTasking OneStep function for GRTWrapper
+%%
+%function FcnGenSTOneStepFcnForGRTWrapper()
+  %openfile tmpBuf
+   %openfile fcnAbstract
+  Perform one step of the model. This function is modeled such that
+it could be called from an interrupt service routine (ISR) with minor
+modifications.
+
+  This routine is modeled for use in a multitasking environment and
+therefore needs to be fully re-entrant when it is called from an
+interrupt service routine.
+
+Note:
+  Error checking is provided which will only be used if this routine
+  is attached to an interrupt.
+   %closefile fcnAbstract
+   %assign fcnName = "rt_OneStep"
+   %assign fcnReturns = "static void"
+   %assign fcnParams = Name + "_rtModel *S"
+   %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+     Category "model"; GeneratedBy "ertmain_grtinterface.tlc"; Type "Step"}
+   %<SLibDumpFunctionBanner(fcnRec)>
+   %undef fcnRec
+   %<fcnReturns> %<fcnName>(%<fcnParams>)
+   {
+    %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+        extmodeErrorCode_T errorCode = EXTMODE_SUCCESS;
+    %endif
+
+    /***********************************************
+     * Check and see if base step time is too fast *
+     ***********************************************/
+
+    if (GBLbuf.isrOverrun++) {
+        GBLbuf.stopExecutionFlag = 1;
+        return;
+    }
+
+    /***********************************************
+     * Check and see if error status has been set  *
+     ***********************************************/
+
+    %if !SuppressErrorStatus
+    if (rtmGetErrorStatus(S) != %<SLibGetNullDefinitionFromTfl()>) {
+        GBLbuf.stopExecutionFlag = 1;
+        return;
+    }
+    %endif
+    
+    /* enable interrupts here */
+
+    %if LibIsDeploymentDiagram() 
+      %<SLibDeploymentCallGRTEntryPoints(0, "Output")>
+    %else
+      MdlOutputs(0);
+    %endif
+    
+    %if ExtMode == 1
+      %if !ExtModeXCP || ExtModeXCPClassicInterface
+        rtExtModeSingleTaskUpload(S);
+      %else
+        extmodeSingleTaskEvents(S);
+      %endif
+    %endif
+    
+    %if MatFileLogging
+      GBLbuf.errmsg = rt_UpdateTXYLogVars(rtmGetRTWLogInfo(S),
+                                          rtmGetTPtr(S));
+      if (GBLbuf.errmsg != %<SLibGetNullDefinitionFromTfl()>) {
+	GBLbuf.stopExecutionFlag = 1;
+	return;
+      }
+    %endif
+    
+    %if LibIsDeploymentDiagram() 
+      %<SLibDeploymentCallGRTEntryPoints(0, "Update")>
+    %else
+      MdlUpdate(0);
+    %endif
+    
+    GBLbuf.isrOverrun--;
+    
+    %if (ExtMode == 1) && (!ExtModeXCP || ExtModeXCPClassicInterface)
+      rtExtModeCheckEndTrigger();
+    %endif
+
+  } /* end rtOneStep */
+  %closefile tmpBuf
+  %return tmpBuf
+%endfunction
+
+%% Function: FcnGenMTOneStepFcnForGRTWrapper ===========================
+%% Generate multitasking OntStep fcn call grt wrapper
+%%
+%function FcnGenMTOneStepFcnForGRTWrapper() 
+  %openfile tmpBuf
+  %assign firstTid = FixedStepOpts.TID01EQ? 1:0
+   %openfile fcnAbstract
+  Perform one step of the model. This function is modeled such that
+it could be called from an interrupt service routine (ISR) with minor
+modifications.
+
+  This routine is modeled for use in a multitasking environment and
+therefore needs to be fully re-entrant when it is called from an
+interrupt service routine.
+
+Note:
+  Error checking is provided which will only be used if this routine
+  is attached to an interrupt.
+
+   %closefile fcnAbstract
+   
+   %assign fcnName = "rt_OneStep"
+   %assign fcnReturns = "static void"
+   %assign fcnParams = Name + "_rtModel *S"
+   %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+     Category "main"; GeneratedBy "ertmain_grtinterface.tlc"; Type "Step"}
+   %<SLibDumpFunctionBanner(fcnRec)>
+   %undef fcnRec
+   %<fcnReturns> %<fcnName>(%<fcnParams>)
+   {
+     %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+       extmodeErrorCode_T errorCode = EXTMODE_SUCCESS;
+     %endif
+
+     int_T  eventFlags[NUMST];
+     int_T  i;
+     real_T tnext;
+     %if LibIsDeploymentDiagram() 
+       %<SLibDeploymentDeclareTasksSampleTimeIndex()>
+     %endif
+     int_T  *sampleHit = rtmGetSampleHitPtr(S);
+
+    /***********************************************
+     * Check and see if base step time is too fast *
+     ***********************************************/
+
+    if (GBLbuf.isrOverrun++) {
+        GBLbuf.stopExecutionFlag = 1;
+        return;
+    }
+
+    /***********************************************
+     * Check and see if error status has been set  *
+     ***********************************************/
+
+    %if !SuppressErrorStatus
+    if (rtmGetErrorStatus(S) != %<SLibGetNullDefinitionFromTfl()>) {
+        GBLbuf.stopExecutionFlag = 1;
+        return;
+    }
+    %endif
+    /* enable interrupts here */
+    	
+    tnext = rt_SimUpdateDiscreteEvents(rtmGetNumSampleTimes(S),
+                                       rtmGetTimingData(S),
+                                       rtmGetSampleHitPtr(S),
+                                       rtmGetPerTaskSampleHitsPtr(S));
+    rtsiSetSolverStopTime(rtmGetRTWSolverInfo(S),tnext);
+    %if firstTid == 0 
+    for (i=1; i < NUMST; i++) {
+    %else
+    for (i=2; i < NUMST; i++) {
+    %endif
+        eventFlags[i] = sampleHit[i];
+    }
+    
+    /*******************************************
+     * Step the model for the base sample time *
+     *******************************************/
+    %if LibIsDeploymentDiagram() 
+      %<SLibDeploymentCallGRTEntryPoints(0, "Output")>
+    %else
+      MdlOutputs(%<firstTid>);
+    %endif
+    
+    %if ExtMode == 1
+      %if !ExtModeXCP || ExtModeXCPClassicInterface
+	    rtExtModeUploadCheckTrigger(%<NumRuntimeExportedRates>);
+	    rtExtModeUpload(%<firstTid>, (real_T)%<RTMGetTaskTimeForTID(0)>);
+      %else
+        errorCode = extmodeEvent(%<firstTid>,%<RTMGetTaskTimeForTID(0)>);
+        if (errorCode != EXTMODE_SUCCESS) {
+            /* Code to handle External Mode event errors
+               may be added here */
+        }
+      %endif
+    %endif
+	
+    %if MatFileLogging
+      GBLbuf.errmsg = rt_UpdateTXYLogVars(rtmGetRTWLogInfo(S),
+                                          rtmGetTPtr(S));
+      if (GBLbuf.errmsg != %<SLibGetNullDefinitionFromTfl()>) {
+	GBLbuf.stopExecutionFlag = 1;
+	return;
+      }
+    %endif
+    
+    %if LibIsDeploymentDiagram()      
+      %<SLibDeploymentCallGRTEntryPoints(0, "Update")>
+    %else
+      MdlUpdate(%<firstTid>);
+    %endif
+    
+    /************************************************************************
+     * Model step complete for base sample time, now it is okay to          *
+     * re-interrupt this ISR.                                               *
+     ************************************************************************/
+
+     GBLbuf.isrOverrun--;
+
+
+    /*********************************************
+     * Step the model for any other sample times *
+     *********************************************/
+     %if firstTid == 0 
+     for (i=1; i < NUMST; i++) {
+     %else
+     for (i=2; i<NUMST; i++) {
+     %endif
+       if (eventFlags[i]) {
+	 if (GBLbuf.overrunFlags[i]++) {  /* Are we sampling too fast for */
+	   GBLbuf.stopExecutionFlag=1;  /*   sample time "i"?           */
+	   return;
+	 }
+         
+         %if LibIsDeploymentDiagram() 
+           %assign indexVar = "i"
+           %<SLibDeploymentGRTCustomizeRtOneStep(indexVar, "Output")>
+         %else
+           MdlOutputs(i);
+         %endif
+	 
+         %if ExtMode == 1
+           %if !ExtModeXCP || ExtModeXCPClassicInterface
+	         rtExtModeUpload(i, (real_T)rtmGetTaskTime(S,i));
+           %else
+             errorCode = extmodeEvent(i,rtmGetTaskTime(S,i));
+             if (errorCode != EXTMODE_SUCCESS) {
+                 /* Code to handle External Mode Event errors
+                    may be added here */
+             }
+           %endif
+         %endif
+         
+         %if LibIsDeploymentDiagram() 
+           %assign indexVar = "i"
+           %<SLibDeploymentGRTCustomizeRtOneStep(indexVar, "Update")>
+         %else
+           MdlUpdate(i);
+         %endif
+         
+	 /* Indicate task complete for sample time "i" */
+	 GBLbuf.overrunFlags[i]--;
+       }
+     }
+     %if (ExtMode == 1) && (!ExtModeXCP || ExtModeXCPClassicInterface)
+       rtExtModeCheckEndTrigger();
+     %endif
+     
+   } /* end rtOneStep */
+   
+   %closefile tmpBuf
+   %return tmpBuf
+%endfunction   
+
+%% Function: FcnGenMainFcnForGRTWrapper ==============================
+%%
+%%
+%function FcnGenMainFcnForGRTWrapper()
+  %openfile tmpBuf
+  %assign fcnName = "displayUsage"
+  %assign fcnReturns = "static void"
+  %assign fcnParams = "void"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "main"; GeneratedBy "ertmain_grtinterface.tlc"; Type "Utility"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    (void) printf("usage: %s -tf <finaltime> -w -port <TCPport>\n",QUOTE(MODEL));
+    (void) printf("arguments:\n");
+    (void) printf("  -tf <finaltime> - overrides final time specified in "
+                  "Simulink (inf for no limit).\n");
+    (void) printf("  -w              - waits for Simulink to start model "
+                  "in External Mode.\n");
+    (void) printf("  -port <TCPport> - overrides 17725 default port in "
+                  "External Mode, valid range 256 to 65535.\n");
+  }
+  %assign fcnName = "main"
+  %assign fcnReturns = "int_T"
+  %assign fcnParams = "int_T argc, const char *argv[]"
+  %assign fcnAbstract = "Execute model on a generic target such as a workstation."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "main"; GeneratedBy "ertmain_grtinterface.tlc"; Type "Main"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+  {
+    %if (ExtMode == 1) && ExtModeXCP && !ExtModeXCPClassicInterface
+        extmodeErrorCode_T errorCode = EXTMODE_SUCCESS;
+    %endif
+
+    %<Name>_rtModel  *S;
+    real_T     finaltime = -2.0;
+
+    int_T  oldStyle_argc;
+    const char_T *oldStyle_argv[5];
+
+    /*******************
+     * Parse arguments *
+     *******************/
+
+    if ((argc > 1) && (argv[1][0] != '-')) {
+        /* old style */
+        if ( argc > 3 ) {
+            displayUsage();
+	    
+            return(EXIT_FAILURE);
+        }
+
+        oldStyle_argc    = 1;
+        oldStyle_argv[0] = argv[0];
+    
+        if (argc >= 2) {
+            oldStyle_argc = 3;
+
+            oldStyle_argv[1] = "-tf";
+            oldStyle_argv[2] = argv[1];
+        }
+
+        if (argc == 3) {
+            oldStyle_argc = 5;
+
+            oldStyle_argv[3] = "-port";
+            oldStyle_argv[4] = argv[2];
+
+        }
+
+        argc = oldStyle_argc;
+        argv = oldStyle_argv;
+
+    }
+
+    {
+        /* new style: */
+        double    tmpDouble;
+        char_T tmpStr2[200];
+        int_T  count      = 1;
+        int_T  parseError = %<GET_TYPE_ID_REPLACEMENT("false")>;
+
+        /*
+         * Parse the standard input parameters.  Let all unrecognized parameters
+         * pass through to external mode for parsing.  NULL out all args handled
+         * so that the external mode parsing can ignore them.
+         */
+        while(count < argc) {
+            const char_T *option = argv[count++];
+            
+            /* final time */
+            if ((strcmp(option, "-tf") == 0) && (count != argc)) {
+                const char_T *tfStr = argv[count++];
+                
+                sscanf(tfStr, "%200s", tmpStr2);
+                if (strcmp(tmpStr2, "inf") == 0) {
+                    tmpDouble = RUN_FOREVER;
+                } else {
+                    char_T tmpstr[2];
+
+                    if ( (sscanf(tmpStr2,"%lf%1s", &tmpDouble, tmpstr) != 1) ||
+                         (tmpDouble < 0.0) ) {
+                        (void)printf("finaltime must be a positive, real value or inf\n");
+                        parseError = %<GET_TYPE_ID_REPLACEMENT("true")>;
+                        break;
+                    }
+                }
+                finaltime = (real_T) tmpDouble;
+
+                argv[count-2] = %<SLibGetNullDefinitionFromTfl()>;
+                argv[count-1] = %<SLibGetNullDefinitionFromTfl()>;
+            }
+        }
+
+        if (parseError) {
+            (void)printf("\nUsage: %s -option1 val1 -option2 val2 -option3 "
+                         "...\n\n", QUOTE(%<Name>));
+            (void)printf("\t-tf 20 - sets final time to 20 seconds\n");
+
+            return(EXIT_FAILURE);
+        }
+
+    %if ExtMode == 1
+      %if !ExtModeXCP || ExtModeXCPClassicInterface
+	rtExtModeParseArgs(argc, argv, %<SLibGetNullDefinitionFromTfl()>); 
+      %else
+        /* Parse External Mode command line arguments */
+        errorCode = extmodeParseArgs(argc, argv);
+        if (errorCode != EXTMODE_SUCCESS) {
+            return (errorCode);
+        }
+      %endif
+    %endif
+
+    %if !ExtModeXCP || ExtModeXCPClassicInterface
+    %% The check for unprocessed args is already part of extmodeParseArgs if XCP is enabled
+    %% with the new ext_mode.h interface
+
+        /*
+         * Check for unprocessed ("unhandled") args.
+         */
+        {
+            int i;
+            for (i=1; i<argc; i++) {
+                if (argv[i] != %<SLibGetNullDefinitionFromTfl()>) {
+                    printf("Unexpected command line argument: %s\n",argv[i]);
+                    return(EXIT_FAILURE);
+                }
+            }
+        }
+    %endif
+    }
+
+    /****************************
+     * Initialize global memory *
+     ****************************/
+     (void) %<LibGenMemFcnCall("memset", "&GBLbuf", "0", "sizeof(GBLbuf)")>;
+
+    /************************
+     * Initialize the model *
+     ************************/
+
+     S = %<Name>();
+     %if !SuppressErrorStatus
+     if (rtmGetErrorStatus(S) != %<SLibGetNullDefinitionFromTfl()>) {
+       (void)fprintf(stderr,"Error during model registration: %s\n",
+       rtmGetErrorStatus(S));
+       return(EXIT_FAILURE);
+     }
+    %endif
+     if (finaltime >= 0.0 || finaltime == RUN_FOREVER) rtmSetTFinal(S,finaltime);
+
+     MdlInitializeSizes();
+     MdlInitializeSampleTimes();
+    
+     %if MatFileLogging
+       GBLbuf.errmsg = rt_StartDataLogging(rtmGetRTWLogInfo(S),
+                                           rtmGetTFinal(S),
+					   rtmGetStepSize(S),
+					   &rtmGetErrorStatus(S));
+       if (GBLbuf.errmsg != %<SLibGetNullDefinitionFromTfl()>) {
+	 (void)fprintf(stderr,"Error starting data logging: %s\n",GBLbuf.errmsg);
+	 return(EXIT_FAILURE);
+       }
+     %endif
+    
+    %if ExtMode == 1
+      %if !ExtModeXCP || ExtModeXCPClassicInterface
+        /* External mode */
+        %if !PurelyIntegerCode
+          rtSetTFinalForExtMode(&%<RTMGet("TFinal")>);
+        %else
+          rtSetTFinalForExtMode(rteiGetPtrTFinalTicks(%<RTMGet("RTWExtModeInfo")>));
+        %endif
+
+        rtExtModeCheckInit(%<NumRuntimeExportedRates>);
+        {
+            boolean_T rtmStopReq = %<GET_TYPE_ID_REPLACEMENT("false")>;
+            rtExtModeWaitForStartPkt(%<RTMGet("RTWExtModeInfo")>, ...
+                                     %<NumRuntimeExportedRates>, ...
+                                     &rtmStopReq);
+            if (rtmStopReq) {
+                %<RTMSetStopRequested("true")>;
+            }
+        }
+      %else
+        /* External Mode initialization */
+        %if !PurelyIntegerCode
+          errorCode = extmodeInit(%<RTMGet("RTWExtModeInfo")>, &%<RTMGet("TFinal")>);
+        %else
+          errorCode = extmodeInit(%<RTMGet("RTWExtModeInfo")>, (extmodeSimulationTime_T *)rteiGetPtrTFinalTicks(%<RTMGet("RTWExtModeInfo")>));
+        %endif
+          
+        if (errorCode != EXTMODE_SUCCESS) {
+            /* Code to handle External Mode initialization errors
+               may be added here */
+        }
+
+        if (errorCode == EXTMODE_SUCCESS) {
+            /* Wait until a Start or Stop Request has been received from the Host */
+            extmodeWaitForHostRequest(EXTMODE_WAIT_FOREVER);
+
+            if (extmodeStopRequested()) {
+              %<RTMSetStopRequested("true")>;
+            }
+        }
+      %endif
+    %endif
+
+    (void)printf("\n** starting the model **\n");
+
+    MdlStart();
+    %if !SuppressErrorStatus
+    if (rtmGetErrorStatus(S) != %<SLibGetNullDefinitionFromTfl()>) {
+      GBLbuf.stopExecutionFlag = 1;
+    }
+    %endif
+    
+    /*************************************************************************
+     * Execute the model.  You may attach rtOneStep to an ISR, if so replace *
+     * the call to rtOneStep (below) with a call to a background task        *
+     * application.                                                          *
+     *************************************************************************/
+
+    if (rtmGetTFinal(S) == RUN_FOREVER) {
+        printf ("\n**May run forever. Model stop time set to infinity.**\n");
+    }
+    
+    while (!GBLbuf.stopExecutionFlag &&
+           (rtmGetTFinal(S) == RUN_FOREVER ||
+            rtmGetTFinal(S)-rtmGetT(S) > rtmGetT(S) * ...
+              %<LibGetMathConstant("EPSILON",tSS_DOUBLE)>)) {
+
+	%if (ExtMode == 1) 
+          %if !ExtModeXCP || ExtModeXCPClassicInterface
+          {
+              /* external mode */
+              boolean_T rtmStopReq = %<GET_TYPE_ID_REPLACEMENT("false")>;
+              rtExtModePauseIfNeeded(%<RTMGet("RTWExtModeInfo")>, ...
+                                     %<NumRuntimeExportedRates>, ...
+                                     &rtmStopReq);
+              rtExtModeOneStep(%<RTMGet("RTWExtModeInfo")>, ...
+                               %<NumRuntimeExportedRates>, ...
+                               &rtmStopReq);
+              if (rtmStopReq) {
+                  %<RTMSetStopRequested("true")>;
+              }
+          }
+         %else
+          {
+              /* Run External Mode background activities */
+              errorCode = extmodeBackgroundRun();
+              if (errorCode != EXTMODE_SUCCESS) {
+                  /* Code to handle External Mode background task errors
+                     may be added here */
+             }
+
+             if (extmodeStopRequested()) {
+                 %<RTMSetStopRequested("true")>;
+             }
+         }
+        %endif
+      %endif
+    
+        if (rtmGetStopRequested(S)) break;
+	    rt_OneStep(S);
+    }
+    
+    if (!GBLbuf.stopExecutionFlag && !rtmGetStopRequested(S)) {
+    %if ExtMode == 1
+      %if !ExtModeXCP || ExtModeXCPClassicInterface
+          {
+              /* external mode */
+              boolean_T rtmStopReq = %<GET_TYPE_ID_REPLACEMENT("false")>;	   
+              rtExtModeOneStep(%<RTMGet("RTWExtModeInfo")>, ...
+                               %<NumRuntimeExportedRates>, ...
+                              &rtmStopReq);
+              if (rtmStopReq) {
+                  %<RTMSetStopRequested("true")>;
+              }
+          }
+      %else
+          /* Run External Mode background activities */
+          errorCode = extmodeBackgroundRun();
+          if (errorCode != EXTMODE_SUCCESS) {
+              /* Code to handle External Mode background task errors
+                 may be added here */
+          }
+
+          if (extmodeStopRequested()) {
+              %<RTMSetStopRequested("true")>;
+          }
+      %endif
+    %endif
+
+      /* Execute model last time step */
+      rt_OneStep(S);
+    }
+
+    /********************
+     * Cleanup and exit *
+     ********************/
+    %if MatFileLogging
+      rt_StopDataLogging(MATFILE,rtmGetRTWLogInfo(S));
+    %endif
+
+    if (GBLbuf.errmsg) {
+        (void)fprintf(stderr,"%s\n",GBLbuf.errmsg);
+        return(EXIT_FAILURE);
+    }
+
+    if (GBLbuf.isrOverrun) {
+        (void)fprintf(stderr,
+                      "%s: ISR overrun - base sampling rate is too fast\n",
+                      QUOTE(%<Name>));
+        return(EXIT_FAILURE);
+    }
+
+    %if !SuppressErrorStatus
+    if (rtmGetErrorStatus(S) != %<SLibGetNullDefinitionFromTfl()>) {
+        (void)fprintf(stderr,"%s\n", rtmGetErrorStatus(S));
+        return(EXIT_FAILURE);
+    }
+    %endif
+    
+    %if !SLibSingleTasking() 
+      %% multitasking
+    else {
+      int_T i;
+      for (i=1; i<NUMST; i++) {
+	if (GBLbuf.overrunFlags[i]) {
+	  (void)fprintf(stderr,
+	  "%s ISR overrun - sampling rate is too fast for "
+	  "sample time index %d\n", QUOTE(%<Name>), i);
+	  return(EXIT_FAILURE);
+	}
+      }
+    }
+    %endif
+    MdlTerminate();
+
+    %if (ExtMode == 1)
+      %if (ExtModeXCP && !ExtModeXCPClassicInterface)
+        /* External Mode reset */
+        extmodeReset();
+      %else
+         /* External mode */
+         rtExtModeShutdown(%<NumRuntimeExportedRates>);
+      %endif
+    %endif
+
+    return(EXIT_SUCCESS);
+
+  } /* end main */
+  %closefile tmpBuf
+  %return tmpBuf
+%endfunction
+
+
+%% Function FcnGenerateCommonCodeForGRTWrapper ========================
+%%
+%function FcnGenerateCommonCodeForGRTWrapper() 
+  %openfile tmpBuf
+    #ifndef EXIT_FAILURE
+    #define EXIT_FAILURE  1
+    #endif
+    #ifndef EXIT_SUCCESS
+    #define EXIT_SUCCESS  0
+    #endif
+    
+    #define RUN_FOREVER -1.0
+
+    %<LibDeclareERTDefines(0)>
+        
+    /*====================*
+    * External functions *
+    *====================*/
+    %if ::GenCPP
+    extern "C" {
+    %endif
+    %<LibExternInFcnDecls()>%<Name>_rtModel *%<Name>(void);
+    %<LibExternInFcnDecls()>void MdlInitializeSizes(void);
+    %<LibExternInFcnDecls()>void MdlInitializeSampleTimes(void);
+    %<LibExternInFcnDecls()>void MdlInitialize(void);
+    %<LibExternInFcnDecls()>void MdlStart(void);
+    %<LibExternInFcnDecls()>void MdlOutputs(int_T %<::CompiledModel.GlobalScope.tTID>);
+    %<LibExternInFcnDecls()>void MdlUpdate(int_T %<::CompiledModel.GlobalScope.tTID>);
+    %<LibExternInFcnDecls()>void MdlTerminate(void);
+    %if ::GenCPP
+    }
+    %endif
+				  
+    /*==================================*
+    * Global data local to this module *
+    *==================================*/
+
+    static struct {
+      int_T    stopExecutionFlag;
+      int_T    isrOverrun;
+      int_T    overrunFlags[NUMST];
+      const char_T *errmsg;
+    } GBLbuf;
+    
+
+    %if ExtMode == 1
+      %if !ExtModeXCP || ExtModeXCPClassicInterface
+        #  define rtExtModeSingleTaskUpload(S)                     \
+        {                                                          \
+           int stIdx;                                              \
+           rtExtModeUploadCheckTrigger(rtmGetNumSampleTimes(S));   \
+           for (stIdx=0; stIdx<NUMST; stIdx++) {                   \
+             if (rtmIsSampleHit(S, stIdx, 0)) {                    \
+               rtExtModeUpload(stIdx,(real_T)rtmGetTaskTime(S,stIdx));     \
+             }                                                     \
+           }                                                       \
+       }
+    %else
+        #  define extmodeSingleTaskEvents(S)                               \
+        {                                                                  \
+           int stIdx;                                                      \
+           for (stIdx=0; stIdx<NUMST; stIdx++) {                           \
+             if (rtmIsSampleHit(S, stIdx, 0)) {                            \
+               errorCode = extmodeEvent(stIdx,rtmGetTaskTime(S,stIdx));    \
+               if (errorCode != EXTMODE_SUCCESS) {                         \
+                 /* Code to handle External Mode Event errors              \
+                    may be added here */                                   \
+               }                                                           \
+             }                                                             \
+           }                                                               \
+       }
+
+    %endif
+  %endif
+
+    /*=================*
+    * Local functions *
+    *=================*/
+
+  %closefile tmpBuf
+  %return tmpBuf
+%endfunction 
+
+%% Function FcnGenerateCommonCodeForGRTSimplified ========================
+%%
+%function FcnGenerateCommonCodeForGRTSimplified() 
+  %openfile tmpBuf
+    #ifndef EXIT_FAILURE
+    #define EXIT_FAILURE  1
+    #endif
+    #ifndef EXIT_SUCCESS
+    #define EXIT_SUCCESS  0
+    #endif
+    
+    #define RUN_FOREVER -1.0
+    
+    %<LibDeclareERTDefines(0)>
+
+    %if !::MultiInstanceERTCode
+      /*====================*
+      * External functions *
+      *====================*/
+      %if ::GenCPP
+      extern "C" {
+      %endif
+      %<LibExternInFcnDecls()>void %<Name>_initialize(void);
+      %<LibExternInFcnDecls()>void %<Name>_terminate(void);
+      %if SLibSingleTasking()
+        %if ::CompiledModel.ConfigSet.CombineOutputUpdateFcns
+          %<LibExternInFcnDecls()>void %<Name>_step(void); 
+        %else
+          %<LibExternInFcnDecls()>void %<Name>_output(void); 
+          %<LibExternInFcnDecls()>void %<Name>_update(void); 
+        %endif
+      %else
+        %if ::CompiledModel.ConfigSet.CombineOutputUpdateFcns
+          %<LibExternInFcnDecls()>void %<Name>_step(int_T %<::CompiledModel.GlobalScope.tTID>);
+        %else
+          %<LibExternInFcnDecls()>void %<Name>_output(int_T %<::CompiledModel.GlobalScope.tTID>);
+          %<LibExternInFcnDecls()>void %<Name>_update(int_T %<::CompiledModel.GlobalScope.tTID>);
+        %endif
+      %endif
+      %if ::GenCPP
+      }
+      %endif
+    %endif
+
+    #define MdlInitializeSizes()         /* No op */
+    #define MdlInitializeSampleTimes()   /* No op */
+    #define MdlStart()                   /* No op */
+    %assign firstArg = UsingMalloc ? tSimStruct : ""
+    %assign tidArg = !SLibSingleTasking() ? "tid" : ""
+    %if ::GenerateClassInterface
+      %if !SLibSingleTasking()
+        #define MdlOutputs(tid)          %<Name>_step(%<::CPPObjectName>, tid)
+      %else
+        #define MdlOutputs()             %<::CPPObjectName>.step()
+      %endif 
+      #define MdlUpdate(%<tidArg>)       /* No Op */
+      #define MdlTerminate()             %<::CPPObjectName>.terminate()
+    %else    
+      %if ::UsingMalloc && !SLibSingleTasking()
+        %assign secondArg = ", tid"
+      %else
+        %assign secondArg = tidArg
+      %endif
+
+      %if ::CombineOutputUpdateFcns
+        #define MdlOutputs(%<tidArg>)    %<Name>_step(%<firstArg>%<secondArg>)
+        #define MdlUpdate(%<tidArg>)     /* No Op */
+      %else
+        #define MdlOutputs(%<tidArg>)    %<Name>_output(%<firstArg>%<secondArg>)
+        #define MdlUpdate(%<tidArg>)     %<Name>_update(%<firstArg>%<secondArg>)
+      %endif
+
+      #define MdlTerminate()             %<Name>_terminate(%<firstArg>)
+    %endif
+    #define rt_CreateIntegrationData(S)  /* No op */ 
+    #define rt_UpdateContinuousStates(S) /* No op */
+
+    /*==================================*
+    * Global data local to this module *
+    *==================================*/
+
+    static struct {
+      int_T    stopExecutionFlag;
+      int_T    isrOverrun;
+      int_T    overrunFlags[NUMST];
+      const char_T *errmsg;
+    } GBLbuf;
+
+    %closefile tmpBuf
+    %return tmpBuf
+%endfunction
+
+%% FcnGenerateMainFunctionForGRTWrapper =========================
+%%
+%%
+%function FcnGenerateMainFunctionsForGRTWrapper(retDesc) void
+  %assign singleTasking = SLibSingleTasking()
+  %assign delim = "*   "
+
+  %openfile codeBuf
+  %if retDesc
+    %if !singleTasking
+      %% Multitasking
+      %<delim>Embedded Coder example \n
+      %<delim>multitasking main Calling Generic 'Real Time' 
+      %<delim>code format interface.\n"
+    %else
+      %% Singletasking
+      %<delim>Embedded Coder example 
+      %<delim>multi-rate singletasking main calling 
+      %<delim>main calling Generic 'Real Time' code 
+      %<delim>format interface.\n"
+    %endif
+  %else
+    %<FcnGenerateCommonCodeForGRTWrapper()>
+
+    %if singleTasking || (LibIsDeploymentDiagram() && ...
+      (RootSystemIsSingleRate || ...
+      (ISEQUAL(NumRuntimeExportedRates, 2) && ...
+      ISEQUAL(SolverType, "FixedStep") && FixedStepOpts.TID01EQ)))
+      %% RootSystemIsSingleRate is false when 2 rates and TID01EQ is true
+      %<FcnGenSTOneStepFcnForGRTWrapper()>
+    %else %% multitasking
+      %<FcnGenMTOneStepFcnForGRTWrapper()>
+    %endif
+    %<FcnGenMainFcnForGRTWrapper()>
+  %endif
+  %closefile codeBuf
+  %return codeBuf
+%endfunction
+
+
+%% SLibCreateMainCallGRTWrapper ===============================
+%%
+%%
+%%
+%function SLibCreateMainForGRTWrapper() void
+  %if EXISTS(::GeneratingMainFunction)
+    %assign oldValue = ::GeneratingMainFunction
+  %else
+    %assign oldValue = TLC_FALSE
+  %endif
+  %assign ::GeneratingMainFunction = TLC_TRUE
+
+
+  %if SLibIsERTTarget()
+    %if  TargetOS == "VxWorksExample"
+      %<SLibReportErrorWithId("RTW:tlc:GRTInterfaceVxWorks")>
+    %endif
+  %endif
+
+  %openfile tmpFcnBuf
+  %<SLibDeclareModelFcnArgs(TLC_TRUE)>\
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_data_defn", tmpFcnBuf)>  
+  %if SLibGenerateNativeThreads() 
+    %% Generate threaded grt main.
+    %assign isPC = FEVAL("ispc")
+    %if isPC  
+      %include "grtwinthread.tlc"   
+    %else
+      %include "grtposixthread.tlc"   
+    %endif 
+    %<SLibGenerateThreadedMain()>
+  %else
+    %<SLibCacheCodeToFile("mainSrc_fcn_defn", ...
+      FcnGenerateMainFunctionsForGRTWrapper(0))>
+  %endif
+  
+  %openfile tmpFcnBuf
+
+  #include <stdio.h>
+  #include <string.h>
+  #include <float.h>
+  #include "%<FcnGetPublicModelHeaderFile()>" /* Model's header file */
+  %<SLibIncludeUsedCoderTypesFilenames()>
+  %if ExtMode
+    %if !ExtModeXCP || ExtModeXCPClassicInterface
+        #include "ext_work.h" /* External mode header file */
+    %else
+        #include "ext_mode.h" /* External mode header file */
+    %endif
+  %endif
+  %closefile tmpFcnBuf
+  
+  %<SLibCacheCodeToFile("mainSrc_incl", tmpFcnBuf)>
+  %assign ::GeneratingMainFunction = oldValue
+%endfunction
+  

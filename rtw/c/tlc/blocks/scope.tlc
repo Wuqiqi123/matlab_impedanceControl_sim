@@ -1,0 +1,534 @@
+*%% 
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%% Abstract:
+%%      Scope block target file. For use with standard .mat file logging.
+%%
+
+%implements * "C"
+
+%% BlockInstanceSetup =========================================================
+%% Abstract:
+%%      Define over-ride data type for PWork structure when logging to
+%%      a structure
+%%
+%function BlockInstanceSetup(block, system) void
+  %<LibBlockSetIsExpressionCompliant(block)>
+  %if EXISTS("ParamSettings.IsERTMobileTarget") && ParamSettings.IsERTMobileTarget
+    %if ParamSettings.MobileTargetDevice == 1 %% iOS
+      %<SLibAddToCommonIncludes("driver_ios_plot.h")>
+    %elseif ParamSettings.MobileTargetDevice == 2 %% Android
+      %<SLibAddToCommonIncludes("driver_android_plot.h")>   
+    %endif
+  %endif
+%endfunction %% BlockInstanceSetup
+
+
+%% Function: Start =============================================================
+%% Abstract:
+%%      If the scope is configured to save it's data, and if we are using the
+%%      standard .mat file logging then write out call to create the data
+%%      logging variable. In addition, if the scope is constant then we
+%%      need to log the data once here.
+%%
+%function Start(block, system) Output
+  %assign typeQ     = "static "
+  %if CodeFormat == "S-Function"
+    %assign warnTxt = "Scope blocks not currently supported for S-Function " ...
+      "code format.  Block disabled."
+    %<LibBlockReportWarning(block, warnTxt)>
+    %return
+  %endif
+  %%
+  %if  ( TargetType == "RT" || isRSim ) ...
+    && MatFileLogging != 0 ...
+    && ParamSettings.SaveToWorkspace == "yes" ...
+    && !ParamSettings.IsERTMobileTarget ...
+    && NumDataInputPorts > 0
+    %%
+    %assign name           = ParamSettings.SaveName
+    %assign maxDataPoints  = ParamSettings.MaxDataPoints[0]
+    %assign decimation     = ParamSettings.Decimation[0]
+    %assign logVar         = LibBlockPWork(LoggedData, "", "", 0)
+    %assign ts             = LibBlockSampleTime(block)
+    %assign nulldef = SLibGetNullDefinitionFromTfl()
+    %%
+    %if ParamSettings.DataFormat == "Array"
+      %assert LibIsDataTypeLogSupported(LibBlockInputSignalDataTypeId(0), TLC_TRUE)
+      %assign nCols = LibGetRecordWidth(DataInputPort) + 1
+      %assign cmplx          = LibBlockInputSignalIsComplex(0)
+      {
+        int_T numCols = %<nCols>;
+        
+        %% Scope only supports fixed-size signal logging,
+        %% so set the currSigDims and currSigDimsSize to NULL, 
+        %% and set the logValDimsStat to NO_LOGVALDIMS
+        %<SLibGenLogVarCreate(logVar, name, "SS_DOUBLE", 0, cmplx, ...
+          0, nCols, 1, "(int_T *)&numCols", "NO_LOGVALDIMS", nulldef, ...
+          nulldef, maxDataPoints, decimation, ts, 1)>
+        if (%<logVar> == %<nulldef>) return;
+      }
+    %else 
+      %%
+      %% DataFormat is Structure
+      %%
+      
+      %assign numLoggedSignals = 0
+      %%
+      %% Setup variables to be filled in below
+      %%
+      %assign dataTypeStr  = ""
+      %assign widthStr     = ""
+      %assign numDimsStr   = ""
+      %assign dimsStr      = ""
+      %assign preprocessingFcnPtrsStr = ""
+      %assign currDimsStr  = ""
+      %assign labelStr     = ""
+      %assign plotStyleStr = ""
+      %assign titleStr     = ""
+      %assign titleLenStr  = ""
+      %assign frameBasedStr = ""
+      %%
+      %% Setup Variable Dimensions related variables
+      %%
+      %assign hasVarDims           = 0
+      %assign isVarDimsStr         = ""
+      %assign currSigDimsInitStr   = ""
+      %assign currSigDimsSetStr    = ""
+      %assign currSigDimsSizeStr   = ""
+      %assign currSigDimsSize      = ConfigSet.TargetBitPerInt/8
+      %assign currSigDimsSizeComma = ""
+      
+      %%
+      %% Setup constant helper variables
+      %%
+      %assign qt = "\""
+      %%
+      %% Setup helper variables to be filled in after first time through
+      %%
+      %assign comma      = ""
+      %assign cr         = ""
+      %assign plotStyleComma = ""
+      %%
+      %assign plotStyleIdx = 0
+      %assign offset = 0
+      %assign alreadyInitCurrDimsStr = 0
+      %assign alreadyInitNullCurrDimsStr = 0
+      %foreach idx = NumDataInputPorts
+        %%
+        %% Check for signals to be skipped
+        %%
+        %assign dTypeId = LibBlockInputSignalDataTypeId(idx)
+        %if (LibIsDataTypeLogSupported(dTypeId, TLC_TRUE) == TLC_FALSE)
+          %assign warnTxt = "Unable to log data for input %<idx+1> " ...
+            "because MAT-File logging is not supported for " ...
+            "data type '%<LibGetDataTypeNameFromId(dTypeId)>'."
+          %<LibBlockReportWarning(block, warnTxt)>
+          %continue
+        %endif
+        %%
+        %% Data Types
+        %%
+        %if !LibIsBuiltInDataType(dTypeId)
+          %assign dTypeId = tSS_DOUBLE
+        %endif
+        %assign dTypeEnum = LibGetDataTypeEnumFromId(dTypeId)
+        %assign dataTypeStr = dataTypeStr + comma + dTypeEnum
+        %assign cmplx = LibBlockInputSignalIsComplex(idx)
+        %%
+        %% Signal Dimensions
+        %%
+        %assign width    = LibBlockInputSignalWidth(idx)
+        %assign numDims  = LibBlockInputSignalNumDimensions(idx)
+        %assign dims     = LibBlockInputSignalDimensions(idx)
+        %assign widthStr   = widthStr   + comma + "%<width>"
+        %assign numDimsStr = numDimsStr + comma + "%<numDims>"
+        %assign dimsStr    = dimsStr    + comma + "%<dims[0]>"
+        %foreach dimIdx = numDims-1
+          %assign dimsStr  = dimsStr + ", " + "%<dims[dimIdx+1]>"         
+        %endforeach
+        %assign preprocessingFcnPtrsStr = preprocessingFcnPtrsStr + comma + nulldef
+        %foreach dimIdx = numDims-1
+          %assign preprocessingFcnPtrsStr = preprocessingFcnPtrsStr + ", " + nulldef
+        %endforeach
+        %if EXISTS("ParamSettings.FrameData")
+        %assign frameBased = ParamSettings.FrameData[idx]
+        %assign frameBasedStr = frameBasedStr + comma + "%<frameBased>"
+        %endif
+        %%
+        %% Labels
+        %%
+        %if EXISTS("ParamSettings.AxesLabels")
+          %assign evalstr     = "ParamSettings.AxesLabels.axes%<idx+1>"
+          %assign label       = STRING(%<evalstr>)
+          %assign labelStr    = labelStr + comma + cr + qt + label + qt
+        %endif
+        %%
+        %% Plot styles
+        %%
+        %foreach tmpIdx = width
+          %assign isDisc = ParamSettings.PlotStyles[plotStyleIdx]
+          %assign plotStyleStr = plotStyleStr + plotStyleComma + "%<isDisc>"
+          %%
+          %% End of loop tasks (plot style loop)
+          %%
+          %assign plotStyleIdx = plotStyleIdx+1
+          %assign plotStyleComma = ", "
+        %endforeach
+        %%
+        %% Titles
+        %%
+        %if EXISTS("ParamSettings.AxesTitles")
+          %assign evalstr     = "ParamSettings.AxesTitles.axes%<idx+1>"
+          %assign title       = STRING(%<evalstr>)
+          %if title != ""
+            %assign titleStr    = titleStr + title
+          %endif
+          %assign titleLenStr = titleLenStr + comma + "%<SIZE(title,1)>"
+        %endif
+        %%
+        %% Is Variable Dimensions
+        %%
+        %assign isVarDims = LibGetIsInputPortVarDims(idx)
+        %assign isVarDimsStr = isVarDimsStr  + comma + "%<isVarDims>"
+        
+        %if (numDims == 1) && (NumDataInputPorts == 1)
+          %if isVarDims
+            %assign hasVarDims = 1
+            %assign currDimsStr = SLibGetCurrentInputPortDimensions(idx, 0)
+          %else
+            %assign currDimsStr = "rt_ScopeSignalWidths[0]"
+          %endif
+          %assign currSigDimsInitStr = "%<typeQ> void *rt_ScopeCurrSigDims[] ={%<nulldef>};"
+          %assign currSigDimsSetStr = "rt_ScopeCurrSigDims[0] = &%<currDimsStr>; \n"
+          %assign currSigDimsSizeStr = %<currSigDimsSize>
+        %else
+          %if alreadyInitCurrDimsStr == 0
+            %assign currSigDimsInitStr = "%<typeQ> void *rt_ScopeCurrSigDims[] = {"
+            %assign alreadyInitCurrDimsStr = 1
+          %endif
+          %foreach dimsIdx = numDims
+            %assign currSigDimsSizeStr = currSigDimsSizeStr + currSigDimsSizeComma + "%<currSigDimsSize>"
+            %assign currSigDimsSizeComma = ", "
+            
+            %if alreadyInitNullCurrDimsStr             
+              %% only place the "," if string already contains "NULL"
+              %assign currSigDimsInitStr = currSigDimsInitStr + ", "
+            %endif
+            %assign currSigDimsInitStr = currSigDimsInitStr + nulldef
+            %assign alreadyInitNullCurrDimsStr = 1
+            
+            %if isVarDims
+              %assign hasVarDims = 1
+              %assign currDimsStr = SLibGetCurrentInputPortDimensions(idx, dimsIdx)
+            %else
+              %assign currDimsStr = "rt_ScopeSignalWidths[0]"
+            %endif           
+            
+            %assign aux = %<dimsIdx>+%<offset>
+            %assign currSigDimsSetStr = currSigDimsSetStr + ...
+              "rt_ScopeCurrSigDims[%<aux>] = &%<currDimsStr>; \n"
+          %endforeach
+          %assign offset = offset + %<numDims>
+        %endif
+         
+        %%
+        %% End of loop tasks (main loop)
+        %%
+        %assign numLoggedSignals = numLoggedSignals+1
+        %assign comma = ", "
+        %assign cr = "\n"
+      %endforeach
+      
+      %if alreadyInitCurrDimsStr
+        %assign currSigDimsInitStr = currSigDimsInitStr + "};"
+      %endif      
+      
+      %%
+      %if numLoggedSignals == 0
+        %assign ParamSettings.SaveToWorkspace = "no"
+        %return
+      %endif
+      {
+      
+      RTWLogSignalInfo rt_ScopeSignalInfo;
+      %if cmplx
+        %<typeQ> int_T  rt_ScopeComplexSignals[]       = {%<cmplx>};
+      %endif
+      %<typeQ> int_T  rt_ScopeSignalWidths[]        = {%<widthStr>};
+      %<typeQ> int_T  rt_ScopeSignalNumDimensions[] = {%<numDimsStr>};
+      %<typeQ> int_T  rt_ScopeSignalDimensions[]    = {%<dimsStr>};
+      %<currSigDimsInitStr>
+      %<typeQ> int_T  rt_ScopeCurrSigDimsSize[]     = {%<currSigDimsSizeStr>};
+      %<typeQ> const char_T *rt_ScopeSignalLabels[] = {%<labelStr>};
+      %<typeQ> char_T rt_ScopeSignalTitles[]        = "%<titleStr>";
+      %<typeQ> int_T  rt_ScopeSignalTitleLengths[]  = {%<titleLenStr>};
+      %<typeQ> boolean_T rt_ScopeSignalIsVarDims[]  = {%<isVarDimsStr>}; 
+      %if !ISEMPTY(plotStyleStr)
+        %<typeQ> int_T  rt_ScopeSignalPlotStyles[]  = {%<plotStyleStr>};
+      %endif
+      BuiltInDTypeId dTypes[%<numLoggedSignals>] = {%<dataTypeStr>};
+      %assign blockPath = STRING(LibGetBlockPath(block))
+      %<typeQ> char_T rt_ScopeBlockName[]          = "%<blockPath>";
+      %if !ISEMPTY(frameBasedStr)
+        %<typeQ> int_T rt_ScopeFrameData[] = {%<frameBasedStr>}; 
+      %endif
+      %<typeQ> RTWPreprocessingFcnPtr rt_ScopeSignalLoggingPreprocessingFcnPtrs[] =\
+      {
+        %<preprocessingFcnPtrsStr>
+      };
+      %if hasVarDims == 1
+        /* set currSigDims field */
+        %<currSigDimsSetStr>
+      %endif
+      
+      rt_ScopeSignalInfo.numSignals       = %<numLoggedSignals>;
+      rt_ScopeSignalInfo.numCols          = rt_ScopeSignalWidths;
+      rt_ScopeSignalInfo.numDims          = rt_ScopeSignalNumDimensions;
+      rt_ScopeSignalInfo.dims             = rt_ScopeSignalDimensions;
+      rt_ScopeSignalInfo.isVarDims        = rt_ScopeSignalIsVarDims;
+      rt_ScopeSignalInfo.currSigDims      = rt_ScopeCurrSigDims; 
+      rt_ScopeSignalInfo.currSigDimsSize  = rt_ScopeCurrSigDimsSize;
+      rt_ScopeSignalInfo.dataTypes        = dTypes;
+      %if cmplx
+        rt_ScopeSignalInfo.complexSignals   = rt_ScopeComplexSignals;
+      %else
+        rt_ScopeSignalInfo.complexSignals   = %<nulldef>;
+      %endif
+      %if !ISEMPTY(frameBasedStr)
+        rt_ScopeSignalInfo.frameData      = rt_ScopeFrameData;
+      %else
+        rt_ScopeSignalInfo.frameData      = %<nulldef>;
+      %endif
+      rt_ScopeSignalInfo.preprocessingPtrs = rt_ScopeSignalLoggingPreprocessingFcnPtrs;
+      rt_ScopeSignalInfo.labels.cptr      = rt_ScopeSignalLabels;
+      rt_ScopeSignalInfo.titles           = rt_ScopeSignalTitles;
+      rt_ScopeSignalInfo.titleLengths     = rt_ScopeSignalTitleLengths;
+      %if !ISEMPTY(plotStyleStr)
+        rt_ScopeSignalInfo.plotStyles     = rt_ScopeSignalPlotStyles;
+      %else
+        rt_ScopeSignalInfo.plotStyles     = %<nulldef>;
+      %endif
+      rt_ScopeSignalInfo.blockNames.cptr  = %<nulldef>;
+      rt_ScopeSignalInfo.stateNames.cptr  = %<nulldef>;
+      rt_ScopeSignalInfo.crossMdlRef      = %<nulldef>;
+      rt_ScopeSignalInfo.dataTypeConvert  = %<nulldef>;
+  
+      
+      %assign logTime  = (ParamSettings.DataFormat == "StructureWithTime")
+      %<SLibGenStructLogVarCreate(logVar, name, logTime, maxDataPoints, ...
+        decimation, ts, "&rt_ScopeSignalInfo", "rt_ScopeBlockName")>
+      if (%<logVar> == %<nulldef>) return;
+      }
+    %endif
+  %elseif  EXISTS("ParamSettings.IsERTMobileTarget" ) && ParamSettings.IsERTMobileTarget 
+    {
+      %assign scopeID = ParamSettings.MobileTargetID
+      %assign mobileScopeProps = STRING(ParamSettings.MobileScopeProperties)
+      
+      %if block.PortBasedSampleTimes == "yes"
+        %assign sampleTimeStr = "%<LibBlockPortSampleTime(0)>" 
+        %foreach pIdx = NumDataInputPorts-1
+          %assign sampleTimeStr = sampleTimeStr + "," + "%<LibBlockPortSampleTime(pIdx+1)>"
+        %endforeach
+      %else
+        %assign blockSampleTimeStr = "%<LibBlockSampleTime(block)>"
+        %assign sampleTimeStr = "%<blockSampleTimeStr>" 
+        %foreach pIdx = NumDataInputPorts-1
+          %assign sampleTimeStr = sampleTimeStr + "," + "%<blockSampleTimeStr>"
+        %endforeach
+      %endif
+      const char* mobileScopeProperties%<scopeID> = "%<mobileScopeProps>";
+      int_T numInputPortsScope%<scopeID> = %<NumDataInputPorts>;
+      int_T scope%<scopeID>ID = %<ParamSettings.MobileTargetID>;
+      real32_T sampleTimes%<scopeID>[%<NumDataInputPorts>] = {%<sampleTimeStr>};
+      INITIALIZE_PLOT(scope%<scopeID>ID,numInputPortsScope%<scopeID>,mobileScopeProperties%<scopeID>,sampleTimes%<scopeID>);
+    }
+    /* End of %<Type>: '%<Name>' */ 
+  %endif
+%endfunction %% Start
+
+
+
+%% Function: Outputs ===========================================================
+%% Abstract:
+%%      If the scope is configured to save it's data, it is not constant, and
+%%      if we are using the standard .mat file logging then write out a
+%%      call to log data. If the sample time of the scope is triggered, then
+%%      we log whenever we are called, otherwise we log only in major time
+%%      steps. Constant sample are handled in the Start function.
+%%
+%function Outputs(block, system) Output
+  %if  (TargetType == "RT" || isRSim) ...
+    && MatFileLogging != 0  ...
+    && CodeFormat != "S-Function"...
+    && ParamSettings.SaveToWorkspace == "yes" ...
+    && !ParamSettings.IsERTMobileTarget ...
+    && NumDataInputPorts > 0
+    %%
+    %assign matrixFormat = (ParamSettings.DataFormat == "Array")
+    %if matrixFormat
+      %assert LibIsDataTypeLogSupported(LibBlockInputSignalDataTypeId(0), TLC_TRUE)
+      %if isRSimWithSolverModule
+	if (%<RTMGet("LogOutput")>) {
+      %elseif (SLibIsERTCodeFormat()) && (NumContStates > 0)
+        if (%<RTMIs("MajorTimeStep")>) {
+      %else
+	{
+      %endif
+      %%
+      %assign uWidth = LibGetRecordWidth(DataInputPort[0]) + 1
+      %assign cmplx = LibBlockInputSignalIsComplex(0)
+      %if !cmplx        
+		real_T u[%<uWidth>];	
+		u[0] = %<checkAndGetDESEngTimeSource(block)>;		
+      %else	    
+        creal_T u[%<uWidth>];
+        u[0].re = %<checkAndGetDESEngTimeSource(block)>; u[0].im = 0.0;
+      %endif
+        
+      %%
+      %assign sigDataType = LibBlockInputSignalDataTypeId(0)
+      %assign logDataType = tSS_DOUBLE
+      %assign width = LibBlockInputSignalWidth(0)+1
+      %if LibIsBuiltInDataType(sigDataType)
+        %assign rollVars = ["U"]
+        %roll idx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+          u[%<FixPt_IndexStruct(width, "", lcv, idx+1)>] = %<LibBlockInputSignal(0,"",lcv,idx)>;
+        %endroll
+      %else
+        {
+          real_T *pU = &u[1];
+          %assign rollVars = ["U"]
+          %roll idx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+            %assign outputLbl = "(*pU)"
+            %assign inputLbl = LibBlockInputSignal(0,"",lcv,idx)
+            %assign convertBetweenFcn = ...
+              LibConvertBetweenTLCFcnName(sigDataType)
+            %if LibConvertBetweenTLCFcnFile(sigDataType) != ""
+              %include "%<LibConvertBetweenTLCFcnFile(sigDataType)>"
+            %endif
+            %assign status = %<convertBetweenFcn> ...
+              (logDataType, sigDataType, inputLbl, "", outputLbl)
+            %if status != 1
+              %%START_ASSERT
+              %assign logDataTypeName = LibGetDataTypeNameFromId(tSS_DOUBLE)
+              %assign errTxt = ...
+                "Error: funcion %<convertBetweenFcn> doesn't support " ...
+                "converting the input signal to type %<logDataTypeName>."
+              %<LibBlockReportFatalError(block, errTxt)>
+              %%END_ASSERT
+            %endif
+            pU++;
+          %endroll
+        }
+      %endif
+      %%
+      %assign logVar = LibBlockPWork(LoggedData, "", "", 0)
+      %assign isVarDims = 0 %% Scope only support fixed-size signal logging
+      %<SLibGenLogVarUpdate(logVar, "u", isVarDims)>
+      %if isRSimWithSolverModule
+	}
+      %else
+	}
+      %endif
+    %else %% structure format
+     %if isRSimWithSolverModule
+      if (%<RTMGet("LogOutput")>)
+     %elseif (SLibIsERTCodeFormat()) && (NumContStates > 0)
+      if (%<RTMIs("MajorTimeStep")>)
+     %endif
+     {
+      StructLogVar *svar = (StructLogVar *)%<LibBlockPWork(LoggedData, "", "", 0)>;
+      LogVar       *var  = svar->signals.values;
+
+      %if ParamSettings.DataFormat == "StructureWithTime"
+        /* time */
+        {	
+		  double locTime = %<checkAndGetDESEngTimeSource(block)>;
+          %% even if the signal is vardims time has to be hardcoded to be fixed dims
+          %assign isVarDims = 0
+          %<SLibGenLogVarUpdate("svar->time", "&locTime", isVarDims)>
+        }
+      %endif
+
+      /* signals */
+      %foreach pIdx = NumDataInputPorts
+        %assign sigDataType = LibBlockInputSignalDataTypeId(pIdx)
+        %%
+        %if (LibIsDataTypeLogSupported(sigDataType, TLC_TRUE) == TLC_FALSE)
+          %continue
+        %endif
+        %%
+      {
+        
+        %assign logDataType = SLibSigToLogDataType(sigDataType, tSS_DOUBLE)
+        %assign cmplx = LibBlockInputSignalIsComplex(pIdx)
+        %if !cmplx
+          %assign logDataTypeName = LibGetDataTypeNameFromId(logDataType)
+        %else
+          %assign logDataTypeName = LibGetDataTypeComplexNameFromId(logDataType)
+        %endif
+        %assign width = LibBlockInputSignalWidth(pIdx)
+        %<logDataTypeName> up%<pIdx>[%<width>];
+
+        %with DataInputPort[pIdx]
+          %assign rollRegion = RollRegions
+        %endwith
+        %if LibIsBuiltInDataType(sigDataType)
+          %roll idx = rollRegion, lcv = RollThreshold, block, "FlatRoller", ""
+            %assign uPtr = LibBlockInputSignalAddr(pIdx,"","",idx)
+            %assign rollWidth = ROLL_ITERATIONS()
+            %if rollWidth > 0
+              %assign numBytes = "%<rollWidth>*sizeof(%<logDataTypeName>)"
+	      (void) %<LibGenMemFcnCall("memcpy", "&up%<pIdx>[%<idx>]", ...
+		uPtr, numBytes)>;
+            %else
+              up%<pIdx>[%<idx>] = %<LibBlockInputSignal(pIdx,"","",idx)>;
+            %endif
+          %endroll
+        %else
+          %assign rollVars = ["u%<pIdx>"]
+          %roll idx = rollRegion, lcv = RollThreshold, block, "Roller", rollVars
+          %assign outputLbl = LibGetIndexedElement("up%<pIdx>","",lcv,idx)
+          %assign inputLbl = LibBlockInputSignal(pIdx,"",lcv,idx)
+          %assign convertBetweenFcn = ...
+            LibConvertBetweenTLCFcnName(sigDataType)
+          %if LibConvertBetweenTLCFcnFile(sigDataType) != ""
+            %include "%<LibConvertBetweenTLCFcnFile(sigDataType)>"
+          %endif
+          %assign status = %<convertBetweenFcn> ...
+            (logDataType, sigDataType, inputLbl, "", outputLbl)
+          %if status != 1
+            %%START_ASSERT
+            %assign logDataTypeName = LibGetDataTypeNameFromId(tSS_DOUBLE)
+            %assign errTxt = ...
+              "Error: funcion %<convertBetweenFcn> doesn't support " ...
+              "converting the input signal to type %<logDataTypeName>."
+            %<LibBlockReportFatalError(block, errTxt)>
+	    %%END_ASSERT
+          %endif
+          %endroll
+        %endif
+        %assign isVarDims = LibGetIsInputPortVarDims(pIdx)
+	%<SLibGenLogVarUpdate("var", "up%<pIdx>", isVarDims)>
+        %if pIdx < NumDataInputPorts-1
+          var = var->next;
+        %endif
+      }
+      %endforeach
+     }
+
+    %endif
+  %elseif EXISTS("ParamSettings.IsERTMobileTarget" ) && ParamSettings.IsERTMobileTarget
+    /* Call plotting routine for a mobile target */
+    %include "scope_mobile.tlc"
+    /* End of %<Type>: '%<Name>' */
+  %elseif Accelerator
+    /* Call into Simulink for Scope */
+    %<SLibCallBlockInSimulink(system, block, "SS_CALL_MDL_OUTPUTS")>
+  %endif
+%endfunction %% Outputs
+
+%% [EOF] scope.tlc

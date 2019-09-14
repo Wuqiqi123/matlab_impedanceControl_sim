@@ -1,0 +1,54 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%% Abstract: Discrete State Space block target file
+
+%implements "DiscreteStateSpace" "C"
+
+%% Function: BlockInstanceSetup ================================================
+%% Abstract:
+%%      Cache Matrix Multiplication code for general realization
+%%
+%function BlockInstanceSetup(block, system) void
+  %<LibBlockSetIsExpressionCompliant(block)>
+  %% cache whether or not state initialization is required
+  %<SLibSetSkipInitializationFlag(system,block,InitialCondition)>
+%endfunction
+
+
+%% InitializeConditions =======================================================
+%%
+%function InitializeConditions(block, system) Output
+  %if NumDWork > 0 && !block.SkipInitialization
+    %<LinLibInitializeConditions(block,system)>
+
+  %endif
+%endfunction
+
+
+%% Outputs ====================================================================
+%%
+%function Outputs(block, system) Output
+  {
+  \
+    %<LinLibOutputs(block, system)>\
+  }
+
+%endfunction
+
+
+%% Update =====================================================================
+%%
+%function Update(block, system) Output
+  %if NumDWork > 0
+    {
+      %<LinLibUpdate(block, system)>\
+    }
+  %endif
+
+%endfunction
+
+%% [EOF] dss.tlc

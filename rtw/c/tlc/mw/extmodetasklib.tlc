@@ -1,0 +1,85 @@
+%% ============================================================================
+%%
+%% Abstract:
+%%
+%%   This system file generates the extmode_task_info.m file containing
+%%   information related to the tasks in the External Mode model.
+%%
+%% Copyright 2017 The MathWorks, Inc.
+%%
+%if EXISTS("_EXTMODETASKLIB_") == 0
+%assign _EXTMODETASKLIB_ = 1
+
+%% Function: SLibWriteExtModeTaskInfoFile =======================================
+%% Abstract:
+%%  The output of this file provides information on the tasks that 
+%%  are part of the External Mode model.
+%%
+%%   Notes
+%%     o in XCP-based external Mode, the extmode_task_info() output
+%%       is used by coder.internal.xcp.updateCodeDescriptor script
+%%       to retrieve the task/rate id assigned to the various signals
+%%       when the model contains ModelRef
+%%
+%function SLibWriteExtModeTaskInfoFile() void
+
+%selectfile STDOUT
+%if RTWVerbose
+### Creating extmode_task_info.m.
+%endif
+%selectfile NULL_FILE
+
+%openfile ExtModeTaskInfoDotM = "extmode_task_info.m"
+function [taskInfo, numtask, isDeploymentDiagram]=extmode_task_info()
+  %assign stOneBased = 1
+
+  %% Concurrent execution is not currently supported
+  %assign isDeploymentDiagram = LibIsDeploymentDiagram()
+  %assert !isDeploymentDiagram
+
+  %foreach st = NumSampleTimes
+    taskInfo(%<stOneBased>).samplePeriod = %<SampleTime[st].PeriodAndOffset[0]>;
+    taskInfo(%<stOneBased>).sampleOffset = %<SampleTime[st].PeriodAndOffset[1]>;
+    taskInfo(%<stOneBased>).taskPrio = %<SampleTime[st].Priority>;
+
+    %if ISEQUAL(1, %<stOneBased>)
+      taskInfo(%<stOneBased>).taskName = 'BaseRate';
+    %else
+      %assign tmprate = stOneBased - 1
+      taskInfo(%<stOneBased>).taskName = ['SubRate' '%<tmprate>'];        
+    %endif
+    taskInfo(%<stOneBased>).entryPoints = {};
+    %assign stOneBased = stOneBased + 1
+  %endforeach
+
+  %assign ntask = stOneBased - 1
+
+  %if ISEQUAL(0, ntask)
+    taskInfo(1).samplePeriod = %<SampleTime[0].PeriodAndOffset[0]>;
+    taskInfo(1).sampleOffset = %<SampleTime[0].PeriodAndOffset[1]>;
+    taskInfo(1).taskPrio = 0;
+    taskInfo(1).taskName = 'BaseRate';
+    taskInfo(1).entryPoints = {};
+    %assign ntask = 1
+  %endif
+
+  numtask = %<ntask>;
+  for i = 1:numtask
+    if ( 0 == isnumeric(taskInfo(i).samplePeriod) )
+      taskInfo(i).samplePeriod = evalin('base', 'str2double(taskInfo(i).samplePeriod)');
+    end
+    if ( isempty(taskInfo(i).taskName) )
+      taskInfo(i).taskName = ['AutoGen' i ];
+    end
+  end
+
+  isDeploymentDiagram = %<isDeploymentDiagram>;
+
+end %%%function extmode_task_info()
+%closefile ExtModeTaskInfoDotM
+%selectfile NULL_FILE
+%endfunction %% SLibWriteExtModeTaskInfoFile
+
+%endif %% _EXTMODETASKLIB_
+
+%% [EOF] extmodetasklib.tlc

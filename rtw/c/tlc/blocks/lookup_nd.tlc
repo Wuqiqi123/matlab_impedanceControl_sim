@@ -1,0 +1,862 @@
+%% File : lookup_nd.tlc (derived from sfun_lookupnd.tlc)
+%%
+%% Copyright 1990-2016 The MathWorks, Inc.
+%%
+%% Abstract: Lookup Table (n-D) Cubic spline mode.
+%%
+
+%implements "Lookup_n-D" "C"
+
+%% Function: BlockInstanceSetup ===============================================
+%% Abstract:
+%%      Register interest in expression folding participation.
+%%
+%function BlockInstanceSetup(block, system) void
+  %% %<LibBlockSetIsExpressionCompliant(block)>
+%endfunction
+
+%% Function FcnSplineSecondDerivInitInSharedUtility =================================
+%% Abstract:
+%function FcnSplineSecondDerivInitInSharedUtility(block) void
+
+  %% Get float or double
+  %assign ioTypeUn = LibBlockOutputSignalDataTypeId(0)
+  %assign ioTypeId = LibGetDataTypeIdAliasedThruToFromId(ioTypeUn)
+
+  %if ioTypeId != tSS_DOUBLE && ioTypeId != tSS_SINGLE
+    %exit "Spline interpolation only supports floating point data types."
+  %endif
+
+  %% Instance info indices for accessing the mapping data
+  %%
+  %assign dTypeIdx   = (ioTypeId == tSS_DOUBLE) ? 0 : 1
+
+  %% Data mappings used to build the function name and descriptions
+  %%
+  %assign DdType      = [ "d", "f" ]
+  %assign DdSuffix    = ["", "F"]
+  %assign DdTypeName  = ["real_T", "real32_T"]
+
+  %% Get the exact instance from map
+  %assign dType       = DdType[dTypeIdx]
+  %assign dSuffix     = DdSuffix[dTypeIdx]
+  %assign dTypeName   = DdTypeName[dTypeIdx]
+
+  %% Build the spline derivative function name
+  %assign derivName = "rt_Spline2Deriv%<dType>"
+
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign derivName = SLibRegisterSharedUtility(block, derivName)
+
+  %% Generate second derivative initialization function - prototype, body.
+  %% Then, call shared utility helper function to place the function
+  %% in appropriate source.
+  %if !(ISFIELD(FixPtUtils, derivName))
+
+    %<LibPushEmptyStackSharedUtils()>
+
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils, derivName,1)
+
+    %% Build the interp fcn prototype
+    %openfile derivFcnBody
+
+    %assign tmpfcnName = "%<derivName>"
+    %assign fcnReturns = "void"
+    %assign fcnParams = ["const %<dTypeName> *x, ", "const %<dTypeName> *y, ",...
+                         "uint32_T n, ", "%<dTypeName> *u, ", "%<dTypeName> *y2"]
+
+    %assign derivDecRoot = "%<fcnReturns> %<tmpfcnName>(%<fcnParams[0]>" + ...
+                            "%<fcnParams[1]>" + "%<fcnParams[2]>" + ...
+                            "%<fcnParams[3]>" + "%<fcnParams[4]>)"
+    %openfile derivPrototype
+    %<derivDecRoot>;
+    %closefile derivPrototype
+
+    {
+      %<dTypeName> p, qn, sig, un;
+      uint32_T  n1, i, k;
+      n1 = n - 1U;
+      y2[0U] = 0.0%<dSuffix>;
+      u[0U]  = 0.0%<dSuffix>;
+      for (i = 1U; i < n1; i++)
+      {
+        %<dTypeName> dxm1 = x[i] - x[i - 1U];
+        %<dTypeName> dxp1 = x[i + 1U] - x[i];
+        %<dTypeName> dxpm = dxp1 + dxm1;
+
+        sig = dxm1 / dxpm;
+        p = (sig * y2[i - 1U]) + 2.0%<dSuffix>;
+        y2[i] = (sig - 1.0%<dSuffix>) / p;
+        u[i] = ((y[i + 1U] - y[i]) / dxp1) - ((y[i] - y[i - 1U]) / dxm1);
+        u[i] = (((6.0%<dSuffix> * u[i]) / dxpm) - (sig * u[i - 1U])) / p;
+      }
+      qn = 0.0%<dSuffix>;
+      un = 0.0%<dSuffix>;
+      y2[n1] = (un - (qn * u[n1 - 1U])) / ((qn * y2[n1 - 1U]) + 1.0%<dSuffix>);
+      for (k = n1; k > 0U; k--)
+      {
+        y2[k-1U] = (y2[k-1U] * y2[k]) + u[k-1U];
+      }
+      return;
+    }
+    %closefile derivFcnBody
+
+    %%  Build the function
+    %openfile derivDef
+
+    %openfile fcnAbstract
+Second derivative initialization function for spline
+for last dimension.
+    %closefile fcnAbstract
+    %createrecord derivFcnRec {Name tmpfcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "utility"; GeneratedBy "lookup_nd.tlc"}
+    %<SLibDumpFunctionBanner(derivFcnRec)>
+    %undef derivFcnRec
+    %<derivDecRoot>
+    %<derivFcnBody>
+    %closefile derivDef
+
+    %% add the rtsplntypes.h include into header and body file
+    %<FcnTrackHeaderFileUsage("rtsplntypes.h", TLC_FALSE, TLC_FALSE)>
+    %openfile rtlookIncl
+    #include "rtsplntypes.h"
+    %closefile rtlookIncl
+
+    %<SLibDumpUtilsSourceCodeWithPrototypeIncludesAndCached(derivName, derivPrototype, derivDef, rtlookIncl)>\
+    %assign derivStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif
+  %%
+  %<FcnTrackSharedUtilHeaderFileUsage(derivName + ".h", TLC_FALSE)>
+  %return derivName
+%endfunction
+
+%% Function FcnGenerateSplineInSharedUtility =================================
+%% Abstract:
+%function FcnGenerateSplineInSharedUtility(block) void
+
+  %% Get float or double
+  %assign ioTypeUn = LibBlockOutputSignalDataTypeId(0)
+  %assign ioTypeId = LibGetDataTypeIdAliasedThruToFromId(ioTypeUn)
+  %assign dTypeRec = DataTypes.DataType[ioTypeId]
+
+  %if ioTypeId != tSS_DOUBLE && ioTypeId != tSS_SINGLE
+    %exit "Spline interpolation only supports floating point data types."
+  %endif
+
+  %% Instance info indices for accessing the mapping data
+  %%
+  %assign interpIdx  = ParamSettings.interpMethod - 1
+  %assert (interpIdx == 2)   %% Assert it is spline interpolation
+  %assign searchIdx  = ParamSettings.searchMode - 1
+  %assign extrapIdx  = ParamSettings.extrapMethod - 1
+  %assert (searchIdx != 0 || ParamSettings.cacheBpFlag == 0)
+  %assign cacheIdx   = (searchIdx == 0) ? 0 : ParamSettings.cacheBpFlag
+  %assign dTypeIdx   = (ioTypeId == tSS_DOUBLE) ? 0 : 1
+
+  %% Data mappings used to build the function name and descriptions
+  %%
+  %assign Dsearch     = [ "Evn", "Lin", "Bin" ]
+  %assign DsearchDesc = ["Evenly-spaced breakpoints", ...
+                         "Linear breakpoint search", ...
+                         "Binary breakpoint search"]
+  %assign Dextrap     = [ "C", "X", "S" ]
+  %assign DextrapDesc = ["Clipping", ...
+                         "Linear extrapolation", ...
+                         "Spline extrapolation"]
+  %assign DcacheBp    = [ "Z", "S" ]
+  %assign DcacheDesc  = ["Index search starts at the same place each time", ...
+                         "Uses previous index search result"]
+  %assign DdType      = [ "d", "f" ]
+  %assign DdSuffix    = ["", "F"]
+  %assign DdTypeName  = ["real_T", "real32_T"]
+
+  %% Get the exact instance from map
+  %assign interp      = "Spl"
+  %assign interpDesc  = "Spline interpolation"
+  %assign search      = Dsearch[searchIdx]
+  %assign searchDesc  = DsearchDesc[searchIdx]
+  %assign extrap      = Dextrap[extrapIdx]
+  %assign extrapDesc  = DextrapDesc[extrapIdx]
+  %assign cache       = DcacheBp[cacheIdx]
+  %assign cacheDesc   = DcacheDesc[cacheIdx]
+  %assign dType       = DdType[dTypeIdx]
+  %assign dSuffix     = DdSuffix[dTypeIdx]
+  %assign dTypeName   = DdTypeName[dTypeIdx]
+  %assign numDims     = "N"
+
+  %if ParamSettings.vectorInputFlag == 0
+    %assign numDims_ev = NumDataInputPorts
+  %else
+    %assign numDims_ev = LibBlockInputSignalWidth(0)
+  %endif
+  %% Build the top-level spline function name
+
+  %if ParamSettings.preCalcSecondDerivFirstDimCoeffs
+    %assign calcCoeff = ""
+  %else
+    %assign calcCoeff = "c"
+  %endif
+
+  %if (search == "Evn")
+    %assign fcnName = "look_SplN" + search + extrap + cache + calcCoeff + dType + "%<numDims_ev>" + "D"
+  %else
+     %assign fcnName = "look_SplN" + search + extrap + cache + calcCoeff + dType
+   %endif
+
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign fcnName = SLibRegisterSharedUtility(block, fcnName)
+
+  %% Build the interpolation function name
+  %assign interpName = "intrp_NSpl" + calcCoeff + dType
+
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign interpName = SLibRegisterSharedUtility(block, interpName)
+
+  %% Generate top-level function - prototype, body.
+  %% Then, call shared utility helper function to place the function
+  %% in appropriate source.
+  %if !(ISFIELD(FixPtUtils, fcnName))
+
+    %<LibPushEmptyStackSharedUtils()>
+
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils, fcnName,1)
+
+    %% Build the top-level fcn prototype
+    %assign fcnParams = ["uint32_T numDims, ", "const %<dTypeName>* u, ", "const rt_LUTSplineWork  * const SWork"]
+    %assign fcnReturns = dTypeName
+    %assign fcnDecRoot = ...
+      "%<fcnReturns> %<fcnName>(%<fcnParams[0]>" + ...
+      fcnParams[1] + fcnParams[2] +")"
+    %openfile fcnPrototype
+    %<fcnDecRoot>;
+    %closefile fcnPrototype
+
+    %% Build the function-body
+    %openfile fcnBody
+    rt_LUTnWork * const TWork_look = SWork->m_TWork;
+    %%
+    %assign idxRef = ""
+    %assign idxRef = (cache == "S") ? "bpIdx[k]" : "dummy"
+    %if (search == "Evn")
+      %assign idxRef = ""
+    %endif
+    %%
+    %<dTypeName>*   const fraction = (%<dTypeName>*) TWork_look->m_bpLambda;
+    uint32_T*       const bpIdx    =                 TWork_look->m_bpIndex;
+    const uint32_T* const maxIndex =                 TWork_look->m_maxIndex;
+
+    %assign checkRangeInCode = ParamSettings.checkRangeInCode
+
+    %if !SLibIsValidCoderContext()
+      %error "Code generation for this block is not supported, if the TLC command is invoked offline"
+    %endif
+
+    %assign rtwCtx = ::CompiledModel.RTWContext
+
+    %if (search == "Evn")
+      const %<dTypeName>* bpData = 0;
+      %assign dims = ParamSettings.tableDims
+      %foreach k = numDims_ev
+        %assign maxId = dims[k]-1
+        bpData = ((const %<dTypeName> * * )TWork_look->m_bpDataSet)[%<k>];
+        %% This needs to be optimized after CGIR fixes
+        %assign vec = FEVAL("rtwprivate", "rtwcgtlc", "PreLookup", rtwCtx, ...
+          dTypeRec, "u[%<k>]", "bpData", idxRef, "bpIdx[%<k>]", ...
+          "fraction[%<k>]", search, interp, extrap, cache, ...
+          "maxIndex[%<k>]", maxId, checkRangeInCode)
+        %<vec[2]>\
+        %assign headers = vec[3]
+        %%The header vector is a row vector
+        %foreach idx = SIZE(headers, 1)
+          %<FcnTrackHeaderFileUsage(headers[idx], TLC_FALSE, TLC_FALSE)>
+        %endforeach
+      %endforeach
+    %else
+      uint32_T    k;
+      for(k = 0U; k < numDims; k++)
+      {
+        const %<dTypeName>* const bpData = ((const %<dTypeName> * const *)TWork_look->m_bpDataSet)[k];
+        %% This needs to be optimized after CGIR fixes
+        %assign vec = FEVAL("rtwprivate", "rtwcgtlc", "PreLookup", rtwCtx, ...
+          dTypeRec, "u[k]", "bpData[0]", idxRef, "bpIdx[k]", "fraction[k]", ...
+          search, interp, extrap, cache, "maxIndex[k]", checkRangeInCode)
+        %%
+        %<vec[2]>\
+        %%
+      }
+      %assign headers = vec[3]
+      %%The header vector is a row vector
+      %foreach idx = SIZE(headers, 1)
+        %<FcnTrackHeaderFileUsage(headers[idx], TLC_FALSE, TLC_FALSE)>
+      %endforeach
+    %endif
+
+
+    %assign eIdx = CAST("Unsigned", extrapIdx+1)
+    %<FcnTrackSharedUtilHeaderFileUsage(interpName + ".h", TLC_FALSE)>
+    return(%<interpName>(numDims, SWork, %<eIdx>));
+    %closefile fcnBody
+
+    %%  Build the function
+    %openfile fcnDef
+    %assign fcnAbstract = "n-D Spline interpolation function"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+         Category "utility"; GeneratedBy "lookup_nd.tlc"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnDecRoot>
+    {
+      /*
+       *   n-D column-major table lookup operating on %<dTypeName> with:
+       *       - %<interpDesc>
+       *       - %<extrapDesc>
+       *       - %<searchDesc>
+       *       - %<cacheDesc>
+       */
+
+      %<fcnBody>
+    }
+    %closefile fcnDef
+
+    %% add the rtsplntypes.h include into header and body file
+    %<FcnTrackHeaderFileUsage("rtsplntypes.h", TLC_FALSE, TLC_FALSE)>
+    %openfile rtlookIncl
+    #include "rtsplntypes.h"
+    %closefile rtlookIncl
+
+    %% Dump using cache_sharedutils utility
+    %<SLibDumpUtilsSourceCodeWithPrototypeIncludesAndCached(fcnName, fcnPrototype, fcnDef, rtlookIncl)>\
+    %assign lookStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif
+  %%
+
+  %% Generate interpolation function - prototype, body.
+  %% Then, call shared utility helper function to place the function
+  %% in appropriate source.
+  %if !(ISFIELD(FixPtUtils, interpName))
+
+    %<LibPushEmptyStackSharedUtils()>
+
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils, interpName,1)
+
+    %% Build the interp fcn prototype
+    %assign tmpfcnName = "%<interpName>"
+    %assign fcnParams = ["uint32_T numDims, ", ...
+      "const rt_LUTSplineWork * const splWork, ", "uint32_T extrapMethod"]
+    %createrecord interpFcnRec {Name tmpfcnName; Returns dTypeName; Params fcnParams}
+    %assign interpDecRoot = ...
+      "%<dTypeName> %<tmpfcnName>(%<fcnParams[0]>" + ...
+                                                   "%<fcnParams[1]>" + ...
+                                                   "%<fcnParams[2]>)"
+    %openfile interpPrototype
+    %<interpDecRoot>;
+    %closefile interpPrototype
+
+    %% Build the interp function-body
+    %openfile interpBody
+    uint32_T il;
+    uint32_T iu, k, i;
+    %if (ParamSettings.hasPrevBp0AndTableData) && (::CompiledModel.ConfigSet.EnableMemcpy == 0)
+      uint32_T index;
+    %endif
+    %<dTypeName>  h, s, p, smsq, pmsq;
+
+    /* intermediate results work areas "this" and "next" */
+
+    const rt_LUTnWork *TWork_interp = (const rt_LUTnWork *)splWork->m_TWork;
+    const %<dTypeName> *fraction    = (%<dTypeName> *)  TWork_interp->m_bpLambda;
+    const %<dTypeName> *yp          = (%<dTypeName> *)  TWork_interp->m_tableData;
+    %<dTypeName> *yyA               = (%<dTypeName> *)  splWork->m_yyA;
+    %<dTypeName> *yyB               = (%<dTypeName> *)  splWork->m_yyB;
+    %<dTypeName> *yy2               = (%<dTypeName> *)  splWork->m_yy2;
+    %<dTypeName> *up                = (%<dTypeName> *)  splWork->m_up;
+    %<dTypeName> *y2                = (%<dTypeName> *)  splWork->m_y2;
+    %if (ParamSettings.hasReCalcFlag)
+      uint8_T* reCalc                 = splWork->m_reCalc;
+    %endif
+    %if (ParamSettings.hasPrevBp0AndTableData)
+      %<dTypeName> *dp                = (%<dTypeName> *)  splWork->m_preBp0AndTable;
+    %endif
+    const %<dTypeName> **bpDataSet  = (const %<dTypeName> **) TWork_interp->m_bpDataSet;
+    const %<dTypeName> *xp          = bpDataSet[0U];
+    %<dTypeName> *yy                = yyA;
+    uint32_T bufBank         = 0U;
+    uint32_T  len            = TWork_interp->m_maxIndex[0U] + 1U;
+
+    %if !(ParamSettings.preCalcSecondDerivFirstDimCoeffs)
+      %if (ParamSettings.hasPrevBp0AndTableData)
+        /* compare bp0 and table to see whether they get changed */
+        {
+          %if ::CompiledModel.ConfigSet.EnableMemcpy
+            /* compare the bp0 data */
+            if(%<LibGenMemFcnCall("memcmp", "dp", "xp", "len * sizeof(%<dTypeName>)")> != 0)
+            {
+              *reCalc = 1;
+              (void) %<LibGenMemFcnCall("memcpy", "dp", "xp", "len * sizeof(%<dTypeName>)")>;
+            }
+
+            /* compare the table data */
+            dp = &(dp[len]);
+            if(%<LibGenMemFcnCall("memcmp", "dp", "yp", "len * splWork->m_numYWorkElts[0U] * sizeof(%<dTypeName>)")> != 0)
+            {
+              *reCalc = 1;
+              (void) %<LibGenMemFcnCall("memcpy", "dp", "yp", "len * splWork->m_numYWorkElts[0U] * sizeof(%<dTypeName>)")>;
+            }
+          %else
+            /* compare the bp0 data */
+            for (i = 0U; i < len; i++)
+            {
+              if(dp[i] != xp[i])
+              {
+                *reCalc = 1;
+                dp[i] = xp[i];
+              }
+            }
+            dp = &(dp[len]);
+            /* compare the table data */
+            index = 0;
+            for (i = 0U; i < splWork->m_numYWorkElts[0U]; i++)
+            {
+              for (k = 0U; k < len; k++)
+              {
+                if (dp[index] != yp[index])
+                {
+                  *reCalc = 1;
+                  dp[index] = yp[index];
+                }
+                ++index;
+              }
+            }
+          %endif
+        }
+      %endif
+      %%end of hasPrevBp0AndTableData
+      %if (ParamSettings.hasReCalcFlag)
+        if (*reCalc == 1) {
+      %endif
+
+      /* If table and bps are tunable calculate 1st dim 2nd deriv */
+      /* Generate first dimension's second derivatives */
+      for (i = 0U; i < splWork->m_numYWorkElts[0U]; i++)
+      {
+        %% Build the spline derivative function name
+        %assign derivName = FcnSplineSecondDerivInitInSharedUtility(block)
+        %<derivName>(xp, yp, len, up, y2);
+        yp = &yp[len];
+        y2 = &y2[len];
+      }
+
+      /* Set pointers back to beginning */
+      yp = (const %<dTypeName> *) TWork_interp->m_tableData;
+      y2 =       (%<dTypeName> *) splWork->m_y2;
+
+      %if (ParamSettings.hasReCalcFlag)
+        }
+        *reCalc = 0;
+      %endif
+    %endif
+    %%end of preCalcSecondDerivFirstDimCoeffs
+    /* Generate at-point splines in each dimension */
+    for( k = 0U; k < numDims; k++ )
+    {
+
+      /* this dimension's input setup */
+
+      xp   = bpDataSet[k];
+      len  = TWork_interp->m_maxIndex[k] + 1U;
+      il   = TWork_interp->m_bpIndex[k];
+      iu   = il + 1U;
+      h    = xp[iu] - xp[il];
+      p    = fraction[k];
+      s    = 1.0%<dSuffix> - p;
+      pmsq = p * ((p*p) - 1.0%<dSuffix>);
+      smsq = s * ((s*s) - 1.0%<dSuffix>);
+
+      /*
+       * Calculate spline curves for input in this
+       * dimension at each value of the higher
+       * other dimensions\' points in the table.
+       */
+
+      if ( (p > 1.0%<dSuffix>) && (extrapMethod == 2U) )
+      {
+        %<dTypeName> slope;
+        for (i = 0U; i < splWork->m_numYWorkElts[k]; i++)
+        {
+          slope = (yp[iu] - yp[il]) + ((y2[il]*h*h)*(1.0%<dSuffix>/6.0%<dSuffix>));
+          yy[i] = yp[iu] + (slope * (p-1.0%<dSuffix>));
+          yp = &yp[len];
+          y2 = &y2[len];
+        }
+      }
+      else if ( (p < 0.0%<dSuffix>) && (extrapMethod == 2U) )
+      {
+        %<dTypeName> slope;
+        for (i = 0U; i < splWork->m_numYWorkElts[k]; i++)
+        {
+          slope = (yp[iu] - yp[il]) - ((y2[iu]*h*h)*(1.0%<dSuffix>/6.0%<dSuffix>));
+          yy[i] = yp[il] + (slope * p);
+          yp = &yp[len];
+          y2 = &y2[len];
+        }
+      }
+      else
+      {
+        for (i = 0U; i < splWork->m_numYWorkElts[k]; i++)
+        {
+          yy[i] = yp[il] + p * (yp[iu] - yp[il]) +
+            ((smsq * y2[il] + pmsq * y2[iu])*h*h)*(1.0%<dSuffix>/6.0%<dSuffix>);
+          yp = &yp[len];
+          y2 = &y2[len];
+        }
+      }
+
+      /* set pointers to new result and calculate second derivatives */
+
+      yp = yy;
+      y2 = yy2;
+
+      if ( splWork->m_numYWorkElts[k+1U] > 0U )
+      {
+        uint32_T      nextLen = TWork_interp->m_maxIndex[k+1U] + 1U;
+        const %<dTypeName> *nextXp  = bpDataSet[k+1U];
+
+        for (i = 0U; i < splWork->m_numYWorkElts[k+1U]; i++)
+        {
+          %% Build the spline derivative function name
+          %assign derivName = FcnSplineSecondDerivInitInSharedUtility(block)
+           %<derivName>(nextXp, yp, nextLen, up, y2);
+          yp = &yp[nextLen];
+          y2 = &y2[nextLen];
+        }
+      }
+
+      /*
+       * Set work vectors yp, y2 and yy for next iteration;
+       * the yy just calculated becomes the yp in the
+       * next iteration, y2 was just calculated for these
+       * new points and the yy buffer is swapped to the space
+       * for storing the next iteration\'s results.
+       */
+
+      yp = yy;
+      y2 = yy2;
+
+      /*
+       * Swap buffers for next dimension and
+       * toggle bufBank for next iteration.
+       */
+      if (bufBank == 0U)
+      {
+        yy      = yyA;
+        bufBank = 1U;
+      }
+      else
+      {
+        yy      = yyB;
+        bufBank = 0U;
+      }
+    }
+
+    return( yp[0U] );
+    %closefile interpBody
+
+    %%  Build the function
+    %openfile interpDef
+
+    %assign fcnAbstract = "n-D natural spline calculation function"
+    %addtorecord interpFcnRec Abstract fcnAbstract Category "utility" GeneratedBy "lookup_nd.tlc"
+    %<SLibDumpFunctionBanner(interpFcnRec)>
+    %undef interpFcnRec
+    %<interpDecRoot>
+    {
+      %<interpBody>
+    }
+    %closefile interpDef
+
+    %% add the rtsplntypes.h include into header and body file
+    %<FcnTrackHeaderFileUsage("rtsplntypes.h", TLC_FALSE, TLC_FALSE)>
+    %openfile rtlookIncl
+    #include "rtsplntypes.h"
+    %closefile rtlookIncl
+
+    %<SLibDumpUtilsSourceCodeWithPrototypeIncludesAndCached(interpName, interpPrototype, interpDef, rtlookIncl)>\
+    %assign interpStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif
+
+  %% Generate second derivative initialization function - prototype, body.
+  %% Then, call shared utility helper function to place the function
+  %% in appropriate source.
+
+  %assign tmpfcnName = FcnSplineSecondDerivInitInSharedUtility(block)
+
+  %%
+  %return fcnName
+%endfunction
+
+%% Start ======================================================================
+%% Abstract:
+%%    Initialize the state information (first input & time)
+%%
+%function Start(block, system) Output
+  %assign NUM_DIMS_FOR_TWORK = 6
+  %assign INTERP_FLAT        = 1
+  %assign INTERP_LINEAR      = 2
+  %assign INTERP_SPLINE      = 3
+  %assign interpMethod       = ParamSettings.interpMethod
+  %assign idxTypeId          = tSS_UINT32
+  %assign idxType            = LibGetDataTypeNameFromId(idxTypeId)
+  %assign ioTypeUn = LibBlockOutputSignalDataTypeId(0)
+  %assign ioTypeId = LibGetDataTypeIdAliasedThruToFromId(ioTypeUn)
+
+  %if ioTypeId != tSS_DOUBLE && ioTypeId != tSS_SINGLE
+    %exit "Spline interpolation only supports floating point data types."
+  %endif
+
+  %assign dTypeIdx   = (ioTypeId == tSS_DOUBLE) ? 0 : 1
+  %assign DdTypeName  = ["real_T", "real32_T"]
+  %assign dTypeName   = DdTypeName[dTypeIdx]
+  %assign DdType      = [ "d", "f" ]
+  %assign dType       = DdType[dTypeIdx]
+
+  %%
+  %if ParamSettings.vectorInputFlag == 0
+    %assign numDims = NumDataInputPorts
+  %else
+    %assign numDims = LibBlockInputSignalWidth(0)
+  %endif
+  %assign dims     = ParamSettings.tableDims
+  %%
+  %if ParamSettings.vectorInputFlag == 0
+    %assign numEl = NumDataInputPorts
+  %else
+    %assign numEl = LibBlockInputSignalWidth(0)
+  %endif
+  %%
+  %if (interpMethod == INTERP_SPLINE )
+    %%
+    %% Need TWork setup.
+    %%
+    {
+    rt_LUTnWork *TWork_start = (rt_LUTnWork *) %<LibBlockDWorkAddr(TWork,"","",0)>;
+    void **bpDataSet = (void **) %<LibBlockDWorkAddr(m_bpDataSet,"","",0)>;
+    TWork_start->m_dimSizes  = (const %<idxType> *) %<LibBlockParameterBaseAddr(dimSizes)>;
+    TWork_start->m_tableData = (void *) %<LibBlockParameterBaseAddr(Table)>;
+    TWork_start->m_bpDataSet = bpDataSet;
+    TWork_start->m_bpIndex   = %<LibBlockDWorkAddr(m_bpIndex,"","",0)>;
+    TWork_start->m_bpLambda  = %<LibBlockDWorkAddr(m_bpLambda,"","",0)>;
+    TWork_start->m_maxIndex  = (const %<idxType> *) %<LibBlockParameterBaseAddr(maxIndex)>;
+
+    %foreach idx = numDims
+      %assign lzIdx   = FEVAL("sprintf","%d",idx+1)
+      %assign rtpName = "BreakpointsForDimension%<lzIdx>"
+      bpDataSet[%<idx>] = (void *) %<LibBlockParameterBaseAddr(GETFIELD(block,rtpName))>;
+    %endforeach
+    }
+  %%
+    %%
+    %% Spline interpolation setup.
+    %%
+    {
+      %if ((ParamSettings.preCalcSecondDerivFirstDimCoeffs) || (ParamSettings.hasPrevBp0AndTableData))
+        const %<dTypeName> **bpDataSet;
+        const %<dTypeName> *xp, *yp;
+        %if (ParamSettings.preCalcSecondDerivFirstDimCoeffs)
+          %<dTypeName> *up, *y2;
+          uint32_T i, len;
+        %endif
+        %if (ParamSettings.hasPrevBp0AndTableData)
+          %if (::CompiledModel.ConfigSet.EnableMemcpy == 0)
+            uint32_T i, j, index;
+          %endif
+          %<dTypeName> *dp;
+          uint32_T len;
+        %endif
+        const rt_LUTnWork *TWork_interp;
+      %endif
+
+      %<FcnTrackHeaderFileUsage("rtsplntypes.h", TLC_FALSE, TLC_FALSE)>
+      rt_LUTSplineWork *rt_SplWk = (rt_LUTSplineWork*)%<LibBlockDWorkAddr(SWork,"","",0)>;
+
+      rt_SplWk->m_TWork = (rt_LUTnWork*)%<LibBlockDWorkAddr(TWork, "", "", 0)>;
+      rt_SplWk->m_yyA   = %<LibBlockDWorkAddr(m_yyA, "", "", 0)>;
+      rt_SplWk->m_yyB   = %<LibBlockDWorkAddr(m_yyB, "", "", 0)>;
+      rt_SplWk->m_yy2   = %<LibBlockDWorkAddr(m_yy2, "", "", 0)>;
+      rt_SplWk->m_up    = %<LibBlockDWorkAddr(m_up,  "", "", 0)>;
+      rt_SplWk->m_y2    = %<LibBlockDWorkAddr(m_y2,  "", "", 0)>;
+      rt_SplWk->m_numYWorkElts = %<LibBlockParameterBaseAddr(numYWorkElts)>;
+      %%
+      %if (ParamSettings.hasReCalcFlag)
+        rt_SplWk->m_reCalc = %<LibBlockDWorkAddr(reCalcSecDerivFirstDimCoeffs,  "", "", 0)>;
+      %endif
+      %if (ParamSettings.hasPrevBp0AndTableData)
+        rt_SplWk->m_preBp0AndTable = %<LibBlockDWorkAddr(prevBp0AndTableData,  "", "", 0)>;
+      %endif
+
+      %if (ParamSettings.hasReCalcFlag)
+        *rt_SplWk->m_reCalc = 1;
+      %endif
+
+      %%
+      %if (ParamSettings.hasPrevBp0AndTableData)
+        /* cache table data and first breakpoint data */
+        TWork_interp = (const rt_LUTnWork *)rt_SplWk->m_TWork;
+        bpDataSet = (const %<dTypeName> **) TWork_interp->m_bpDataSet;
+        xp  = bpDataSet[0U];
+        len = TWork_interp->m_maxIndex[0U] + 1U;
+        dp  = (%<dTypeName> *) rt_SplWk->m_preBp0AndTable;
+        yp  = (%<dTypeName> *) TWork_interp->m_tableData;
+        %if ::CompiledModel.ConfigSet.EnableMemcpy
+          (void) %<LibGenMemFcnCall("memcpy", "dp", "xp", "len * sizeof(%<dTypeName>)")>;
+          dp = &(dp[len]);
+          /* save the table data */
+          (void) %<LibGenMemFcnCall("memcpy", "dp", "yp", "len * rt_SplWk->m_numYWorkElts[0U] * sizeof(%<dTypeName>)")>;
+        %else
+          /* save the bp0 data */
+          for (j = 0U; j < len; j++)
+          {
+            dp[j] = xp[j];
+          }
+          dp = &(dp[len]);
+          /* save the table data */
+          index = 0;
+          for (i = 0U; i < rt_SplWk->m_numYWorkElts[0U]; i++)
+          {
+            for (j = 0U; j < len; j++)
+            {
+              dp[index] = yp[index];
+            }
+            ++index;
+          }
+        %endif
+      %endif
+      %if ParamSettings.preCalcSecondDerivFirstDimCoeffs
+        /* If table and bps are not-tunable then precalculate 1st dim 2nd deriv */
+        TWork_interp = (const rt_LUTnWork *)rt_SplWk->m_TWork;
+        bpDataSet = (const %<dTypeName> **) TWork_interp->m_bpDataSet;
+        xp  = bpDataSet[0U];
+        yp  = (%<dTypeName> *)  TWork_interp->m_tableData;
+        len = TWork_interp->m_maxIndex[0U] + 1U;
+        up  = (%<dTypeName> *)  rt_SplWk->m_up;
+        y2  = (%<dTypeName> *)  rt_SplWk->m_y2;
+
+        /* Generate first dimension's second derivatives */
+        for (i = 0U; i < rt_SplWk->m_numYWorkElts[0U]; i++)
+        {
+          %% Build the spline derivative function name
+          %assign derivName = FcnSplineSecondDerivInitInSharedUtility(block)
+          %<derivName>(xp, yp, len, up, y2);
+          yp = &yp[len];
+          y2 = &y2[len];
+        }
+      %endif
+    }
+  %else
+    %% This tlc file should only be used if spline interpolation is requested.
+    %setcommandswitch "-v1" %% force TLC stack trace
+    %exit This function should only be used for splines.
+  %endif
+
+%endfunction
+
+
+%% Function: Outputs ==========================================================
+%% Abstract:
+%%    Perform indicated interpolation using run time library functions.
+%%
+%function Outputs(block, system) Output
+  %assign INTERP_FLAT   = 1
+  %assign INTERP_LINEAR = 2
+  %assign INTERP_SPLINE = 3
+  %%
+  %assign BPSEARCH_EVEN   = 1
+  %assign BPSEARCH_LINEAR = 2
+  %assign BPSEARCH_BINARY = 3
+  %%
+  %assign ioType    = LibBlockOutputSignalDataTypeName(0,"")
+  %if ParamSettings.vectorInputFlag == 0
+    %assign numDims = NumDataInputPorts
+  %else
+    %assign numDims = LibBlockInputSignalWidth(0)
+  %endif
+  %assign numDimsArg = CAST("Unsigned", numDims)
+  %%
+  %assign dims           = ParamSettings.tableDims
+  %assign tabDimsStr     = "%<CAST("Number", dims[0])>"
+  %foreach i = %<SIZE(dims,1)*SIZE(dims,0)-1>
+    %assign tabDimsStr = tabDimsStr + " x " + "%<CAST("Number", dims[i+1])>"
+  %endforeach
+  %assign interpStr = [ "None - Flat Look-Up", "Linear", "Spline" ]
+  %assign extrapStr = [ "None - Clip", "Linear", "Spline" ]
+  %assign Dsearch   = [ "Evenly Spaced Points", "Linear", "Binary" ]
+  %assign bpCache   = [ "OFF", "ON" ]
+  %openfile comment
+   *       Table size:  %<tabDimsStr>
+   *    Interpolation:  %<interpStr[ParamSettings.interpMethod-1]>
+   *    Extrapolation:  %<extrapStr[ParamSettings.extrapMethod-1]>
+   *   Breakpt Search:  %<Dsearch[ParamSettings.searchMode - 1]>
+   *    Breakpt Cache:  %<bpCache[ParamSettings.cacheBpFlag]>
+  %closefile comment
+  %<LibCacheBlockComment(block, comment)>
+  %assign y       = LibBlockOutputSignal(0,"","",0)
+  %%
+  %if  ParamSettings.interpMethod != INTERP_SPLINE
+    %% This tlc file should only be used if spline interpolation is requested.
+    %setcommandswitch "-v1" %% force TLC stack trace
+    %exit This function should only be used for splines.
+  %else
+    %%
+    %%  Spline cases
+    %%
+    %assign splFcnName = FcnGenerateSplineInSharedUtility(block)
+    %<FcnTrackSharedUtilHeaderFileUsage(splFcnName + ".h", TLC_FALSE)>
+    %<FcnTrackHeaderFileUsage("rtsplntypes.h", TLC_FALSE, TLC_FALSE)>
+    %assign xSWork = "(rt_LUTSplineWork*)%<LibBlockDWorkAddr(SWork,"","",0)>"
+    %if (numDims == 1)
+      %%
+      %% 1-D (inputs always contiguous)
+      %%
+      %assign u = LibBlockInputSignalAddr(0,"","",0)
+      %<y> = %<splFcnName>(%<numDimsArg>, %<u>, %<xSWork>);
+    %else
+      %%
+      %% n-D
+      %%
+      %if (ParamSettings.vectorInputFlag == 0)
+	{
+	  %<ioType> rt_LUTuVect[%<numDims>];
+
+	  %foreach idx = numDims
+	    rt_LUTuVect[%<idx>] = %<LibBlockInputSignal(idx,"","",0)>;
+	  %endforeach
+	  %<y> = %<splFcnName>(%<numDimsArg>, rt_LUTuVect, %<xSWork>);
+	}
+      %else
+	%%
+	%% Get base address only since block requires contiguous inputs
+	%%
+	%assign u = LibBlockInputSignalAddr(0,"","",0)
+        %<y> = %<splFcnName>(%<numDimsArg>, %<u>, %<xSWork>);
+      %endif
+    %endif
+  %endif
+  %% next line is intentionally blank whitespace
+
+%endfunction
+
+%% [EOF] lookup_nd.tlc

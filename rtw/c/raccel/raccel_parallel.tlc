@@ -1,0 +1,38 @@
+%% ============================================================================
+%% File : raccel_parallel.tlc
+%%
+%% Abstract:
+%%   Code for rapid accelerator parallel simulation.
+%%
+%% 
+%% Copyright 2013 The MathWorks, Inc.
+%%
+%% ============================================================================
+%function SLibDumpRapidAcceleratorParallelModelFunctions()
+  %openfile ModelFunctions
+  %if (::CompiledModel.BlockDiagramType == "deploymentdiagram") && isRAccel && !IsModelReferenceTarget() && CompiledModel.ParallelExecutionInRapidAccelerator
+    
+   void MdlOutputs(int_T tid) {
+     switch(tid) {
+       %foreach tidIdx = NumRuntimeExportedRates
+         case %<tidIdx>:
+            MdlOutputsTID%<tidIdx>(%<tidIdx>);
+         break;
+       %endforeach
+     }
+   }
+   
+   void MdlUpdate(int_T tid) {
+     switch(tid) {
+       %foreach tidIdx = NumRuntimeExportedRates
+         case %<tidIdx>:
+            MdlUpdateTID%<tidIdx>(%<tidIdx>);
+         break;
+       %endforeach
+     }
+   }
+   
+   %endif
+  %closefile ModelFunctions
+  %return ModelFunctions
+%endfunction

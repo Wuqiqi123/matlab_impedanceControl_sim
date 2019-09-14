@@ -1,0 +1,1239 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   This system TLC library file contains functions that are common
+%%   between the different code generators for producing the the model's
+%%   continues states  structure definition.
+
+%if EXISTS("_COMMONHDR_CSTATELIB_") == 0
+%assign _COMMONHDR_CSTATELIB_ = 1
+
+%% ============================================================================
+%% Create global cache variables to hold each structure definition
+%% Note: These will hold only the outermost structure definition and are used 
+%% only for determining if they are empty or not for adding a free line
+%% to the Terminate function.
+%% ============================================================================
+
+%<LibAddToCompiledModel("ContStatesStructDefn", 0)>
+%<LibAddToCompiledModel("PrevZCStatesStructDefn", 0)>
+%<LibAddToCompiledModel("ZCSignalValueStructDefn", 0)>
+
+%% Function: SLibGetSystemCStates  ===========================================
+%% Abstract:
+%%      Returns the contents of a system's Continuous State structure.
+%% 
+%function SLibGetSystemCStates(sysIdx)
+  %assign sysCStates    = ""
+  %assign cstatesArg    = System[sysIdx].Interface.ContStatesArgDef
+  %assign childTypeDefs = ...
+    FcnGetChildSystemTypedefs(sysIdx, "CStates", "ContStates")
+  %assign numElements   = childTypeDefs[1]
+  %assign res           = ["", 0]
+  %openfile sysCStates
+  %if cstatesArg.NumFlatFields > 0
+    %with ::CompiledModel.ContStates
+      %foreach csIdx = cstatesArg.NumFlatFields
+	%assign cs = ContState[cstatesArg.FirstLocation + csIdx]
+	%with cs
+	  %assign comment  = "/* %<SLibGrBlockCommentName(GrSrc)> */"
+          %assign isMdlRef = FcnOwnerBlkType(cs) == "ModelReference"
+          %if isMdlRef
+            %assign blk = System[cs.SigSrc[0]].Block[cs.SigSrc[2]]
+	    %assign intrf = GetModelrefInterface(blk)
+            %assign width = CAST("Number", %<intrf.xOptWidth>)
+            %assert (width > 0)
+            %assign optWidth = LibOptionalVectorWidth(width)
+            %<intrf.xDataType> %<Identifier>%<optWidth>;  %<comment>
+	  %else
+	    %assign optWidth = LibOptionalVectorWidth(Width)
+	    real_T %<Identifier>%<optWidth>; %<comment>
+	  %endif
+	  %assign numElements = numElements + 1
+	%endwith %% cs
+      %endforeach
+    %endwith
+  %endif
+  %<childTypeDefs[0]>\
+  %closefile sysCStates
+  %assert (LibGetFieldSet(System[sysIdx], "HasCStatesArg") == 0)
+  %if numElements > 0
+    %assign System[sysIdx].HasCStatesArg = 1
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasCStatesArg")>
+  %if numElements > 0
+    %assign res[0] = "%<sysCStates>"
+    %assign res[1] = %<numElements>
+  %endif
+  %return res %% return [%<sysCStates>, %<numElements>] 
+%endfunction
+
+%% Function: FcnGetSystemStateVarsForPartition  ================================
+%% Abstract:
+%%      Returns the contents of a partition's continuous variable given the
+%%      variable type and structure keyword
+%% 
+%function FcnGetSystemStateVarsForPartition(pid, varType, struct, typetag) void
+  %assign numVars = 0
+  %assign res = ["", 0]
+  
+  %openfile partStateVars
+  %foreach cid = ContStates.NumContStates
+    %with ContStates.ContState[cid]
+      %if PID == pid
+        %assign comment  = "/* '%<SLibGrBlockName(GrSrc)>' */"
+        %assign isMdlRef = FcnOwnerBlkType(ContStates.ContState[cid]) == "ModelReference"
+        %if isMdlRef
+          %assign blk = System[SigSrc[0]].Block[SigSrc[2]]
+          %assign intrf = GetModelrefInterface(blk)
+          %assign width = CAST("Number", %<intrf.xOptWidth>)
+          %assert (width > 0)
+          %assign optWidth = LibOptionalVectorWidth(width)
+          %assign structType = intrf.%<varType>
+          %<structType> %<Identifier>%<optWidth>;  %<comment>
+        %else
+          %assign optWidth = LibOptionalVectorWidth(Width)
+          real_T %<Identifier>%<optWidth>; %<comment>
+        %endif
+        %assign numVars = numVars + 1
+      %endif
+    %endwith %% ContState[cid]
+  %endforeach
+  %closefile partStateVars
+  %assign ::GlobalCurrentPID = pid
+  %assign childTypeDefs = ...
+    FcnGetChildSystemTypedefs(NumSystems - 1, struct, typetag)
+  %assign ::GlobalCurrentPID = []
+  %assign partStateVars = "%<partStateVars> %<childTypeDefs[0]>"
+  %assign numVars = numVars + childTypeDefs[1]
+  
+  %if numVars > 0
+    %assign res[0] = "%<partStateVars>"
+    %assign res[1] = %<numVars>
+  %endif
+  %return res %% return [%<partStateVars>, %<numVars>] 
+%endfunction
+
+%% Function: LibCacheSystemCStatesStructDef  =========================
+%% Abstract:
+%%   Cache the definition of the system's continuous states structure.
+%function LibCacheSystemCStatesStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  
+  %% Partition grouping caches continuous states by following the
+  %% decreasing order of pid
+  %if SLibPartitionGroupingSystem(System[sysIdx])
+    %assign cstatesBuff = ["", 0]
+  
+    %foreach pid = SLibGetNumPartitions()
+      %assign partCStatesBuff = FcnGetSystemStateVarsForPartition(pid, "xDataType", "CStates", "ContStates")
+      %assign cstatesBuff[0] = "%<partCStatesBuff[0]> %<cstatesBuff[0]>"
+      %assign cstatesBuff[1] = cstatesBuff[1] + partCStatesBuff[1]
+    %endforeach
+    
+    %if cstatesBuff[1] > 0
+      %assign System[NumSystems - 1].HasCStatesArg = 1
+    %endif
+    
+    %if !LibGetFieldSet(System[sysIdx], "HasCStatesArg")
+      %<LibSetFieldSet(System[NumSystems - 1], "HasCStatesArg")>
+    %endif
+  %else
+    %assign cstatesBuff = SLibGetSystemCStates(sysIdx)
+  %endif
+  %assign cstatesDef = ""
+  %if (sysIdx < (NumSystems-1))
+    %assign identifier = FcnSysVarGroupType(System[sysIdx],"ContStates")
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* Continuous states for %<sysInfo> */
+    %closefile comment
+  %else
+    %assign ::CompiledModel.ContStatesStructDefn = ...
+      WHITE_SPACE(cstatesBuff[0])?"":"Nonempty"
+    %assign identifier = ::tContStateType
+    %openfile comment
+    /* Continuous states (%<::AutoOrDefaultStorageClass> storage) */
+    %closefile comment
+  %endif
+
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  %if cstatesBuff[1] > 0 
+    %openfile cstatesDef
+    %<userTypes>\
+    
+    %<comment>\
+    %<GetHideChildDefineSymbol("ifndef")>\
+    typedef struct {
+      %<cstatesBuff[0]>
+    } %<identifier>;
+    %<GetHideChildDefineSymbol("endif")>\
+
+    %closefile cstatesDef
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_continue_typedef", System[sysIdx], cstatesDef)>
+%endfunction
+
+%% Function: SLibGetSystemPeriodicCStates
+%% Abstract:
+%%   Returns the definiton of the periodic state vector.
+%%
+%function SLibGetSystemPeriodicCStates(sysIdx) void
+  %% This is typedef of the global (model-wide) periodic state vector.
+  %% It only appears at the root level.
+  %assert (sysIdx == GetBaseSystemIdx())  
+
+  %assign sysPeriodicCStates = ""
+  
+  %% Periodic continuous state vector is assembled at the root-level only -- do not dive 
+  %% into child systems.
+  %assign numElements   = 0  
+  %assign res           = ["", 0]
+  %assign numPeriodicContStates = ::CompiledModel.NumPeriodicContStates
+  %if numPeriodicContStates > 0
+    %openfile sysPeriodicCStates
+    %assign numElements = numElements+1
+    typedef int_T  %<tPeriodicStateIndType>[%<numPeriodicContStates>];
+    typedef real_T %<tPeriodicStateRngType>[%<numPeriodicContStates+numPeriodicContStates>];
+    %closefile sysPeriodicCStates
+  %endif
+  %assert (LibGetFieldSet(System[sysIdx], "HasPeriodicCStatesArg") == 0)
+  %if numElements > 0
+    %assign res[0] = "%<sysPeriodicCStates>"
+    %assign res[1] = %<numElements>
+    %assign System[sysIdx].HasPeriodicCStatesArg = 1
+  %else
+    %assign System[sysIdx].HasPeriodicCStatesArg = 0
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasPeriodicCStatesArg")>
+  %return res
+%endfunction
+
+%% Function: LibCacheSystemPeriodicCStatesStructDef
+%% Abstract:
+%%   Cache the (global) periodic continuous state vector definition
+%%
+%function LibCacheSystemPeriodicCStatesStructDef(sysIdx) void
+  %% The global (model-wide) periodic state vector should only appear at the root level.
+  %assert (sysIdx == GetBaseSystemIdx())  
+
+  %assign pstatesBuff = SLibGetSystemPeriodicCStates(sysIdx)
+  %assign pstatesDef = ""
+  %assign ::CompiledModel.TypedefsCache = ""
+  %if pstatesBuff[1] > 0 
+    %openfile comment
+    /* Periodic continuous state vector (global) */
+    %closefile comment
+    %assign userTypes = LibDumpTypedefsCache()
+    %openfile pstatesDef
+    %<userTypes>\
+      %<comment>\
+      %<GetHideChildDefineSymbol("ifndef")>\
+      %<pstatesBuff[0]>
+      %<GetHideChildDefineSymbol("endif")>\
+    %closefile pstatesDef
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_continue_typedef", System[sysIdx], pstatesDef)>
+%endfunction
+
+%% Function:  SLibGetNonContDerivSig =========================================
+%% Abstract:
+%%    Set up the cache data typedef for discrete derivative signal
+%function SLibGetNonContDerivSig() void
+  %openfile nonContDerivSig
+  %if SolverType == "VariableStep" && ...
+    CodeFormat == "S-Function" && !Accelerator
+    %assign nDU = SolverResetInfo.NumNonContDerivSignals
+    %if nDU > 0
+      %assign dU = "nonContDerivSigCache_%<LibGetModelName()>_T"
+      typedef struct {
+	%foreach idx = nDU
+	  %%
+	  %assign sigSrc = SolverResetInfo.NonContDerivSignal[idx].SigSrc
+	  %assign startEl = SolverResetInfo.NonContDerivSignal[idx].StartEl
+	  %assign regLen = SolverResetInfo.NonContDerivSignal[idx].RegionLen
+	  %%
+	  %assign idNum = IDNUM(sigSrc)
+	  %assert (idNum[0] == "B")
+	  %if idNum[1] < BlockOutputs.NumGlobalBlockOutputs
+	    %assign bo = BlockOutputs.GlobalBlockOutput[idNum[1]]
+	    %assert (LibGetRecordWidth(bo) >= regLen + startEl)
+	    %assert (bo.Invariant == "no")
+	    %assert (!LibGetRecordIsComplex(bo))
+	  %else
+	    %assign nExternalOp = BlockOutputs.NumExternalBlockOutputs
+	    %foreach iExOp = nExternalOp
+	      %if BlockOutputs.ExternalBlockOutput[iExOp].LogicalSrc == sigSrc
+		%assign bo = BlockOutputs.ExternalBlockOutput[iExOp]
+		%break
+	      %endif
+	    %endforeach
+	  %endif
+	  %assign opW  = (LibGetRecordWidth(bo) == 1) ? "" : "[%<startEl>]"
+	  %assign dType = LibGetDataTypeNameFromId(LibGetRecordDataTypeId(bo))
+	  %assign sizeInBytes = "%<regLen>*sizeof(%<dType>)"
+	  char cache_%<idx>[%<sizeInBytes>];
+	%endforeach
+      } %<dU>;
+    %endif
+  %endif
+  
+  %closefile nonContDerivSig
+  %<SLibCacheSystemCodeToFile("sys_data_discrete_typedef", System[NumSystems-1], ...
+    nonContDerivSig)>
+%endfunction
+
+%% Function:  SLibGetSystemCStatesDerivForBlock  ==============================
+%% Abstract:
+%%   Returns the contents of a block's Continuous State Derivatives data
+%% 
+%function SLibGetSystemCSDerivForBlock(sysIdx, blkIdx)
+  %assign sysCStates    = ""
+  %assign numElements   = 0
+  %assign res           = ["", 0]
+  %openfile sysCStates
+  %with ::CompiledModel.ContStates
+    %foreach csIdx = NumContStates
+      %assign cs = ContState[csIdx]
+      %with cs
+        %if SigSrc[0] != sysIdx || SigSrc[2] != blkIdx
+          %continue
+        %endif
+        %assign comment  = "/* '%<SLibGrBlockName(GrSrc)>' */"
+        %assign isMdlRef = FcnOwnerBlkType(cs) == "ModelReference"
+        %if isMdlRef
+          %assign blk = System[cs.SigSrc[0]].Block[cs.SigSrc[2]]
+          %assign intrf = GetModelrefInterface(blk)
+          %assign width = CAST("Number", %<intrf.xOptWidth>)
+          %assert (width > 0)
+          %assign optWidth = LibOptionalVectorWidth(width)
+          %<intrf.xDotDataType> %<Identifier>%<optWidth>;  %<comment>
+        %else
+          %assign optWidth = LibOptionalVectorWidth(Width)
+          real_T %<Identifier>%<optWidth>; %<comment>
+        %endif
+        %assign numElements = numElements + 1
+      %endwith %% cs
+    %endforeach
+  %endwith
+  %closefile sysCStates
+  %assert ((LibGetFieldSet(System[sysIdx], "HasCStatesDerivArg") == 0) || ...
+    ((LibGetFieldSet(System[sysIdx], "HasCStatesDerivArg") == 1) && ...
+    LibIsDeploymentDiagram()))
+  %if numElements > 0
+    %assign System[sysIdx].HasCStatesDerivArg = 1
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasCStatesDerivArg")>
+  %if numElements > 0
+    %assign res[0] = "%<sysCStates>"
+    %assign res[1] = %<numElements>
+  %endif
+  %return res %% return [%<sysCStates>, %<numElements>] 
+%endfunction
+
+%% Function:  SLibGetSystemCStatesDeriv  =====================================
+%% Abstract:
+%%   Returns the contents of a system's Continuous State Derivatives structure.
+%% 
+%function SLibGetSystemCStatesDeriv(sysIdx) void
+  %assign sysCStates    = ""
+  %assign cstatesArg    = System[sysIdx].Interface.ContStatesArgDef
+  %assign childTypeDefs = ...
+    FcnGetChildSystemTypedefs(sysIdx, "CStatesDeriv", "ContStatesDerivative")
+  %assign numElements   = childTypeDefs[1]
+  %assign res           = ["", 0]
+  %openfile sysCStates
+  %if cstatesArg.NumFlatFields > 0
+    %with ::CompiledModel.ContStates
+      %foreach csIdx = cstatesArg.NumFlatFields
+	%assign cs = ContState[cstatesArg.FirstLocation + csIdx]
+	%with cs
+	  %assign comment  = "/* %<SLibGrBlockCommentName(GrSrc)> */"
+          %assign isMdlRef = FcnOwnerBlkType(cs) == "ModelReference"
+          %if isMdlRef
+            %assign blk = System[cs.SigSrc[0]].Block[cs.SigSrc[2]]
+	    %assign intrf = GetModelrefInterface(blk)
+            %assign width = CAST("Number", %<intrf.xOptWidth>)
+            %assert (width > 0)
+            %assign optWidth = LibOptionalVectorWidth(width)
+            %<intrf.xDotDataType> %<Identifier>%<optWidth>;  %<comment>
+	  %else
+	    %assign optWidth = LibOptionalVectorWidth(Width)
+	    real_T %<Identifier>%<optWidth>; %<comment>
+	  %endif
+	  %assign numElements = numElements + 1
+	%endwith %% cs
+      %endforeach
+    %endwith
+  %endif
+  %<childTypeDefs[0]>\
+  %closefile sysCStates
+  %assert ((LibGetFieldSet(System[sysIdx], "HasCStatesDerivArg") == 0) || ...
+    ((LibGetFieldSet(System[sysIdx], "HasCStatesDerivArg") == 1) && ...
+    LibIsDeploymentDiagram()))
+  %if numElements > 0
+    %assign System[sysIdx].HasCStatesDerivArg = 1
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasCStatesDerivArg")>
+  %if numElements > 0
+    %assign res[0] = "%<sysCStates>"
+    %assign res[1] = %<numElements>
+  %endif
+  %return res %% return [%<sysCStates>, %<numElements>] 
+%endfunction
+
+%% Function: LibCacheSystemStateDerivStructDef =========================
+%% Abstract:
+%%   Cache the definition of the system's continuous states derivatives
+%%   structure.
+%function LibCacheSystemStateDerivStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  %assign cstatesDerivDef = ""
+  %if (sysIdx < (NumSystems-1))
+    %assign identifier = FcnSysVarGroupType(System[sysIdx],"ContStatesDerivative")
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* State derivatives for %<sysInfo> */
+    %closefile comment
+  %else
+    %assign identifier = ::tXdotType
+    %openfile comment
+    /* State derivatives (%<::AutoOrDefaultStorageClass> storage) */
+    %closefile comment
+  %endif
+
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  
+  %if LibIsDeploymentDiagram() && (sysIdx == NumSystems-1)
+    %assign cstatesDerivBuffTop = ["", 0]
+    %assign cstatesDerivBuff = SLibDeploymentGetSystemCStatesDeriv(sysIdx) 
+    %if SLibDeploymentDiagramWithTopSolver()
+      %assign cstatesDerivBuffTop = ...
+        FcnGetSystemStateVarsForPartition(SLibGetMDSRootSyntPIDForContRate(), ...
+        "xDotDataType", "CStatesDeriv", "ContStatesDerivative")
+
+      %if cstatesDerivBuffTop[1] > 0
+        %assign System[sysIdx].HasCStatesDerivArg = 1
+      %endif
+      
+      %if !LibGetFieldSet(System[sysIdx], "HasCStatesDerivArg")
+        %<LibSetFieldSet(System[sysIdx], "HasCStatesDerivArg")>
+      %endif
+    %endif
+ 
+    %if (cstatesDerivBuff[1] > 0) || (cstatesDerivBuffTop[1] > 0)
+      %openfile cstatesDerivDef
+      %<userTypes>\
+      
+      %if (cstatesDerivBuff[1] > 0)
+        %<cstatesDerivBuff[0]>\
+      %endif
+      %if (cstatesDerivBuffTop[1] > 0)
+        %<comment>\
+        %<GetHideChildDefineSymbol("ifndef")>\
+        typedef struct {
+          %<cstatesDerivBuffTop[0]>
+        } %<identifier>;
+        %<GetHideChildDefineSymbol("endif")>\
+      %endif
+      %closefile cstatesDerivDef
+    %endif
+  
+  %else
+    %assign cstatesDerivBuff = SLibGetSystemCStatesDeriv(sysIdx)
+    %if cstatesDerivBuff[1] > 0 
+      %openfile cstatesDerivDef
+      %<userTypes>\
+      %<comment>\
+      %<GetHideChildDefineSymbol("ifndef")>\
+      typedef struct {
+        %<cstatesDerivBuff[0]>
+      } %<identifier>;
+      %<GetHideChildDefineSymbol("endif")>\
+      %closefile cstatesDerivDef
+    %endif
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_continue_typedef", System[sysIdx], ...
+    cstatesDerivDef)>
+%endfunction
+
+%% Function:  SLibGetSystemContStatesDisabled  =====================================
+%% Abstract:
+%%   Returns the contents of a system's continuous state disabled structure.
+%% 
+%function SLibGetSystemContStatesDisabled(sysIdx)
+  %assign sysCStates    = ""
+  %assign cstatesArg    = System[sysIdx].Interface.ContStatesArgDef
+  %assign childTypeDefs = ...
+    FcnGetChildSystemTypedefs(sysIdx, "ContStatesDisabled", "ContStatesDisabled")
+  %assign numElements   = childTypeDefs[1]
+  %assign res           = ["", 0]
+  %openfile sysCStates
+  %if cstatesArg.NumFlatFields > 0
+    %with ::CompiledModel.ContStates
+      %foreach csIdx = cstatesArg.NumFlatFields
+	%assign cs = ContState[cstatesArg.FirstLocation + csIdx]
+	%with cs
+	  %assign comment  = "/* %<SLibGrBlockCommentName(GrSrc)> */"
+          %assign isMdlRef = FcnOwnerBlkType(cs) == "ModelReference"
+          %if isMdlRef
+            %assign blk = System[cs.SigSrc[0]].Block[cs.SigSrc[2]]
+            %assign intrf = GetModelrefInterface(blk)
+            %assign width = CAST("Number", %<intrf.xOptWidth>)
+            %assert (width > 0)
+            %assign optWidth = LibOptionalVectorWidth(width)
+            %<intrf.xDisDataType> %<Identifier>%<optWidth>;  %<comment>
+          %else
+            %assign optWidth = LibOptionalVectorWidth(Width)
+            boolean_T %<Identifier>%<optWidth>; %<comment>
+          %endif
+          %assign numElements = numElements + 1
+        %endwith %% cs
+      %endforeach
+    %endwith
+  %endif
+  %<childTypeDefs[0]>\
+  %closefile sysCStates
+  %assert (LibGetFieldSet(System[sysIdx], "HasContStatesDisabledArg") == 0)
+  %if numElements > 0
+    %assign System[sysIdx].HasContStatesDisabledArg = 1
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasContStatesDisabledArg")>
+  %if numElements > 0
+    %assign res[0] = "%<sysCStates>"
+    %assign res[1] = %<numElements>
+  %endif
+  %return res %% return [%<sysCStates>, %<numElements>] 
+%endfunction
+
+%% Function: LibCacheSystemStateDiabledStructDef  =========================
+%% Abstract:
+%%   Cache the definition of the system's continuous states disabled
+%%   structure.
+%function LibCacheSystemStateDisabledStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  
+  %% Partition grouping caches state disabled by following the
+  %% decreasing order of pid
+  %if SLibPartitionGroupingSystem(System[sysIdx])
+    %assign cstatesDisabledBuff = ["", 0]
+  
+    %foreach pid = SLibGetNumPartitions()
+      %assign partStatesBuff = ...
+        FcnGetSystemStateVarsForPartition(pid, "xDisDataType", "ContStatesDisabled", "ContStatesDisabled")
+    
+      %assign cstatesDisabledBuff[0] = "%<partStatesBuff[0]> %<cstatesDisabledBuff[0]>"
+      %assign cstatesDisabledBuff[1] = cstatesDisabledBuff[1] + partStatesBuff[1]
+    %endforeach
+    
+    %if cstatesDisabledBuff[1] > 0
+      %assign System[NumSystems - 1].HasContStatesDisabledArg = 1
+    %endif
+    
+    %if !LibGetFieldSet(System[sysIdx], "HasContStatesDisabledArg")
+      %<LibSetFieldSet(System[NumSystems - 1], "HasContStatesDisabledArg")>
+    %endif
+  %else
+    %assign cstatesDisabledBuff = SLibGetSystemContStatesDisabled(sysIdx)
+  %endif
+  %assign cstatesDisabledDef = ""
+  %if (sysIdx < (NumSystems-1))
+    %assign identifier = FcnSysVarGroupType(System[sysIdx],"ContStatesDisabled")
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* State Disabled for %<sysInfo> */
+    %closefile comment
+  %else
+    %assign identifier = ::tXdisType
+    %openfile comment
+    /* State disabled  */
+    %closefile comment
+  %endif
+
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  %if cstatesDisabledBuff[1] > 0 
+    %openfile cstatesDisabledDef
+    %<userTypes>\
+    
+    %<comment>\
+    %<GetHideChildDefineSymbol("ifndef")>\
+    typedef struct {
+      %<cstatesDisabledBuff[0]>
+    } %<identifier>;
+    %<GetHideChildDefineSymbol("endif")>\
+
+    %closefile cstatesDisabledDef
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_continue_typedef", System[sysIdx], ...
+    cstatesDisabledDef)>
+%endfunction
+
+
+%% Function:  SLibGetSystemContStatesAbsoluteTolerance  =====================================
+%% Abstract:
+%%   Returns the contents of a system's continuous state AbsoluteTolerance structure.
+%% 
+%function SLibGetSystemContStatesAbsoluteTolerance(sysIdx)
+  %assign sysCStates    = ""
+  %assign cstatesArg    = System[sysIdx].Interface.ContStatesArgDef
+  %assign childTypeDefs = ...
+    FcnGetChildSystemTypedefs(sysIdx, "ContStatesAbsoluteTolerance", "ContStatesAbsoluteTolerance")
+  %assign numElements   = childTypeDefs[1]
+  %assign res           = ["", 0]
+  %% Only generate absolute tolerance structure when the solver is variable-step
+  %if (::CompiledModel.SolverType == "VariableStep") 
+    %openfile sysCStates
+    %if cstatesArg.NumFlatFields > 0
+      %with ::CompiledModel.ContStates
+        %foreach csIdx = cstatesArg.NumFlatFields
+          %assign cs = ContState[cstatesArg.FirstLocation + csIdx]
+          %with cs
+            %assign comment  = "/* %<SLibGrBlockCommentName(GrSrc)> */"
+            %assign isMdlRef = FcnOwnerBlkType(cs) == "ModelReference"
+            %if isMdlRef
+              %assign blk = System[cs.SigSrc[0]].Block[cs.SigSrc[2]]
+              %assign intrf = GetModelrefInterface(blk)
+              %assign width = CAST("Number", %<intrf.xOptWidth>)
+              %assert (width > 0)
+              %% Type can be empty if referenced model is built with fixed-step
+              %% solver setting but still has continuous states
+              %if (!ISEMPTY(intrf.xAbsTolDataType))
+                %% Use actual abstol width and structure
+                %assign optWidth = LibOptionalVectorWidth(width)
+                %<intrf.xAbsTolDataType> %<Identifier>%<optWidth>;  %<comment>
+              %else
+                %% Use real_T type and cstate width because there is no structure
+                %% It is important to set this correct because further offset will
+                %% be otherwise incorrect.
+                real_T %<Identifier>[%<Width>];  %<comment>
+              %endif
+            %else
+              %assign optWidth = LibOptionalVectorWidth(Width)
+              real_T %<Identifier>%<optWidth>; %<comment>
+            %endif
+            %assign numElements = numElements + 1
+          %endwith %% cs
+        %endforeach
+      %endwith
+    %endif
+    %<childTypeDefs[0]>\
+    %closefile sysCStates
+  %endif %%if variable step solver
+  
+  %assert (LibGetFieldSet(System[sysIdx], "HasContStatesAbsoluteToleranceArg") == 0)
+  %if numElements > 0
+    %assign System[sysIdx].HasContStatesAbsoluteToleranceArg = 1
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasContStatesAbsoluteToleranceArg")>
+  %if numElements > 0
+    %assign res[0] = "%<sysCStates>"
+    %assign res[1] = %<numElements>
+  %endif
+  %return res %% return [%<sysCStates>, %<numElements>] 
+%endfunction
+
+
+%% Function: LibCacheSystemStateDiabledStructDef  =========================
+%% Abstract:
+%%   Cache the definition of the system's continuous states Absolute
+%%   Tolerance structure.
+%function LibCacheSystemCStateAbsoluteToleranceStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  %assign cstatesAbsoluteToleranceBuff = SLibGetSystemContStatesAbsoluteTolerance(sysIdx)
+  %assign cstatesAbsoluteToleranceDef = ""
+  %if (sysIdx < (NumSystems-1))
+    %assign identifier = FcnSysVarGroupType(System[sysIdx],"ContStatesAbsoluteTolerance")
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* Continuous State Absolute Tolerance for %<sysInfo> */
+    %closefile comment
+  %else
+    %assign identifier = ::tXAbsTolType
+    %openfile comment
+    /* Continuous State Absolute Tolerance  */
+    %closefile comment
+  %endif
+
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  %if cstatesAbsoluteToleranceBuff[1] > 0 
+    %openfile cstatesAbsoluteToleranceDef
+    %<userTypes>\
+    
+    %<comment>\
+    %<GetHideChildDefineSymbol("ifndef")>\
+    typedef struct {
+      %<cstatesAbsoluteToleranceBuff[0]>
+    } %<identifier>;
+    %<GetHideChildDefineSymbol("endif")>\
+
+    %closefile cstatesAbsoluteToleranceDef
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_continue_typedef", System[sysIdx], ...
+    cstatesAbsoluteToleranceDef)>
+%endfunction
+
+
+%% Function: LibCacheSystemZCEStructDef ========================================
+%% Abstract:
+%%   Cache the definition of the system ZCE structure.
+%%
+%function LibCacheSystemZCEStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  %assign zceBuff = SLibGetSystemDataDefUsingVarGroup(sysIdx, "ZCEvent")
+  %assign zceDef = ""
+  %assign identifierTag = ""
+  %if (sysIdx < (NumSystems-1))
+    %assign identifier = FcnSysVarGroupType(System[sysIdx],"ZCEvent")
+    %if IsModelReferenceTarget() && GenerateClassInterface && ...
+        IsModelReferenceBaseSys(System[sysIdx])
+      %assign identifier = ::tPrevZCStateType
+    %endif
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* Zero-crossing (trigger) state for %<sysInfo> */
+    %closefile comment
+  %else
+    %assign ::CompiledModel.PrevZCStatesStructDefn = ...
+      WHITE_SPACE(zceBuff[0])?"":"Nonempty"
+    %assign identifier = ::tPrevZCStateType
+    %if SLibAutosarActive()
+      %assign identifierTag = ::CompiledModel.GlobalScope.tPrevZCStateTypeTag
+    %endif
+    %openfile comment
+    /* Zero-crossing (trigger) state */
+    %closefile comment
+  %endif
+  %%
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  %if zceBuff[1] > 0 
+    %openfile zceDef
+    %<userTypes>\
+      %<comment>\
+      %assign nonInlSysIdx = System[sysIdx].NonInlinedParentSystemIdx
+      %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+        %<GetHideChildDefineSymbol("ifndef")>\
+      %endif
+      %<SLibIfSystemPreprocessorCondition(System[sysIdx])>
+      typedef struct %<identifierTag> {
+        %<zceBuff[0]>
+      } %<identifier>;
+      %<SLibEndIfSystemPreprocessorCondition(System[sysIdx])>
+      %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+        %<GetHideChildDefineSymbol("endif")>\
+      %endif
+    %closefile zceDef
+  %endif
+  %%
+  %if CodeFormat == "Ada"
+    %if (System[sysIdx].Type == "root")
+      %assign parentSystem = System[sysIdx]
+    %else
+      %assign parentSystem = System[System[sysIdx].FileNameOwnerIdx]
+    %endif
+    %<LibAddToSystemField(parentSystem, "SystemTypeDefs", zceDef)>
+  %else
+    %<SLibCacheSystemCodeToFile("sys_data_ZCE_typedef", System[sysIdx], zceDef)>
+  %endif
+%endfunction
+
+%%adzc
+%% Function: SLibGetSystemZcSignalValue ======================================
+%% Abstract:
+%%   Returns the contents of a systems ZcSignalInfo structure.
+%%
+%function SLibGetSystemZCSignalValue(sysIdx) void
+  %assign zcArg        = System[sysIdx].Interface.ZCSVArgDef
+  %assign childTypeDefs = ...
+    FcnGetChildSystemTypedefs(sysIdx, "ZCSignalValue", "ZCSV")
+  %assign numElements   = childTypeDefs[1]
+  %assign res           = ["", 0]
+
+  %% For a referenced model that may be used in a variable step solver
+  %% (either the SIM target or RSIM target), we need to generate the
+  %% typedef for zc signals, even if it contains only discrete signals.
+  %if ((::CompiledModel.NumNonsampledZCs > 0) || ...
+       (IsModelReferenceForASimstructBasedTarget()))
+    %openfile sysZCSignalValue
+    %if zcArg.NumFlatFields > 0
+      %with ::CompiledModel.ZcRec
+        %foreach zcRecIdx = zcArg.NumFlatFields
+          %assign zcRec = BlkZcRec[zcArg.FirstLocation + zcRecIdx]
+          %assign comment  = "/* %<SLibGrBlockCommentName(zcRec.GrSrc)> */"
+          %assign blk = System[zcRec.SigSrc[0]].Block[zcRec.SigSrc[2]]
+          %%if !Accelerator && zcsInfo.ZcSignalType != "Discrete" || Accelerator
+            %if (TYPE(blk.Type) == "Identifier" && blk.Type == "ModelReference")
+              %assign intrf = GetModelrefInterface(blk)
+              %assign width = CAST("Number", %<intrf.zcOptWidth>)
+              %assert (width > 0)
+              %assign optWidth = LibOptionalVectorWidth(width)
+              %assign zcsInfo  = zcRec.ZcSignalInfo[0] 
+              %assign name     = FcnGetZCSignalCGVarName(zcsInfo)
+              %<intrf.zcDataType> %<name>%<optWidth>;  %<comment>
+            %else                
+              %foreach zcsIdx  = zcRec.NumZcSignalInfos
+                %assign zcsInfo  = zcRec.ZcSignalInfo[zcsIdx] 
+                %assign name  = FcnGetZCSignalCGVarName(zcsInfo)
+                %assign width = FcnGetZCSignalCGVarWidth(zcsInfo)
+                %assign optWidth = LibOptionalVectorWidth(width)
+                real_T %<name>%<optWidth>; %<comment>
+              %endforeach        
+            %endif        
+            %assign numElements = numElements + 1                
+          %%endif            
+        %endforeach      
+      %endwith
+    %endif    
+    %<childTypeDefs[0]>\
+    %closefile sysZCSignalValue
+  %endif
+  %assert (LibGetFieldSet(System[sysIdx], "HasZCSignalValueArg") == 0)
+  %if numElements > 0
+    %assign System[sysIdx].HasZCSignalValueArg = 1
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasZCSignalValueArg")>
+  %if numElements > 0
+    %assign res[0] = "%<sysZCSignalValue>"
+    %assign res[1] = %<numElements>
+  %endif
+  %return res  
+%endfunction
+%%adzc
+
+
+%%adzc
+%% Function: LibCacheSystemZCSignalValueStructDef =============================
+%% Abstract:
+%%   Cache the  ZCSignalValue struct
+%%
+%function LibCacheSystemZCSignalValueStructDef(sysIdx) void  
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  %%
+  %assign zcBuff = SLibGetSystemZCSignalValue(sysIdx)
+  %assign zcDef = ""
+  %if (sysIdx < (NumSystems-1))    
+    %assign identifier = FcnSysVarGroupType(System[sysIdx],"ZCSV")
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* Zero-crossing (trigger) state for %<sysInfo> */
+    %closefile comment
+  %else    
+    %assign ::CompiledModel.ZCSignalValueStructDefn = ...
+      WHITE_SPACE(zcBuff[0])?"":"Nonempty"  
+    %assign identifier = ::tZCSignalValueType
+    %openfile comment
+    /* Zero-crossing (trigger) state */
+    %closefile comment      
+  %endif
+  %%
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  %if zcBuff[1] > 0 
+    %openfile zcDef
+    %<userTypes>\
+      %<comment>\
+      %assign nonInlSysIdx = System[sysIdx].NonInlinedParentSystemIdx
+      %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+        %<GetHideChildDefineSymbol("ifndef")>\
+      %endif
+      %<SLibIfSystemPreprocessorCondition(System[sysIdx])>
+      typedef struct {
+        %<zcBuff[0]>
+      } %<identifier>;
+      %<SLibEndIfSystemPreprocessorCondition(System[sysIdx])>
+      %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+        %<GetHideChildDefineSymbol("endif")>\
+      %endif
+    %closefile zcDef
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_continue_typedef", System[sysIdx], zcDef)>
+%endfunction
+%%adzc
+
+
+%% Function: SLibGetSystemMassMatrixGlobal =========================================
+%% Abstract:
+%%   Returns the definiton of a systems mass matrix.
+%%
+%function SLibGetSystemMassMatrixGlobal(sysIdx) void
+
+  %% This is typedef of the global (model-wide) mass matrix.
+  %% It only appears at the root level.
+  %assert (sysIdx == GetBaseSystemIdx())  
+
+  %assign sysMassMatrixGlobal = ""
+  
+  %% Global Mass Matrix is assembled at the root-level only -- do not dive 
+  %% into child systems.
+  %assign numElements   = 0  
+
+  %assign res           = ["", 0]
+  
+  %openfile sysMassMatrixGlobal
+  
+  %assign numContStates = ::CompiledModel.NumContStates
+  %assign isDeploymentDiagram = LibIsDeploymentDiagram()
+  %if (isDeploymentDiagram)
+    %assign numContStates = numContStates-SLibDeploymentGetNumContStates()
+  %endif
+  %if ((numContStates > 0) && (SLibGetModelIsLinearlyImplicit() == "yes"))
+    %assign massMatrixNzMax = ::CompiledModel.ModelMassMatrixNzMax
+    %if (isDeploymentDiagram)
+      %assign massMatrixNzMax = massMatrixNzMax-SLibDeploymentGetMassMatrixNzMax()
+    %endif
+    %if (massMatrixNzMax > 0)
+      %assign numElements =  numElements + 1
+      int_T  ir[%<massMatrixNzMax>];
+      int_T  jc[%<numContStates+1>];
+      real_T pr[%<massMatrixNzMax>];
+    %endif
+  %endif
+
+  %closefile sysMassMatrixGlobal
+  %assert (LibGetFieldSet(System[sysIdx], "HasMassMatrixGlobalArg") == 0)
+  %if (numElements > 0)
+    %assign System[sysIdx].HasMassMatrixGlobalArg = 1
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasMassMatrixGlobalArg")>
+  %if (numElements > 0)
+    %assign res[0] = "%<sysMassMatrixGlobal>"
+    %assign res[1] = %<numElements>
+  %endif
+  %return res %% return [%<sysMassMatrixGlobal>, %<numElements>] 
+%endfunction
+
+
+%% Function: LibCacheSystemMassMatrixGlobalDef =============================
+%% Abstract:
+%%   Cache the (global) Mass Matrix definition
+%%
+%function LibCacheSystemMassMatrixGlobalDef(sysIdx) void
+  %% The global (model-wide) mass matrix -- should only appear at the root level.
+  %assert (sysIdx == GetBaseSystemIdx())  
+  
+  %assign massMatrixGlobalDef = ""
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  %assign userTypesDumped = TLC_FALSE
+  %openfile massMatrixGlobalDef
+  %if !SLibIsDeploymentDiagramWithNoTopSolver()
+    %assign massMatrixGlobalBuff = SLibGetSystemMassMatrixGlobal(sysIdx)
+    %assign identifier = ::tMassMatrixGlobalType
+    %if massMatrixGlobalBuff[1] > 0 
+      %assign userTypesDumped = TLC_TRUE
+      %<userTypes>\
+      /* Mass Matrix (global) */
+      %<GetHideChildDefineSymbol("ifndef")>\
+      typedef struct {
+        %<massMatrixGlobalBuff[0]>
+      } %<identifier>;
+      %<GetHideChildDefineSymbol("endif")>\
+    %endif
+  %endif
+  %if LibIsDeploymentDiagram()
+    %assign massMatrixGlobalBuff = SLibDeploymentGetSystemMassMatrix(sysIdx)
+    %if massMatrixGlobalBuff[1] > 0 
+      %if !userTypesDumped
+      %<userTypes>\
+      %endif
+      %<massMatrixGlobalBuff[0]>\
+    %endif
+  %endif
+  %closefile massMatrixGlobalDef
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_massMatrix_typedef", System[sysIdx], ...
+    massMatrixGlobalDef)>
+%endfunction
+
+%% Function:  SLibGetSystemMassMatrixOffset  =====================================
+%% Abstract:
+%%   Returns the contents of a system's MassMatrix offset structure.
+%% 
+%function SLibGetSystemMassMatrixOffset(sysIdx)
+  %assign sysMassMatrixOffset    = ""
+  %assign cstatesArg    = System[sysIdx].Interface.MassMatricesArgDef
+  %assign childTypeDefs = ...
+    FcnGetChildSystemTypedefs(sysIdx, "MassMatrixOffset", "MassMatrixOffset")  
+  %assign numElements   = childTypeDefs[1]
+  %assign res           = ["", 0]
+  %openfile sysMassMatrixOffset
+  %if cstatesArg.NumFlatFields > 0
+    %with ::CompiledModel.MassMatrices
+      %foreach csIdx = cstatesArg.NumFlatFields
+	%assign cs = MassMatrix[cstatesArg.FirstLocation + csIdx]
+	%with cs
+	  %assign comment  = "/* %<SLibGrBlockCommentName(GrSrc)> */"
+          %assign isMdlRef = FcnOwnerBlkType(cs) == "ModelReference"
+          %if isMdlRef
+            
+            %% TODO: JK linearly-implicit blocks not supported in referenced models, yet
+            %assert TLC_FALSE
+            
+	  %else
+	    int_T %<Identifier>; %<comment>
+	  %endif
+	  %assign numElements = numElements + 1
+	%endwith %% cs
+      %endforeach
+    %endwith
+  %endif
+  %<childTypeDefs[0]>\
+  %closefile sysMassMatrixOffset
+  %assert (LibGetFieldSet(System[sysIdx], "HasMassMatrixOffsetArg") == 0)
+  %if numElements > 0
+    %assign System[sysIdx].HasMassMatrixOffsetArg = 1
+  %endif
+  %<LibSetFieldSet(System[sysIdx], "HasMassMatrixOffsetArg")>
+  %if numElements > 0
+    %assign res[0] = "%<sysMassMatrixOffset>"
+    %assign res[1] = %<numElements>
+  %endif
+  %return res %% return [%<sysMassMatrixOffset>, %<numElements>] 
+%endfunction
+
+%% Function: LibCacheSystemMassMatrixOffsetStructDef  =========================
+%% Abstract:
+%%   Cache the definition of the system's MassMatrix offset
+%%   structure.
+%function LibCacheSystemMassMatrixOffsetStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  %assign massMatrixOffsetBuff = SLibGetSystemMassMatrixOffset(sysIdx)
+  %assign massMatrixOffsetDef = ""
+  %if (sysIdx < (NumSystems-1))   
+    %assign identifier = FcnSysVarGroupType(System[sysIdx],"MassMatrixOffset")    
+
+    %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+    %openfile comment
+    /* MassMatrix Offset for %<sysInfo> */
+    %closefile comment
+  %else    
+    %assign identifier = tMassMatrixOffsetType    
+    %openfile comment
+    /* MassMatrix offset  */
+    %closefile comment
+  %endif
+
+  %assign userTypes = LibDumpTypedefsCache()
+  %assign ::CompiledModel.TypedefsCache = ""
+  %if massMatrixOffsetBuff[1] > 0 
+    %openfile massMatrixOffsetDef
+    %<userTypes>\
+    
+    %<comment>\
+    %<GetHideChildDefineSymbol("ifndef")>\
+    typedef struct {
+      %<massMatrixOffsetBuff[0]>
+    } %<identifier>;
+    %<GetHideChildDefineSymbol("endif")>\
+
+    %closefile massMatrixOffsetDef
+  %endif
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_massMatrix_typedef", System[sysIdx], ...
+    massMatrixOffset)>
+%endfunction
+
+
+%% Function: LibContStatesStructIsEmpty =======================================
+%% Abstract:
+%%   Does the root system have any continuous states?
+%%
+%function LibContStatesStructIsEmpty() void
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasCStatesArg") == 1)
+  %return (System[baseSysIdx].HasCStatesArg == 0)
+%endfunction
+
+
+%% Function: LibPeriodicCStatesStructIsEmpty =======================================
+%% Abstract:
+%%   Does the root system have any periodic continuous state?
+%%
+%function LibPeriodicCStatesStructIsEmpty() void
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasPeriodicCStatesArg") == 1)
+  %assign ans = System[baseSysIdx].HasPeriodicCStatesArg == 0
+  %return ans
+%endfunction
+
+%% Function: LibPrevZCStatesStructIsEmpty =====================================
+%% Abstract:
+%%   Does the root system have any prevZCEvents?
+%%
+%function LibPrevZCStatesStructIsEmpty() void  
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasZCEventArg") == 1)
+  %return (System[baseSysIdx].HasZCEventArg == 0)
+%endfunction
+
+%% Function: SLibModelPrevZCEventsStructIsEmpty ================================
+%% Abstract:
+%%   Does the model have any prevZCEvents?
+%%
+%function SLibModelPrevZCEventsStructIsEmpty() void
+  %return (::CompiledModel.HasZCEventArg == 0)
+%endfunction
+
+%%adzc
+%% Function: LibZCSignalValueStructIsEmpty =====================================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function LibZCSignalValueStructIsEmpty() void
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasZCSignalValueArg") == 1)
+  %return (System[baseSysIdx].HasZCSignalValueArg == 0)
+%endfunction
+%%adzc
+
+
+%% Function: LibCStatesDerivStructIsEmpty ==================================
+%% Asbract: 
+%%   Is the cache empty?
+%%
+%function LibCStatesDerivStructIsEmpty() void
+   %assign baseSysIdx = GetBaseSystemIdx()
+   %assert (LibGetFieldSet(System[baseSysIdx], "HasCStatesDerivArg") == 1)
+   %return (System[baseSysIdx].HasCStatesDerivArg == 0)
+%endfunction
+
+%% Function: LibContStatesDisabledStructIsEmpty() void
+%% Asbract: 
+%%   Is the cache empty?
+%%
+%function LibContStatesDisabledStructIsEmpty()
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasContStatesDisabledArg") == 1)
+  %return (System[baseSysIdx].HasContStatesDisabledArg == 0)
+%endfunction
+
+%% Function: LibContStatesAbsoluteToleranceStructIsEmpty() void
+%% Asbract: 
+%%   Is the cache empty?
+%%
+%function LibContStatesAbsoluteToleranceStructIsEmpty()
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasContStatesAbsoluteToleranceArg") == 1)
+  %return (System[baseSysIdx].HasContStatesAbsoluteToleranceArg == 0)
+%endfunction
+
+%% Solver Data
+%% Function: SLibCacheIntgStructDef ===========================================
+%% Abstract:
+%%   Caches integrator solver data structure definition
+%%
+%function SLibCacheIntgStructDef() void
+  %openfile intgDataDefn
+%if ISEQUAL(Solver, "ode1")
+#ifndef %<upperSolver>_INTG
+#define %<upperSolver>_INTG
+  /* %<upperSolver> Integration Data */
+  typedef struct {
+      real_T *f[1]; /* derivatives */
+  } %<upperSolver>_IntgData;
+#endif
+%elseif ISEQUAL(Solver, "ode2")
+#ifndef %<upperSolver>_INTG
+#define %<upperSolver>_INTG
+  /* %<upperSolver> Integration Data */
+  typedef struct {
+      real_T *y; /* output */
+      real_T *f[2]; /* derivatives */
+  } %<upperSolver>_IntgData;
+#endif
+%elseif ISEQUAL(Solver, "ode3")
+#ifndef %<upperSolver>_INTG
+#define %<upperSolver>_INTG
+  /* %<upperSolver> Integration Data */
+  typedef struct {
+      real_T *y; /* output */
+      real_T *f[3]; /* derivatives */
+  } %<upperSolver>_IntgData;
+#endif
+%elseif ISEQUAL(Solver, "ode4")
+#ifndef %<upperSolver>_INTG
+#define %<upperSolver>_INTG
+  /* %<upperSolver> Integration Data */
+  typedef struct {
+      real_T *y; /* output */
+      real_T *f[4]; /* derivatives */
+  } %<upperSolver>_IntgData;
+#endif
+%elseif ISEQUAL(Solver, "ode5")
+#ifndef %<upperSolver>_INTG
+#define %<upperSolver>_INTG
+  /* %<upperSolver> Integration Data */
+  typedef struct {
+      real_T *y; /* output */
+      real_T *f[6]; /* derivatives */
+  } %<upperSolver>_IntgData;
+#endif
+%elseif ISEQUAL(Solver, "ode8")
+#ifndef %<upperSolver>_INTG
+#define %<upperSolver>_INTG
+  /* %<upperSolver> Integration Data */
+  typedef struct {
+      real_T *deltaY; /* output diff */
+      real_T *f[13]; /* derivatives */
+      real_T *x0; /* Initial State */
+  } %<upperSolver>_IntgData;
+#endif
+%elseif ISEQUAL(Solver, "ode14x")
+#ifndef %<upperSolver>_INTG
+#define %<upperSolver>_INTG
+  /* %<upperSolver> Integration Data */
+  typedef struct {
+    real_T  *x0;
+    real_T  *f0;
+    real_T  *x1start;
+    real_T  *f1;
+    real_T  *Delta;     
+    real_T  *E;    
+    real_T  *fac;  
+    real_T  *DFDX; 
+    real_T  *W;    
+    int_T   *pivots;     
+    real_T  *xtmp;
+    real_T  *ztmp;
+    real_T  *M;
+    real_T  *M1;
+    real_T  *Edot;
+    real_T  *xdot;
+    real_T  *fminusMxdot;
+    boolean_T   isFirstStep;
+  } %<upperSolver>_IntgData;
+#endif
+%endif
+  %closefile intgDataDefn
+  %return intgDataDefn
+%endfunction
+
+%endif %% _COMMONHDR_CSTATELIB

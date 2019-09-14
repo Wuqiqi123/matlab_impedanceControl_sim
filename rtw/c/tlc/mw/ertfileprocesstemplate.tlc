@@ -1,0 +1,55 @@
+%% =============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   Invokes Embedded Coder file processing template
+%%
+%% Copyright 1994-2015 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%function SLibERTCustomFileProcessing() void
+
+%if !IsModelReferenceSimTarget()
+  %if SLibIsERTTarget()
+    %% Make sure templates exist
+    %if !FILE_EXISTS(ERTCustomFileTemplate)
+      %assign errTxt = "Unable to locate ERT custom file template: " ...
+        "%<ERTCustomFileTemplate>."
+      %<LibReportError(errTxt)>
+    %endif
+     
+    %% Invoke custom file processing template
+    %include ERTCustomFileTemplate
+    %if GenerateGRTWrapper && ...
+      EXISTS("ERTCustomFileTest") && ERTCustomFileTest == TLC_TRUE
+      %assign customFileTemp = %<ERTCustomFileTemplate>
+      %<SLibReportErrorWithIdAndArgs("RTW:tlc:GRTInterfaceCustomFile", customFileTemp)>
+    %endif
+  %else
+    %% This is for the targets that use ert.tlc and are required to work
+    %% without Embedded Coder. We need to include file process template 
+    %% used by such targets since it otherwise cannot be found.
+    %assign MATLAB_ROOT = FEVAL("matlabroot")
+    %assign PATH_SEP = FEVAL("filesep")
+    %addincludepath "%<MATLAB_ROOT>%<PATH_SEP>toolbox%<PATH_SEP>target%<PATH_SEP>codertarget%<PATH_SEP>rtw"
+    %include "codertarget_file_process.tlc"
+  %endif
+  %if EXISTS(CustomFileTemplate)
+    %% Make sure templates exist
+    %if !FILE_EXISTS(CustomFileTemplate)
+      %assign errTxt = "Unable to locate general custom file template: " ...
+        "%<CustomFileTemplate>."
+      %<LibReportError(errTxt)>
+    %endif
+    
+    %% Invoke custom file processing template
+    %include CustomFileTemplate
+    
+  %endif
+%endif
+  
+%endfunction
+

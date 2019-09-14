@@ -1,0 +1,54 @@
+%% 
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   Subsystem block target file.
+%%
+
+%implements SubSystem "C"
+
+%% Function: BlockInstanceSetup ================================================
+%% Abstract:
+%%      Create any files that were user specified.
+%%      Rename the functions for this system to what the user specifies if
+%%      they are unique.
+%%
+%function BlockInstanceSetup(block, system) void
+  %<LibBlockSetIsExpressionCompliant(block)>
+%endfunction %% BlockInstanceSetup
+
+
+%% Function: BlockInstanceData =================================================
+%% Abstract:
+%%      Exercise each blocks BlockInstanceData function.  Note that this is
+%%      recursive for subsystem blocks.
+%%
+%function BlockInstanceData(ssBlock, parentSystem) Output
+  %assign childSystem = ::CompiledModel.System[CallSiteInfo.SystemIdx]
+  %openfile bufferSS
+  %foreach blkIdx = childSystem.NumBlocks
+    %openfile buffer
+
+    %<GENERATE(childSystem.Block[blkIdx], "BlockInstanceData", childSystem)>
+
+    %closefile buffer
+    %if WHITE_SPACE(buffer) == 0
+      {
+      \
+      %<buffer>\
+      }
+    %endif
+  %endforeach
+  %closefile bufferSS
+  %if WHITE_SPACE(bufferSS) == 0
+    /* Blocks in %<childSystem.Type> subsystem: '%<ssBlock.Name>' */ \
+    %<bufferSS>\
+  %endif
+%endfunction %% BlockInstanceData
+
+
+
+
+%% [EOF] subsystm.tlc

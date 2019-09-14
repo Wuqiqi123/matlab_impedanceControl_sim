@@ -1,0 +1,84 @@
+%%
+%% dspisfinite.tlc 
+%%
+%% Copyright 1995-2015 The MathWorks, Inc.
+%%  
+
+%if EXISTS("_DSPISFINITELIB_") == 0
+%assign _DSPISFINITELIB_ = 1
+
+%if !EXISTS("dspIsFiniteUtils")
+  %createrecord dspIsFiniteUtils { ...
+  NothingMacro 1}
+%endif
+
+%function dspIsFinite(dTypeIdentifier, val) Output
+  %%
+  %if ((dTypeIdentifier == "D") || (dTypeIdentifier == "Z"))
+    %assign utilityName = "dspIsFinite"
+    %assign dTypeLabel = "double"
+  %else 
+    %assign utilityName = "dspIsFinite32"
+    %assign dTypeLabel = "float"
+  %endif
+  %%
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %<utilityName>(%<val>)
+  %%
+  %if !(ISFIELD(dspIsFiniteUtils, utilityName))
+    %%
+    %<LibPushEmptyStackSharedUtils()>\
+    %%
+    %% register utility 
+    %%
+    %assign tmpRet = SETFIELD(dspIsFiniteUtils,utilityName,1)
+    %%
+    %% utility function prototype
+    %%
+    %assign funcDeclarationRoot = "int_T %<utilityName>(%<dTypeLabel> x)"
+    %openfile funcProto
+      %<funcDeclarationRoot>;
+    %closefile funcProto
+    %%
+    %% utility definition
+    %%
+    %openfile utilityDef
+    %<funcDeclarationRoot>
+      %if (dTypeIdentifier == "D") | (dTypeIdentifier == "Z")
+        {
+            int32_T hx[2];
+            memcpy(hx,&x,2*sizeof(int32_T));
+            if (%<dspIsLittleEndian()>) {
+               return (int32_T) (((uint32_T)(( hx[1] & 0x7fffffff)-0x7ff00000)>>31) != 0);  /* Little Endian */
+            } else {
+               return (int32_T) (((uint32_T)(( hx[0] & 0x7fffffff)-0x7ff00000)>>31) != 0); /* Big Endian */
+            }
+        }
+      %else
+        {
+            int32_T hx;
+            memcpy(&hx,&x,sizeof(int32_T));
+            return (int32_T) ((uint32_T)((hx & 0x7fffffff) - 0x7f800000) >> 31 != 0);
+        }
+      %endif
+    %closefile utilityDef
+    %%
+    %<SLibAddMathIncludeForUtilsSourceCode(utilityDef)>
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+    %% 
+  %endif
+ 
+%endfunction %% dspIsFinite
+
+%endif %% _DSPISFINITELIB_
+ 
+%% [EOF] dspisfinite.tlc

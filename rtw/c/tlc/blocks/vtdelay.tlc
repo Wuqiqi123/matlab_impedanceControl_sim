@@ -1,0 +1,594 @@
+%% 
+%%  
+%% 
+%%
+%% Copyright 1994-2013 The MathWorks, Inc.
+%%
+%% Abstract: Variable Transport Delay block target file
+
+%implements VariableTransportDelay "C"
+
+%include "tdelay_sup.tlc"
+
+%% Function: FcnVTDelayTypeSetup ===============================================
+%function BlockTypeSetup(block, system) void
+  %<TDelayTypeSetup(block, system)>
+%endfunction
+
+
+%% Function: FcnVTDelayStart ===================================================
+%% Abstract:
+%%   Start code for the Variable Transport delay blocks.
+%%
+%%     o) Initialize the work vectors
+%%
+%function Start(block, system) Output
+  %assign isRSIM = isRSim
+  {
+    %% If is delay type is variable transport delay, buffer will be larger to 
+    %% store the state 
+  
+    %if (ParamSettings.Transportdelay == "yes" ) 
+      %assign isTransportdelay = TLC_TRUE
+      %assign numBuffer =3 
+    %else 
+      %assign isTransportdelay = TLC_FALSE
+      %assign numBuffer =2
+    %endif
+  
+    %assign blockWidth = LibBlockOutputSignalWidth(0)
+    %%
+    %% Initialize
+    %%
+    %% For RSIM, we need to allocate the pBuffer for 
+    %% each element in the output port separately. This
+    %% is because if we need to grow the buffer, then we
+    %% we will free the memory associated with the buffer
+    %% so there can't be a single buffer for the block.
+    %if !isRSIM
+      real_T *pBuffer = &%<LibBlockRWork(TUbufferArea, "", "", 0)>;
+    %endif
+    int_T j; 
+    %% Do not change this value without updating the
+    %% code below for allocating pbuffer
+    %assign localRollThreshold = 2
+    
+    %%
+    %% Declare a local constant buffer size array and/or initial output
+    %% array if needed (when rolling)
+    %%
+    %assign useConstBufSzVect  = 0
+
+    %if WILL_ROLL(RollRegions, localRollThreshold)
+      %%
+      %% Buffer size array for roller
+      %%
+      %if SIZE(ParamSettings.BufferSize,1) > 1
+        %<LibGenConstVectWithInit(ParamSettings.BufferSize,tSS_INT32,"bufSz")>
+	%assign useConstBufSzVect = 1
+      %endif
+      
+    %endif
+    
+    %assign rollVars = ["<iwork>/Tail","<iwork>/Head",...
+    "<iwork>/Last","<iwork>/CircularBufSize",...
+    "<pwork>/TUbufferPtrs", "<param>/InitialOutput"]
+    
+    %roll idx = RollRegions, lcv = localRollThreshold, block, "Roller", rollVars
+        
+      %%
+      %% Compute buffer size
+      %%
+      %if lcv == ""
+	%assign paramSettingIdx = idx
+      %else
+	%if idx == 0
+	  %assign paramSettingIdx = lcv
+	%else
+	  %assign paramSettingIdx = "%<lcv> + %<idx>"
+	%endif
+      %endif
+
+      %if useConstBufSzVect
+	%assign bufSz = "bufSz[%<paramSettingIdx>]"
+      %else
+	%assign bufSz = (SIZE(ParamSettings.BufferSize,1) == 1? ...
+	  ParamSettings.BufferSize[0]: ...
+	  ParamSettings.BufferSize[paramSettingIdx])
+      %endif
+            
+      %%
+      %% Initialize the iwork and pointer work vectors
+      %%
+      %assign tail = LibBlockIWork(Tail,"",lcv,idx)
+      %assign head = LibBlockIWork(Head,"",lcv,idx)
+      %assign last = LibBlockIWork(Last,"",lcv,idx)
+      %assign bufferSiz = LibBlockIWork(CircularBufSize,"",lcv,idx)
+      %assign initOutput= LibBlockParameter(InitialOutput, "",lcv,idx)
+      
+      %if isRSIM
+        %% We need an extra {} if we aren't rolling to make
+        %% sure that we avoid symbol clashing for pbuffer
+        %if lcv == ""
+          {
+        %endif
+        %% This is called instead of utMalloc() in order to avoid Windows-specific 
+        %% crash due to mallocing and freeing in different libs.
+        %assign utilName = TDelay_CreateBuf()
+        real_T *pBuffer = (real_T *)%<utilName>(%<numBuffer>, %<bufSz>, sizeof(real_T));
+        if (pBuffer == %<SLibGetNullDefinitionFromTfl()>) {
+            %<RTMSetErrStat("\"vtdelay memory allocation error\"")>;
+          return;
+        }
+      %endif
+      
+      %<tail> = 0;
+      %<head> = 0;
+      %<last> = 0;
+      %<bufferSiz> = %<bufSz>;
+      %%    
+      for(j=0; j < %<bufSz>; j++){
+        pBuffer[j]        = %<initOutput>;
+        pBuffer[%<bufSz> + j] = %<LibGetT()>;
+      }
+      %%
+      %if lcv != ""
+	%assign pUbuf = LibBlockPWork(TUbufferPtrs, "", lcv, idx)
+	%assign pTbuf = LibBlockPWork(TUbufferPtrs, "", ...
+	  "%<lcv>+%<blockWidth>", idx)
+	%if isTransportdelay
+	  %assign pXbuf = LibBlockPWork(TUbufferPtrs, "", ...
+	    "%<lcv>+%<2*blockWidth>", idx)	    
+	  pBuffer[2*%<bufSz>] = 0.0;
+	%endif 
+      %else
+	%assign pUbuf = LibBlockPWork(TUbufferPtrs, "", lcv, idx)
+	%assign pTbuf = LibBlockPWork(TUbufferPtrs, "", lcv, idx+blockWidth)
+	%if isTransportdelay
+	  %assign pXbuf = LibBlockPWork(TUbufferPtrs, "", lcv, idx+2*blockWidth)	  
+	  pBuffer[2*%<bufSz>] = 0.0;
+	%endif 
+      %endif
+      %%
+      %<pUbuf> = (void *) &pBuffer[0];
+      %<pTbuf> = (void *) &pBuffer[%<bufSz>];
+      %if isTransportdelay
+	%<pXbuf> = (void *) &pBuffer[2*%<bufSz>];	  
+      %endif 
+
+      %% Never do this for RSIM because we allocate separate pbuffers
+      %% for each output element.
+      %if !isRSIM && ((lcv != "") || (lcv == "" && idx < blockWidth-1))
+	%if TYPE(bufSz) == "Number"
+	  pBuffer += %<numBuffer*bufSz>;	  
+	%else
+	  pBuffer += %<numBuffer>*%<bufSz>;
+	%endif
+      %endif
+      
+      %if isRSIM && lcv == ""
+        }
+      %endif  
+    %endroll
+  }
+
+%endfunction %%End FcnVTDelayStart
+
+%% Function: FcnVTInitializeCondition =========================================
+%% Abstract:
+%%   For the variable transport delay block, initialzie the states
+%function InitializeConditions(block, system) Output
+  %if (ParamSettings.Transportdelay == "yes" )       
+    %assign ncStates = ContStates[0]
+    %assign rollRegions = [0:%<ncStates-1>]
+    %assign rollVars = ["Xc"]
+    %roll sigIdx = rollRegions, lcv = RollThreshold, block, "Roller", rollVars
+      %<LibBlockContinuousState("", lcv, sigIdx)> = 0.0;
+    %endroll
+  %else
+    %% For variable time delay, no state, do nothing  
+  %endif
+%endfunction %% InitializeConditions
+
+%% Function: FcnIsReal =========================================================
+%% Abstract:
+%%   Given a string, does evaluation of this string result in a number.
+%%   For example if str = "1.0", then %<str> == 1.0
+%%   If str = "a2", then %<str> would be an error.
+%%
+
+%%   This function is needed because LibBlockParameter always returns a string,
+%%   we need to find out if this string is a number. To do this we use FEVAL
+%%   to call a matlab function that parses the resultant type.
+%%
+
+%function FcnIsReal(strValue)
+
+  %assign temp = FEVAL("sscanf",strValue,"%f%1s")
+  %return SIZE(temp,0) == 1
+
+%endfunction %%End FcnIsReal
+
+
+%% Function: FcnVTDelayOutputs ==================================================
+%% Abstract:
+%%    Using the transport delay 'state' information, delay the input by the 
+%%    specified amount of time, simulating a time delay. 
+%%
+%function Outputs(block, system) Output
+  {
+    %if (ParamSettings.Transportdelay == "yes" ) 
+      %assign isTransportdelay = TLC_TRUE
+    %else 
+      %assign isTransportdelay = TLC_FALSE
+    %endif
+  
+    %assign blockWidth = LibBlockOutputSignalWidth(0)
+    %assign inport0Width = LibBlockInputSignalWidth(0)
+    %%
+    %% If needed, setup static const vectors to capture:
+    %%   - what input port 0 signals are discrete
+    %%   - what the buffer sizes are
+    %% This is done, only if the block will 'roll' and these vectors are
+    %% of length greater than 1.
+    %%
+    %assign useConstIsDiscVect = 0
+    %assign localRollThreshold = 2  
+
+    %if WILL_ROLL(RollRegions, localRollThreshold)
+
+      %if SIZE(ParamSettings.DiscreteInput,1) > 1
+	%<LibGenConstVectWithInit(ParamSettings.DiscreteInput,...
+	  tSS_BOOLEAN,"isDiscrete")>
+	%assign useConstIsDiscVect = 1
+      %endif
+
+    %endif
+    
+    %%
+    %% Declare local variables
+    %%
+    real_T **uBuffer = (real_T**)&%<LibBlockPWork(TUbufferPtrs,"","",0)>;
+    real_T **tBuffer = (real_T**)&%<LibBlockPWork(TUbufferPtrs,"","",...
+      blockWidth)>;
+    %if isTransportdelay
+      real_T **xBuffer = (real_T**)&%<LibBlockPWork(TUbufferPtrs,"","",...
+	2*blockWidth)>;
+    %endif
+    
+    %if ::CompiledModel.StartTime != 0.0
+       %assign tStart = RTMGet("TStart")
+    %else
+       %assign tStart = 0.0
+    %endif
+    
+    real_T simTime   = %<LibGetT()>;     
+    real_T appliedDelay;  
+      
+    %%
+    %% Produce the output (roll it!)
+    %%
+    
+    %if isTransportdelay
+      %% Non-directfeedthrough, don't need input variables
+      %assign rollVars = ["Xc","y0",...
+        "<param>/InitialOutput ","<iwork>/Tail","<iwork>/Head",...
+        "<iwork>/Last","<iwork>/CircularBufSize"]
+    %else 
+      %% for variable time delay and zerohandle is checked, u0 is needed
+      %if (ParamSettings.HandleZeroDelay == "yes") 
+        %assign rollVars = ["u0", "u1","y0","<param>/MaximumDelay",...
+          "<param>/InitialOutput ", "<iwork>/Tail","<iwork>/Head",...
+          "<iwork>/Last","<iwork>/CircularBufSize"]
+      %else
+        %assign rollVars = ["u1","y0","<param>/MaximumDelay",...
+          "<param>/InitialOutput ", "<iwork>/Tail","<iwork>/Head",...
+          "<iwork>/Last","<iwork>/CircularBufSize"]
+      %endif
+    %endif 
+     
+    %roll idx = RollRegions, lcv = localRollThreshold, block, "Roller", rollVars
+    
+      %assign tail = LibBlockIWork(Tail, "", lcv, idx)
+      %assign head = LibBlockIWork(Head, "", lcv, idx)
+      %assign last = LibBlockIWork(Last, "", lcv, idx)
+      %assign initOutput = LibBlockParameter(InitialOutput, "",lcv,idx) 
+      
+      %assign y = LibBlockOutputSignal(0, "", lcv, idx)        
+                     
+      %if lcv == ""
+	%assign paramSettingIdx = idx
+      %else
+	%if idx == 0
+	  %assign paramSettingIdx = lcv
+	%else
+	  %assign paramSettingIdx = "%<lcv> + %<idx>"
+	%endif
+      %endif
+
+      %if useConstIsDiscVect
+	%assign isDiscrete = "isDiscrete[%<paramSettingIdx>]"
+      %else
+	%assign isDiscrete = (SIZE(ParamSettings.DiscreteInput,1) == 1? ...
+	  ParamSettings.DiscreteInput[0]: ...
+	  ParamSettings.DiscreteInput[paramSettingIdx])
+      %endif
+
+      %assign bufSz = LibBlockIWork(CircularBufSize, "", lcv, idx)
+            
+      %if ( Accelerator || isRSim || ...
+	CodeFormat == "S-Function" || ...
+	SolverType == "VariableStep" || ...
+	IsModelReferenceForASimstructBasedTarget() )
+	%assign minorStepAndTAtLastMajorOutput = ...
+	  "(boolean_T) " ...
+	  "(%<RTMIs("MinorTimeStep")> && " ...
+	  "(%<RTMGet("TimeOfLastOutput")> == %<LibGetT()>))"
+      %else
+	%assign minorStepAndTAtLastMajorOutput = 0
+      %endif
+        
+      
+      %% The cast to boolean_T above is to avoid MSVC warning C4761:
+      %% "integral size mismatch in argument; conversion supplied"
+               
+      %if isTransportdelay    	            
+        
+        %% First call unitility to generate rt_VTDelayfindtDInterpolate        
+        %assign utilName = VTDelay_FindtDInterpolate()
+        %% Then call it 
+     
+        %assign x = LibBlockContinuousState("",lcv, idx)
+        /* For variable transport dealy, find the real applied dealy 
+        * here and then output
+        */     
+        %<y>= %<utilName>(%<x>,*tBuffer,*uBuffer, *xBuffer,
+        %<bufSz>,%<head>,%<tail>, &%<last>, simTime, %<tStart>,%<isDiscrete>,
+        %<minorStepAndTAtLastMajorOutput>, %<initOutput>,
+        &appliedDelay);                 
+      %else     
+         %assign maxDelay = LibBlockParameter(MaximumDelay, "", lcv, idx)
+         appliedDelay  = %<LibBlockInputSignal(1, "", lcv, idx)>;
+         
+        /* For variable time delay, output here */
+        
+        if ( appliedDelay > %<maxDelay>) {
+          appliedDelay = %<maxDelay>;
+        }      
+        
+        if ( appliedDelay < 0.0) {
+          /* negative delay is not supported
+          *  set delay to 0
+          */
+          appliedDelay = 0.0;
+        }
+        
+        %assign tMinusDelay = "simTime - appliedDelay"
+        
+        %% First call unitility to generate rt_TDelayInterpolate
+        %assign utilName = TDelay_Interpolate()
+        %% Then call it. 
+        
+        %if (ParamSettings.HandleZeroDelay == "yes") 
+          
+          if(appliedDelay == 0.0){  
+              %assign u0 = LibBlockInputSignal(0, "", lcv, idx)
+              %<y> = %<u0>;           
+          }
+          else{
+               %<y> = %<utilName>(
+               %<tMinusDelay>,
+               %<tStart>,
+               *tBuffer,
+               *uBuffer,
+               %<bufSz>,
+               &%<last>,
+               %<tail>,
+               %<head>,
+               %<initOutput>,
+               %<isDiscrete>,
+               %<minorStepAndTAtLastMajorOutput>);                            
+          } 
+        %else
+          %<y> = %<utilName>(
+          %<tMinusDelay>,
+          %<tStart>,
+          *tBuffer,
+          *uBuffer,
+          %<bufSz>,
+          &%<last>,
+          %<tail>,
+          %<head>,
+          %<initOutput>,
+          %<isDiscrete>,
+          %<minorStepAndTAtLastMajorOutput>);                                   
+        %endif	  
+      
+      %endif
+      
+      %if (lcv != "") || (lcv == "" && idx < blockWidth-1)
+	tBuffer++; uBuffer++;
+	%if isTransportdelay
+	  xBuffer++;
+	%endif
+      %endif
+      
+    %endroll
+  }
+%endfunction %%End FcnVTDelayOutputs
+   
+  
+%% Function: FcnVTDelayUpdate ===================================================
+%% Abstract:
+%%   Update the state information of the variable transport delay.
+%%
+%function Update(block, system) Output
+  {
+    %if (ParamSettings.Transportdelay == "yes" ) 
+      %assign isTransportdelay = TLC_TRUE
+    %else 
+      %assign isTransportdelay = TLC_FALSE
+    %endif
+      
+    %assign blockWidth = LibBlockOutputSignalWidth(0)
+    %assign inport0Width = LibBlockInputSignalWidth(0)
+    real_T **uBuffer = (real_T**)&%<LibBlockPWork(TUbufferPtrs,"","",0)>;
+    real_T **tBuffer = (real_T**)&%<LibBlockPWork(TUbufferPtrs,"","",...
+      blockWidth)>;
+    %if isTransportdelay
+      real_T **xBuffer = (real_T**)&%<LibBlockPWork(TUbufferPtrs,"","",...
+	2*blockWidth)>;
+    %elseif isRSim || Accelerator
+      real_T **xBuffer = %<SLibGetNullDefinitionFromTfl()>;	
+    %endif
+       
+    real_T simTime   = %<LibGetT()>;
+    
+    
+    %if (ParamSettings.FixedBuffer == "yes" ) 
+      %assign isFixedbuf = TLC_TRUE  
+      boolean_T bufferisfull = %<GET_TYPE_ID_REPLACEMENT("false")>; 
+    %else
+      %assign isFixedbuf = TLC_FALSE
+    %endif
+       
+    %<LibUpdateBlockCStateAbsoluteTolerance(block, system)>  
+    
+    %assign delayPrm = "MaximumDelay"
+    %% u1 is needed
+    %assign rollVars = ["u0", "u1", "<iwork>/Tail","<iwork>/Head", ...
+      "<iwork>/CircularBufSize", "<param>/%<delayPrm>"]
+    %if isTransportdelay
+      %assign rollVars = ["Xc","u0","u1", "<iwork>/Tail","<iwork>/Head", ...
+	"<iwork>/CircularBufSize"]
+    %endif
+    
+    %if Accelerator || isRSim
+      %assign rollVars = ["u0", "u1", "<iwork>/Tail","<iwork>/Head", ...
+	"<iwork>/Last", "<iwork>/CircularBufSize", "<param>/%<delayPrm>"]
+      %assign maxNewBufSz = LibBlockIWork(MaxNewBufSize, "", "", 0)
+      %if isTransportdelay
+	%assign rollVars = ["Xc","u0", "u1", "<iwork>/Tail","<iwork>/Head", ...
+	  "<iwork>/Last", "<iwork>/CircularBufSize", "<param>/%<delayPrm>"]
+      %endif
+    %endif
+
+    %roll idx = RollRegions, lcv = RollThreshold, block, "Roller", rollVars
+      %assign tail  = LibBlockIWork(Tail, "", lcv, idx)
+      %assign head  = LibBlockIWork(Head, "", lcv, idx)
+      %assign bufSz = LibBlockIWork(CircularBufSize, "", lcv, idx)    
+      
+      %<head> = ((%<head> < (%<bufSz>-1)) ? (%<head>+1) : 0);
+
+      if (%<head> == %<tail>) {
+	%if isFixedbuf
+          bufferisfull = %<GET_TYPE_ID_REPLACEMENT("true")>;
+        %endif
+        
+        %if Accelerator || isRSim
+	  %assign last        = LibBlockIWork(Last, "", lcv, idx)
+	  %assign tDelay      = LibBlockParameter(%<delayPrm>, "", lcv, idx)
+	  %assign tMinusDelay = "simTime - %<tDelay>"
+          
+          %% first call unitility to generate rt_TDelayUpdateTailOrGrowBuf
+          %assign utilName = TDelay_UpdateTailOrGrowBuf()
+          
+          %% Then call this function
+	  if (!%<utilName>( &%<bufSz>, ...
+	    &%<tail>, &%<head>, &%<last>, %<tMinusDelay>, ...
+	    tBuffer, uBuffer, xBuffer,(boolean_T)%<isFixedbuf>, ...
+	    (boolean_T)%<isTransportdelay>, 
+	    &%<maxNewBufSz>) ) {
+	    %<RTMSetErrStat("\"vtdelay memory allocation error\"")>;
+	    return;
+	  }
+	%else
+	  %% Handle buffer overflows by loosing oldest data.
+	  %<tail> = ((%<tail> < (%<bufSz>-1)) ? (%<tail>+1) : 0);
+	%endif
+      }
+      
+      %if (lcv != "") || (lcv == "" && idx < blockWidth-1)
+	%assign pp = "++"
+      %else
+	%assign pp = ""
+      %endif
+      (*tBuffer%<pp>)[%<head>] = simTime;
+      %if (inport0Width == 1)
+        %% Input is scalar, no need to roll here, see g1408910
+        (*uBuffer%<pp>)[%<head>] = %<LibBlockInputSignal(0, "", "", 0)>;    
+      %else
+        (*uBuffer%<pp>)[%<head>] = %<LibBlockInputSignal(0, "", lcv, idx)>;
+      %endif
+      %if isTransportdelay    
+	%assign x = LibBlockContinuousState("",lcv, idx)
+	(*xBuffer%<pp>)[%<head>] = %<x>;          
+      %endif  
+    %endroll
+    
+    /* when use fixed buffer, reset solver at when buffer is updated
+    * to avoid output consistency fail.
+    */
+    %if isFixedbuf
+      if (bufferisfull){
+        %<RTMSetBlockStateForSolverChangedAtMajorStep()>;
+        %<RTMSetContTimeOutputInconsistentWithStateAtMajorStep()>;
+      }
+    %endif
+  }
+%endfunction %%End FcnVTDelayUpdate
+
+  
+%% Function: FcnVTDerivatives ==================================================
+%% Abstract:
+%%   For the variable transport delay block, get the derivative
+%% 
+%function Derivatives(block, system) Output
+  {
+    %if (ParamSettings.Transportdelay == "yes" ) 
+      real_T instantDelay;
+
+      %assign rollVars = ["u1", "xdot", "<param>/MaximumDelay"]
+      %roll idx = RollRegions, lcv = 2, block, "Roller", rollVars
+        %%      
+        instantDelay = %<LibBlockInputSignal(1, "", lcv, idx)>;
+        %assign maxDelay = LibBlockParameter(MaximumDelay, "", lcv, idx)
+      
+        if ( instantDelay > %<maxDelay>) {
+          instantDelay = %<maxDelay>;
+        }
+        
+        if (instantDelay < 0.0) {
+	  %<LibBlockContinuousStateDerivative("",lcv,idx)> = 0;
+        }else{ 
+	  %<LibBlockContinuousStateDerivative("",lcv,idx)> = 1.0/instantDelay;
+	}
+      %endroll
+    %else
+      %% For variable time delay, no state, do nothing
+    %endif
+  }
+%endfunction %%End FcnVTDerivatives
+
+
+%% ForcingFunction ============================================================
+%% Abstract:
+%%      When part of linearly-implicit model, explicit ODEs 
+%%      have ForcingFunction == Derivatives 
+%%
+%function ForcingFunction(block, system) Output
+  %if ::CompiledModel.ModelIsLinearlyImplicit == "yes" 
+    %<Derivatives(block,system)>
+  %endif
+%endfunction
+
+%%
+%% Function: Terminate ========================================================
+%% Abstract:
+%%      Free PWorks used with RSim target
+%%
+%function Terminate(block, system) Output
+  %<TDelay_Terminate(block, system)>
+%endfunction %% Terminate
+
+%% [EOF] vtdelay.tlc

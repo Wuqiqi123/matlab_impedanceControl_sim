@@ -1,0 +1,90 @@
+%% =============================================================================
+%% File: prm_unstsimulinkglobal.tlc
+%%
+%% Abstract:
+%%   
+%%   
+%%  
+%%
+%% Copyright 2005-2012 The MathWorks, Inc.
+%% 
+%% =============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PRM_UNSTSIMULINKGLOBAL_") == 0
+%assign _PRM_UNSTSIMULINKGLOBAL_ = 1
+
+%include "prm_cacheutils.tlc"
+
+
+%% Function: SLibUnstructuredCacheSimulinkGlobalPrmBuffers =================================
+%% Abstract:
+%%   Generate the Decl & Instance buffers for UnstructuredSimulinkGlobal parameters.
+%%   This function can be called only in two of the three parameter tuning modes:
+%%   DialogOnly (InlineParameters == 0) and VariableOnly (InlineParameters == 1).
+%%  
+%function SLibCacheUnstructuredSimulinkGlobalPrmBuffers(startIdx) void
+
+  %assert (InlineParameters != 2)
+
+  %<SLibCreatePrmBuffer("UnstructuredSimulinkGlobal", "Decl")>
+  %<SLibCreatePrmBuffer("UnstructuredSimulinkGlobal", "Instance")>
+  
+  %% Generate the parameter declaration buffer
+  %assign declBuffer = FcnGenUnstructuredSimulinkGlobalPrmDecl(startIdx)
+  %<SLibSetPrmBufferPart("UnstructuredSimulinkGlobal", "Decl", ...
+    "Code", declBuffer)>
+  
+  %% Generate the parameter instantiation buffer
+  %%
+  %% NOTE:
+  %% Always generate the ParamsInst buffer to be included in:
+  %% - top_model.c   (if reqInsts.ParamsInst == TLC_TRUE), or
+  %% - submodel_sf.c (if generating code for model reference target)
+  %assign instanceBuffer = FcnGenUnstructuredSimulinkGlobalPrmInstance(startIdx)
+  %<SLibSetPrmBufferPart("UnstructuredSimulinkGlobal", "Instance", ...
+    "Code", instanceBuffer)>
+    
+%endfunction %% SLibCacheUnstructuredSimulinkGlobalPrmBuffers
+
+
+%% Function: FcnGenUnstructuredSimulinkGlobalPrmDecl ===========================
+%% Abstract:
+%%   Generate the UnstructuredSimulinkGlobal parameters declaration buffer
+%%
+%function FcnGenUnstructuredSimulinkGlobalPrmDecl(startIdx) void
+
+  %assign cacheBuffer = ""
+  %assign numParams = SLibAreSimulinkGlobalParamsUnstructured() ? ...
+    NumInrtP : NumInMdlRefGlobal
+  %foreach prmIdx = numParams
+    %assign mdlParam = Parameter[startIdx + prmIdx]
+    %assign cacheBuffer = cacheBuffer + SLibGenModelParamDecl(mdlParam, TLC_TRUE)
+  %endforeach
+  
+  %return cacheBuffer
+
+%endfunction %% FcnGenUnstructuredSimulinkGlobalPrmDecl
+
+
+%% Function: FcnGenUnstructuredSimulinkGlobalPrmInstance =======================
+%% Abstract:
+%%   Generate the constant parameters instantiation buffer
+%%
+%function FcnGenUnstructuredSimulinkGlobalPrmInstance(startIdx) void
+
+  %assign cacheBuffer = "" 
+  %assign numParams = SLibAreSimulinkGlobalParamsUnstructured() ? ...
+    NumInrtP : NumInMdlRefGlobal
+  %foreach prmIdx = numParams
+    %assign mdlParam = Parameter[startIdx + prmIdx]
+    %assign cacheBuffer = cacheBuffer + SLibGenUnstrModelParamInstance(mdlParam, TLC_TRUE)
+  %endforeach
+
+  %return cacheBuffer
+  
+%endfunction %% FcnGenUnstructuredSimulinkGlobalPrmInstance
+
+%endif %% EXISTS("_PRM_UNSTSIMULINKGLOBAL_")
+
+%% [EOF] prm_unstsimulinkglobal.tlc

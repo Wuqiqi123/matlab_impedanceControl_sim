@@ -1,0 +1,59 @@
+%% scope_mobile.tlc
+%% To be called from scope.tlc when target is a mobile (iOS or Andriod)
+
+%%/* Get time and input values and call the plotting routine */
+%%double time = %<checkAndGetDESEngTimeSource(block)>
+{
+  %assign scopeID = ParamSettings.MobileTargetID
+  int_T scope%<scopeID>ID = %<scopeID>;
+  %assign plotDataType = LibGetDataTypeNameFromId(tSS_SINGLE)
+
+  %foreach pIdx = NumDataInputPorts
+    {
+      %assign sigDataType = LibBlockInputSignalDataTypeId(pIdx)
+      %assign isComplex = LibBlockInputSignalIsComplex(pIdx)
+      %assign sigDataTypeName = LibGetDataTypeNameFromId(sigDataType)
+      %assign width = LibBlockInputSignalWidth(pIdx)
+      
+      %assign numDims = LibBlockInputSignalNumDimensions(pIdx)
+      %assign dims = LibBlockInputSignalDimensions(pIdx)
+      %assign dimStr = "%<dims[0]>"
+      %foreach dimIdx = numDims-1
+        %assign dimStr = dimStr + "," + "%<dims[dimIdx+1]>"
+      %endforeach
+      
+      int_T portIdx = %<pIdx>;
+      int_T signalWidth = %<width>;
+      int_T sigNumDims = %<numDims>;
+      int_T sigDims[%<numDims>] = {%<dimStr>};
+      %<plotDataType> up%<pIdx>[%<width>];
+      
+      %with DataInputPort[pIdx]
+        %assign rollRegion = RollRegions
+      %endwith
+      %if LibIsBuiltInDataType(sigDataType) && !isComplex
+        %assign rollVars = ["u%<pIdx>"]
+        %roll idx = rollRegion, lcv = RollThreshold, block, "Roller", rollVars
+          %assign rollIter = ROLL_ITERATIONS()
+          %if rollIter > 0
+            %assign outputLoopVar = lcv
+          %else
+            %assign outputLoopVar = idx
+          %endif
+          up%<pIdx>[%<outputLoopVar>] = (%<plotDataType>)%<LibBlockInputSignal(pIdx,"",lcv,idx)>;
+        %endroll
+      %elseif isComplex
+        %assign errTxt = "Error: Complex inputs are not supported on this target."
+        %<LibBlockReportFatalError(block, errTxt)>
+      %elseif LibIsDataTypeFixpt(sigDataType)
+        %assign fixPtType =  FixPt_GetDataTypeFromIndex(sigDataType)
+        %assign fixPtTypeName = fixPtType.DataTypeName
+        %assign errTxt = "Error: Inputs of type %<fixPtTypeName> are not supported on this target."
+        %<LibBlockReportFatalError(block, errTxt)>
+      %endif
+      CACHE_PLOT_DATA(scope%<scopeID>ID,portIdx,up%<pIdx>,signalWidth,sigNumDims,sigDims);
+    }
+  %endforeach
+  PLOT_DATA(scope%<scopeID>ID);
+  }
+    

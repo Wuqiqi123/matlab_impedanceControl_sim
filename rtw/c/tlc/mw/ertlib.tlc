@@ -1,0 +1,4132 @@
+%% ============================================================================
+%% File : ertlib.tlc
+%%
+%%
+%% Abstract:
+%%   This is the system library file for the Embedded-C code format.
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_ERTLIB_") == 0
+%assign _ERTLIB_ = 1
+
+%include "ertmdlrefabstime.tlc"
+%include "ertmdlreftiming.tlc"
+%include "ertmodelarg.tlc"
+%include "ertcontstate.tlc"
+%include "ertextmode.tlc"
+%include "ertmdlrefcontinuous.tlc"
+%include "dumpcodemetrics.tlc"
+
+%% Code profiling support
+%if ISFIELD(::CompiledModel.ConfigSet, "CodeProfilingInstrumentation")
+  %if !(ISEQUAL(::CompiledModel.ConfigSet.CodeProfilingInstrumentation, "off"))
+    %include "prof_tlc.tlc"
+  %endif  
+%endif
+
+%addtorecord ::CompiledModel RequireMapTIDViaFunction 0
+
+%% Function: SLibIncludeERTFirstTime()
+%% Abstract:
+%%   Returns if we should suppress usage of firstTime flag in 
+%%   model_initialize() function
+%function SLibIncludeERTFirstTime() void
+  %return TLC_FALSE
+%endfunction
+
+%% Function: SLibHasSetEventsForThisBaseRateFcn
+%% Abstract:
+%%   Returns true if ERT generates SetEventsForThisBaseStep function
+%function SLibHasSetEventsForThisBaseRateFcn()
+  %return !SLibSingleTasking() && ...
+    !SuppressSetEventsForThisBaseRateFcn && ...
+    !InlineSetEventsForThisBaseRateFcn
+%endfunction
+
+%% Function: FcnRestoreCoderGroupPointer ====================================
+%% Abstract:
+%%   This queries the need to cache the pointers for coder groups so that they can be 
+%%   reset after RTM is memset to 0.
+%%
+%function FcnRestoreCoderGroupPointer(group) void
+  %if !SLibAccessViaPointerInSelf(group) || ...
+    LibCoderDataGroupStructIsEmpty(group) || ...
+    SLibAllocatesCoderDataGroup(group) || ...
+    SLibIsGroupSelfCoderGroup(group) || ...
+    ::CompiledModel.SuppressSelf
+    %return TLC_FALSE
+  %else
+    %return TLC_TRUE
+  %endif
+%endfunction
+
+%% Function: SLibCacheCoderGroupPointers ====================================
+%% Abstract:
+%%   This notes the need to cache the pointers for coder groups so that they can be 
+%%   reset after RTM is memset to 0.
+%%
+%function SLibCacheCoderGroupPointers() void
+  %if FcnCacheAndRestoreCoderGroupPointers()
+    %assign baseSystemIdx = GetBaseSystemIdx()
+    %foreach idx = ::CompiledModel.NumCoderDataGroups
+      %assign group = ::CompiledModel.CoderDataGroup[idx]
+      %assign fieldName = "CoderDataGroup" + group.Name
+      %if FcnRestoreCoderGroupPointer(group)
+        %assign interfaceData = SLibCG_GetInterfaceData(baseSystemIdx,"Registration",fieldName)
+        %<LibAccessArg(interfaceData)>
+      %endif
+    %endforeach
+  %endif
+%endfunction
+
+%% Function: SLibRestoreCoderGroupPointers ===============================
+%% Abstract:
+%%   This resets the pointers for coder groups after RTM is memset to 0.
+%%
+%function SLibRestoreCoderGroupPointers() void
+  %openfile buffer
+  %if FcnCacheAndRestoreCoderGroupPointers()
+    %foreach idx = ::CompiledModel.NumCoderDataGroups
+      %assign group = ::CompiledModel.CoderDataGroup[idx]
+      %if FcnRestoreCoderGroupPointer(group)
+        %assign var = SLibGetCoderDataGroupPointerFromRTM(group, 0)
+        %if IsModelReferenceTarget()
+          %assign baseSystemIdx = GetBaseSystemIdx()
+          %assign groupToken  = "CoderDataGroup" + group.Name
+          %assign varGroupIdx = FcnSysVarGroupIndex(System[baseSystemIdx], groupToken, 0)
+          %assign rhs = SLibVarGroupLocalName(varGroupIdx)
+        %else
+          %assign rhs = SLibCoderDataGroupInstance(group)
+        %endif
+        %<var> = %<rhs>;
+      %endif
+    %endforeach
+  %endif
+  %closefile buffer
+  %if !WHITE_SPACE(buffer)
+    %assign buffer = "/* Restore pointers to storage classes */\n" + buffer
+  %endif
+  %return buffer
+%endfunction
+  
+%% Function: CachePWorksForModelRefTarget() Output
+%% Abstract:
+%%   This function caches the PWork values before the memset which wipes out 
+%% all the model_DW data. We need to cache the pworks because we do not want
+%% the pointers to the PWork data to be wiped out every time the registration 
+%% function is called. This was specifically an issue when the model block in
+%% question had an initialize port. In such cases, the registration function 
+%% was being called multiple times and the PWork data previously stored would 
+%% be lost since the pointers would be set to nullptr. 
+%% For more details, see g1569963
+%function CachePWorksForModelRefTarget() Output
+  %if IsModelReferenceSimTarget()
+    {
+      %assign pwork_idx = 0
+      %foreach i = ::CompiledModel.DWorks.NumDWorks
+        %assign dwRec = ::CompiledModel.DWorks.DWork[i]
+        %if (dwRec.Origin == "PWORK")
+          %assign block = System[dwRec.SigSrc[0]].Block[dwRec.SigSrc[2]]
+          %if GETFIELD(block, "NumPWorkDefines") > 0
+            %assign def = GETFIELD(block, "PWorkDefine")
+            %foreach defIdx = GETFIELD(block, "NumPWorkDefines")
+              %assign width = def[defIdx].Width
+              void* _pw_%<pwork_idx>[%<width>];
+              %assign pwork_idx = pwork_idx + 1
+            %endforeach
+          %else
+            %assign width = LibGetRecordWidth(dwRec)
+            void* _pw_%<pwork_idx>[%<width>];
+            %assign pwork_idx = pwork_idx + 1
+          %endif
+        %endif
+      %endforeach
+      %assign pwork_idx = 0
+      %foreach i = ::CompiledModel.DWorks.NumDWorks
+        %assign dwRec = ::CompiledModel.DWorks.DWork[i]
+        %if (dwRec.Origin == "PWORK")
+          %assign path = SLibCG_GetVarGroupElementPath(dwRec.VarGroupIdx, ...
+            GetBaseSystemIdx(), 0)
+          %assign block = System[dwRec.SigSrc[0]].Block[dwRec.SigSrc[2]]
+          %if GETFIELD(block, "NumPWorkDefines") > 0
+            %assign def = GETFIELD(block, "PWorkDefine")
+            %foreach defIdx = GETFIELD(block, "NumPWorkDefines")
+              %assign width = def[defIdx].Width
+              %foreach elemIdx = width
+                %if width == 1
+                  _pw_%<pwork_idx>[%<elemIdx>] = %<path>.%<def[defIdx].Name>;
+                %else
+                  _pw_%<pwork_idx>[%<elemIdx>] = %<path>.%<def[defIdx].Name>[%<elemIdx>];
+                %endif
+              %endforeach
+              %assign pwork_idx = pwork_idx + 1
+            %endforeach
+          %else
+            %assign width = LibGetRecordWidth(dwRec)
+            %foreach elemIdx = width
+              %if width == 1
+                _pw_%<pwork_idx>[%<elemIdx>] = %<path>;
+              %else
+                _pw_%<pwork_idx>[%<elemIdx>] = %<path>[%<elemIdx>];
+              %endif
+            %endforeach
+            %assign pwork_idx = pwork_idx + 1
+          %endif
+        %endif
+      %endforeach
+    %endif %%IsModelReferenceSimTarget()
+%endfunction %%CachePWorksForModelRefTarget
+
+%% Function: RestorePWorksForModelRefTarget() Output
+%% Abstract:
+%%   This function restores the PWork values we had previously cached before 
+%% the memset which wipes out all the model_DW data. This restoring is needed
+%% because we do not want the pointers to the PWork data to be wiped out every
+%% time the registration function is called. This was specifically an issue
+%% when the model block in question had an initialize port. In such cases, the 
+%% registration function was being called multiple times and the PWork data 
+%% previously stored would be lost since the pointers would be set to nullptr.
+%% For more details, see g1569963
+
+%function RestorePWorksForModelRefTarget() Output
+  %if IsModelReferenceSimTarget()
+    %assign pwork_idx = 0
+    %foreach i = ::CompiledModel.DWorks.NumDWorks
+      %assign dwRec = ::CompiledModel.DWorks.DWork[i]
+      %if (dwRec.Origin == "PWORK")
+        %assign path = SLibCG_GetVarGroupElementPath(dwRec.VarGroupIdx, ...
+          GetBaseSystemIdx(), 0)
+        %assign block = System[dwRec.SigSrc[0]].Block[dwRec.SigSrc[2]]
+        %if GETFIELD(block, "NumPWorkDefines") > 0
+          %assign def = GETFIELD(block, "PWorkDefine")
+          %foreach defIdx = GETFIELD(block, "NumPWorkDefines")
+            %assign width = def[defIdx].Width
+            %foreach elemIdx = width
+              %if width == 1
+                %<path>.%<def[defIdx].Name> = _pw_%<pwork_idx>[%<elemIdx>];
+              %else
+                %<path>.%<def[defIdx].Name>[%<elemIdx>] = _pw_%<pwork_idx>[%<elemIdx>];
+              %endif
+            %endforeach
+            %assign pwork_idx = pwork_idx + 1
+          %endforeach
+        %else
+          %assign width = LibGetRecordWidth(dwRec)
+          %foreach elemIdx = width
+            %if width == 1
+              %<path> = _pw_%<pwork_idx>[%<elemIdx>];
+            %else
+              %<path>[%<elemIdx>] = _pw_%<pwork_idx>[%<elemIdx>];
+            %endif
+          %endforeach
+          %assign pwork_idx = pwork_idx + 1
+        %endif
+      %endif
+    %endforeach
+    }
+  %endif %%IsModelReferenceSimTarget()
+%endfunction %%RestorePWorksForModelRefTarget
+
+%% Function: SLibMdlRefInitOneGlobalStringBlockOutput() Output
+%% Abstract:
+%%   Emit initialization code for one global block output in sub model
+%%   if its data type is string or bus containing string element
+%function SLibMdlRefInitOneGlobalStringBlockOutput(dTypeId, varName) Output
+  %if LibIsStringDataType(dTypeId)
+    %% We have a string output or bus element - emit initialization code
+    %% For now, initialize it to empty string
+    %% TODO: allow other initial value of string outputs
+    suInitializeString(&%<varName>, "");
+  %elseif LibIsStructDataType(dTypeId)
+    %% We have a bus - check if it contains string element
+    %assign dtRec = ::CompiledModel.DataTypes.DataType[dTypeId]
+    %assign elNum = LibDataTypeNumElements(dTypeId)
+    %foreach elIdx = elNum
+      %assign elDataTypeId = LibDataTypeElementDataTypeId(dTypeId, elIdx)
+      %assign elVarName = varName + "." + LibDataTypeElementName(dTypeId, elIdx)
+      %<SLibMdlRefInitOneGlobalStringBlockOutput(elDataTypeId, elVarName)>
+    %endforeach
+  %endif
+%endfunction
+
+%% Function: SLibDumpERTAndModelrefInitMemoryCode() Output
+%% Abstract:
+%%   Dumps the registration code and initialization code
+%%   to initialize model internal and external memory.
+%%   This includes initialization of fields of RT_MODEL,
+%%   and initialization of various other model structures.
+%%   For ERT target, registration code and initialization code
+%%   are both dumped into the <model>_initialize() function,
+%%   and thus there is a single call with bEmitReg true (emit
+%%   registration code) and bEmitInit true (emit initialization code).
+%%   For other targets, registration code and initialization code
+%%   may get dumped to separate functions, and thus 2 separate calls are
+%%   made, one with bEmitReg true and one with bEmitInit true.
+%%
+%function SLibDumpERTAndModelrefInitMemoryCode(bEmitReg, bEmitInit, fromSFcn) Output
+  %assign addr = IsMultiInstanceERTOrModelReference() ? "" : "&"
+  %assign rootSystem = System[NumSystems-1]
+  %assign rootModule = ::CompiledModel.RTWCGModules.RTWCGModule[rootSystem.CGIRModuleIdx]
+  %assign tmpHasSimStructVars = ::CompiledModel.HasSimStructVars
+  %assign ::CompiledModel.HasSimStructVars = AccessDataUseRTM(NumSystems-1,"Registration",TLC_FALSE)
+  %assign hasStaticStructure = ...
+    GenerateClassInterface || IsModelRefScalableBuild()
+  %if hasStaticStructure
+    %assign addr = "&"
+  %endif
+  %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+  %if ISEMPTY(addr)
+    %assign addrPrefix = ""
+    %assign addrSuffix = ""
+  %elseif IsModelRefScalableBuild() && ...
+    ::CompiledModel.GenSingleInstanceMdlRefDWork
+    %assign addrPrefix = "&("
+    %assign addrSuffix = ")"
+  %else
+    %assign addrPrefix = "&"
+    %assign addrSuffix = ""
+  %endif
+
+  %if UsingMalloc && bEmitReg
+     %assign OpenBlock = "{"
+     %assign CloseBlock = "}"
+  %else
+     %assign OpenBlock = ""
+     %assign CloseBlock = ""
+  %endif
+  %openfile retBuf
+  %% ===========================
+  %% Initialize internal memory
+  %% ===========================
+  %%
+  %% Block I/O
+  %%
+  %openfile tmpBuf
+  %% Those with internal storage
+  %assign hasBlockIO = !LibBlockIOStructIsEmpty() && !SLibIsSelfStructured()
+  %if hasBlockIO
+    %if bEmitReg
+      %assign varName = IsModelReferenceTarget() && !hasStaticStructure ? "localB":"b"
+      %assign rtmField = "BlockIO"
+      %assign ptrBlockIOLabel = varName
+      %assign varType = ::tBlockIOType
+      %if UsingMalloc
+        %% In the UsingMalloc case, we allocate the BlockIO struct 
+        %% and set the blockIO ptr in the RTM
+        %if GenerateGRTWrapper
+          void *%<varName> = malloc(sizeof(%<varType>));
+        %else
+          %<varType> *%<varName> = (%<varType> *) malloc(sizeof(%<varType>));
+        %endif
+        %<RTMChkMemAndReturnIfErr(varName)>;
+
+        %if ::CompiledModel.HasSimStructVars == 0
+          %<RTMSet("%<rtmField>", ptrBlockIOLabel)>;
+        %endif
+      %elseif GenerateGRTWrapper
+        %assign blockIO = IsModelReferenceTarget() ? "localB" : LibGetBlockIOStruct()
+        %<RTMSet("%<rtmField>", "(void *) " + addrPrefix + blockIO + addrSuffix)>;
+      %elseif MultiInstanceERTCode && RTMModelPtrsToInstanceDataIsReqFcn() && !SLibGetUseRTMcgType()
+        %% In the multi-instance ERT case, we don't need to malloc
+        %% the BlockIO struct, but we may still need to generate code to
+        %% initialize the blockIO  ptr in the RTM
+        %assign structName = LibGetBlockIOStruct()
+        %<RTMSet("%<rtmField>", addrPrefix + structName + addrSuffix)>;
+        %<SLibAccessArgHelper(rootSystem.Interface.BlockIOArgDef,"",rootSystem.CurrentTID)>
+      %endif
+    %endif %% bEmitReg
+    %if bEmitInit
+      %assign blockIO = IsModelReferenceTarget() && !hasStaticStructure ...
+        ? "localB" : LibGetBlockIOStruct()
+      %assign fieldAccess = IsModelReferenceTarget() && !hasStaticStructure ...
+        ? "->" : "."
+      %assign ptrBlockIOLabel = ...
+        "((void *) " + addrPrefix + blockIO + addrSuffix + ")"
+      %assign unused = SLibInitBlockIO(ptrBlockIOLabel)
+
+      %% Initialize global block outputs in model reference sim target whose
+      %% data type is string, including:
+      %% * Output of string constant block
+      %% * Output of other string blocks with constant/parameter sample time
+      %if IsModelReferenceSimTarget()
+        %% Loop through all global block outputs
+        %foreach boIdx = BlockOutputs.NumGlobalBlockOutputs
+          %assign bo = BlockOutputs.GlobalBlockOutput[boIdx]
+          %% Only do this if we can find variable name for this block output
+          %if ISFIELD(bo, "VarGroupIdx")
+            %% Skip global variables that are eventually discarded. See g1726094.
+            %assign sysIdx = SLibVarGroupSystemIdx(bo.VarGroupIdx[0])
+            %if LibSystemIsRoot(System[sysIdx])
+              %continue
+            %endif
+
+            %% Construct variable name for the block output ("localB->b1" or "mABC.b2")
+            %assign varName = SLibVarGroupElementName(bo.VarGroupIdx[0], bo.VarGroupIdx[1])
+            %assign fullName = blockIO + fieldAccess + varName
+            %% Emit initialization code for string signal or bus element
+            %assign boDataTypeId = LibGetRecordDataTypeId(bo)
+            %<SLibMdlRefInitOneGlobalStringBlockOutput(boDataTypeId, fullName)>
+          %endif
+        %endforeach
+      %endif %% IsModelReferenceSimTarget
+    %endif %% bEmitInit
+    
+  %elseif !SLibModelBlockIOStructIsEmpty() && !SLibGetDoesSelfExist()
+    %% It is possible that there is no root level blockIO, but there
+    %% is a standalone subsystem that has a blockIO.
+    %assert HasStandaloneSubsystem && !GenerateGRTWrapper
+    
+    %if bEmitInit
+      %assign unused = SLibInitBlockIO("")
+    %endif
+    
+  %endif %% !LibBlockIOStructIsEmpty()
+  
+  
+  %%
+  %% Those with external storage
+  %% 
+  %if !SLibExportedGlobalSignalsIsEmpty() || ...
+    CustomStorageClasses.NumCustomStorageClasses > 0
+    
+    %if bEmitInit
+      %<SLibInitBlockIOWithExternalStorage(!UsingMalloc)>\
+    %endif
+    
+  %endif
+  %closefile tmpBuf
+  %if !WHITE_SPACE(tmpBuf)
+    /* block I/O */
+    %<OpenBlock>
+    %<tmpBuf>\
+    %<CloseBlock>
+  %endif
+  %%
+  %assign oldStrNames = SLibGetOldStrNames()
+  %%
+  %% Invariant Block Outputs
+  %%
+  %if !LibConstBlockIOStructIsEmpty() 
+    %assign cioName = oldStrNames ? ::tInvariantSignals : ::tConstBlockIOStruct
+    %if UsingMalloc && isGRTMalloc
+      /* constant block I/O */
+      %<RTMuSet("ConstBlockIO", "&%<cioName>")>;
+    %elseif MultiInstanceERTCode && RTMModelPtrsToInstanceDataIsReqFcn()
+      /* constant block I/O */
+      %<RTMSet("ConstBlockIO", "&%<LibGetConstBlockIOStruct()>")>;
+      %<SLibAccessArgHelper(rootSystem.Interface.ConstBlockIOArgDef,"",rootSystem.CurrentTID)>
+    %endif
+  %endif
+
+  %% Setup pointer to static parameter in RTM before dumping vargroup subsystem references
+  %if !LibParametersStructIsEmpty() && IsModelReferenceTarget() && !GenerateClassInterface && SLibIsSelfStructured()
+    %% Initialize defaultParam to static parameter struct
+    /* Initialize tunable parameters */
+    %<RTMSet("DefaultParam", "&(%<FcnSysVarGroupNonreusedName(baseSystem, "Parameter")>)")>;
+  %endif
+  
+  %%
+  %% DWork in self vargroup
+  %%
+  %if bEmitInit && SLibIsSelfStructured() && ...
+    !UsingMalloc && SLibZeroMemory("DWork")
+    %<SLibMemsetDWorkInSelf()>
+  %endif
+
+  %% 
+  %% Data Groups
+  %%
+  %if bEmitInit
+    %assign baseSystemIdx = GetBaseSystemIdx()
+    %assign    baseSystem = ::CompiledModel.System[baseSystemIdx]
+
+    %foreach idx = ::CompiledModel.NumCoderDataGroups
+      %assign group = ::CompiledModel.CoderDataGroup[idx]
+
+      %if group.AsStructure == "None" && !group.IsLegacyStorageClass
+        %assign buff = SLibInitializeUnstructuredGroup(idx)
+        %<buff>
+      %else
+
+      %assign groupToken = "CoderDataGroup" + group.Name
+      %assign varGroupIdx = FcnSysVarGroupIndex(baseSystem, groupToken, 0)
+
+      %if varGroupIdx == -1 || !SLibDataGroupDynamicInit(group)
+        %continue
+      %endif
+	  
+      %assign legacyCSCInitBuffer = ""
+      %if group.IsLegacyStorageClass
+        %assign legacyCSCInitBuffer = SLibInitLegacyStorageClassVarGroup(varGroupIdx)
+        %if !WHITE_SPACE(legacyCSCInitBuffer)
+          /* Storage classes */
+          %<legacyCSCInitBuffer>
+        %endif
+      %else
+
+        %if !SLibVarGroupIsStruct(varGroupIdx) || LibCoderDataGroupStructIsEmpty(group)
+          %continue
+        %endif
+
+        %assign rootInputInitBuffer = ...
+          SLibInitExternalInputsHelper(!UsingMalloc, ...      
+          fromSFcn && FcnConditionRootInputsAsSeparateArgs(), ...
+          fromSFcn, ...
+          varGroupIdx)
+    
+        %assign rootOutputInitBuffer = ...
+          SLibInitExternalOutputsHelper(1, ...
+          0, ...
+          fromSFcn, ...
+          varGroupIdx)      
+      
+        %assign stdSSBuf = CacheStandaloneSystemDWorkInfo()    
+        %createrecord initBuffers { ...
+          buffers ["", "", "", 0] }
+        %addtorecord initBuffers ssBuf %<stdSSBuf>
+    
+        %assign initBuffers = SLibInitBlockIOForVarGroup(varGroupIdx, initBuffers)
+            
+        %% For model reference, don't bother with memset. We memset RTM to 0, and
+        %% for model reference, data groups are inside of RTM.
+        %if (initBuffers.buffers[3] || initBuffers.ssBuf.DWorkBuff[0].needMemset || ...
+          rootInputInitBuffer[1] || rootOutputInitBuffer[1]) && ...
+          !IsModelReferenceTarget() && !(group.IsSelf)
+          %if MultiInstanceERTCode && !GenerateClassInterface && SLibAccessGroupThroughSelf(group)
+            %assign var = SLibGetCoderDataGroupPointerFromRTM(group, 0)
+          %elseif GenerateClassInterface && SLibAccessViaPointerInSelf(group)
+            %% vargroup is reference in class use this reference var instead
+            %assign var = ::CompiledModel.VarGroups.VarGroup[varGroupIdx].StructureReferenceName
+          %else
+            %assign var = "&" + SLibCoderDataGroupInstance(group)
+          %endif
+          %assign type = SLibCoderDataGroupType(group)
+          %assign guardSharedDataInit = (SLibMultiInstance() && ...
+                                       !group.IsInstanceSpecific && ...
+                                       SLibDataGroupDynamicInit(group))
+
+          /* Initialize %<group.Identification> */
+          %if guardSharedDataInit
+            if (!%<SLibGetDataStoreForHasBeenInitIdentifier()>) {
+          %endif
+          (void) %<LibGenMemFcnCall("memset", ...
+            "(void *)" + var, " 0", " sizeof(%<type>)")>;
+          %if guardSharedDataInit
+            }
+          %endif
+        %endif 
+
+        %if  (!WHITE_SPACE(initBuffers.buffers[0]) ...
+          || !WHITE_SPACE(initBuffers.buffers[1]) ...
+          || !WHITE_SPACE(initBuffers.buffers[2]) ...
+          || initBuffers.ssBuf.DWorkBuff[0].haveFloat ...
+          || initBuffers.ssBuf.DWorkBuff[0].emitMsgInit)
+          /* Storage classes */
+          {
+            %if  !WHITE_SPACE(initBuffers.buffers[2])
+              %<LibCGTypeName(::CompiledModel.CGTypes.IndexType)> i;
+              %<initBuffers.buffers[2]>\
+            %endif
+            %<initBuffers.buffers[1]>\
+            %<initBuffers.buffers[0]>\
+            %if initBuffers.ssBuf.DWorkBuff[0].haveFloat
+              %<initBuffers.ssBuf.DWorkBuff[0].initBuffer>\
+            %endif
+            %if initBuffers.ssBuf.DWorkBuff[0].emitMsgInit
+              %<initBuffers.ssBuf.DWorkBuff[0].msgInitBuffer>\
+            %endif
+          }
+        %endif
+      
+        %if !WHITE_SPACE(rootInputInitBuffer[0])
+          %<rootInputInitBuffer[0]>\
+        %endif
+      
+        %if !WHITE_SPACE(rootOutputInitBuffer[0])
+          %<rootOutputInitBuffer[0]>\        
+        %endif
+      %endif
+     %endif      
+    %endforeach
+
+    %% Dump VarGroup Subsystem References after root level coder data groups are setup
+    %if !GenerateClassInterface && SLibGetDoesSelfExist()
+      %% for C++ class generation this code is moved into the constuctor
+      %assign group = ::CompiledModel.CoderDataGroup[SLibGetSelfCoderDataGroupIndex()]
+      %if SLibDataGroupDynamicInit(group)
+        %% if self is not statically initalized emit dynamic registration code
+        %<SLibGetSystemConstructionCode(::CompiledModel.System[GetBaseSystemIdx()])>
+      %endif
+    %endif
+  %endif %%bEmitReg
+  %if bEmitReg && UsingMalloc
+    %foreach idx = ::CompiledModel.NumCoderDataGroups
+      %assign group = ::CompiledModel.CoderDataGroup[idx]
+
+      %if LibCoderDataGroupStructIsEmpty(group)
+        %continue
+      %endif
+
+      %if !SLibAccessViaPointerInSelf(group)
+        %continue
+      %endif
+
+      %% Skip self group for UsingMalloc case since it's the RTM
+      %if group.IsSelf && group.AsStructure != "None"
+        %continue
+      %endif
+
+      %assign varName = "group_" + group.UserProvidedName
+      %assign rtmField = SLibCoderDataGroupRTMFieldName(group)
+      %assign ptrGroupLabel = varName
+      %assign varType = SLibCoderDataGroupType(group)
+      /* Initialize %<group.Identification> */
+      {
+        %% In the UsingMalloc case, we allocate the BlockIO struct 
+        %% and set the blockIO ptr in the RTM
+        %if GenerateGRTWrapper
+          void *%<varName> = malloc(sizeof(%<varType>));
+        %else
+          %<varType> *%<varName> = (%<varType> *) malloc(sizeof(%<varType>));
+        %endif
+        %<RTMChkMemAndReturnIfErr(varName)>;
+        
+        %if SLibIsSelfStructured() && group.AsStructure == "InParent"
+          %<SLibGetCoderDataGroupPointerFromRTM(group, 0)> = (%<ptrGroupLabel>);
+        %else
+          %if ::CompiledModel.HasSimStructVars == 0
+            %<RTMSet("%<rtmField>", ptrGroupLabel)>;
+          %endif
+        %endif
+      }
+    %endforeach
+  %endif %% bEmitReg && UsingMalloc
+
+
+
+  %%
+  %%  Parameter
+  %%
+  %if !LibParametersStructIsEmpty()
+    %if bEmitReg
+      %assign prmsName = SLibGetPrmsName(oldStrNames)
+      %if UsingMalloc && !FcnParamsAreGlobalStruct()
+        %assign localP = LibRequestID("pTemp",TLC_TRUE, TLC_FALSE)
+        %assign localPSeen = LibRequestID("pSeen",TLC_TRUE, TLC_FALSE)
+        
+        /* parameters */
+        {
+          %<::tParametersType> *%<localP>;
+          static int_T %<localPSeen> = 0;
+          
+          /* only malloc on multiple model instantiation */
+          if( %<localPSeen> == 1 ) {
+            %<localP> = (%<::tParametersType> *) malloc(sizeof(%<tParametersType>));
+            %<RTMChkMemAndReturnIfErr("%<localP>")>;
+            (void) %<LibGenMemFcnCall("memcpy", "%<localP>", "&%<prmsName>", ...
+              "sizeof(%<::tParametersType>)")>;
+            %<RTMSet("ParamIsMalloced", "%<GET_TYPE_ID_REPLACEMENT("true")>")>;
+          } else {
+            %<localP> = &%<prmsName>;
+            %<RTMSet("ParamIsMalloced", "%<GET_TYPE_ID_REPLACEMENT("false")>")>;
+            %<localPSeen> = 1;
+          }
+          %<RTMSet("DefaultParam", "%<localP>")>;
+        }
+      %elseif GenerateGRTWrapper || (!FcnParamsAreGlobalStruct() && RTMModelPtrsToInstanceDataIsReqFcn())
+        /* parameters */
+        %<RTMSet("DefaultParam", "(real_T *)%<addr>%<LibGetParametersStruct()>")>;
+        %<SLibAccessArgHelper(rootSystem.Interface.ParameterArgDef,"",rootSystem.CurrentTID)>
+      %elseif IsModelReferenceTarget() && GenerateClassInterface && !FcnParamsAreGlobalStruct()
+        %% need to initialize tunable parameters in the initialize function
+        %% instead of constructor to avoid the parent setting data to zero
+        %% if the model is referenced in a reusable subsystem.
+        static const %<::tParametersType> %<::tParameters>_temp = {
+          %<SLibGetPrmBuffer("SimulinkGlobal", "Instance")>
+        }; /* Modifiable parameters */
+
+        /* Initialize tunable parameters */
+        %<::tParameters> = %<tParameters>_temp;
+      %endif
+   %endif %% bEmitReg
+  %endif
+  %%
+  %% Continuous States
+  %%
+  %if NumContStates > 0 && !IsModelReferenceTarget() && !LibIsDeploymentDiagram()
+    %openfile tmpBuf
+    %if bEmitReg && (GenerateGRTWrapper || UsingMalloc || ...
+      (MultiInstanceERTCode && RTMModelPtrsToInstanceDataIsReqFcn()))
+      %% Get a pointer to the continuous states in "x"
+      %assign contStateTypeInRTM = FcnGetContStateType()
+            
+      %if UsingMalloc
+        %<contStateTypeInRTM> *x = (%<contStateTypeInRTM> *) malloc(sizeof(%<::tContStateType>));
+        %<RTMChkMemAndReturnIfErr("x")>;
+      %else
+        %<contStateTypeInRTM> *x = (%<contStateTypeInRTM> *) %<addr>%<LibGetContinuousStateStruct()>;
+        %<SLibAccessArgHelper(rootSystem.Interface.ContStatesArgDef,"",rootSystem.CurrentTID)>
+      %endif
+      %% Initialize the "contStates" field in the RTM
+      %<RTMSet("ContStates", "x")>;
+    %endif %% bEmitReg
+
+    %if bEmitInit
+      %if SLibZeroMemory("CState")
+        (void) %<LibGenMemFcnCall("memset", "(void *)%<addr>%<LibGetContinuousStateStruct()>", "0", ...
+          "sizeof(%<::tContStateType>)")>;
+      %endif
+    %endif %% bEmitInit
+
+
+    %closefile tmpBuf
+    %if !WHITE_SPACE(tmpBuf)
+      /* states (continuous) */
+      {
+        %<tmpBuf>\
+      }
+    %endif
+  %endif
+  %%
+  %% Periodic continuous states
+  %%
+  %if NumPeriodicContStates > 0 && !IsModelReferenceTarget() && !LibIsDeploymentDiagram()
+    %openfile tmpBuf
+    %if bEmitReg && ...
+      (GenerateGRTWrapper || UsingMalloc || (MultiInstanceERTCode && RTMModelPtrsToInstanceDataIsReqFcn()))
+      %if UsingMalloc
+        int_T* rootPeriodicContStateIndices = (int_T*) malloc(sizeof(%<tPeriodicStateIndType>));
+        real_T* rootPeriodicContStateRanges = (real_T*) malloc(sizeof(%<tPeriodicStateRngType>));
+        %<RTMChkMemAndReturnIfErr("rootPeriodicContStateIndices")>;
+        %<RTMChkMemAndReturnIfErr("rootPeriodicContStateRanges")>;
+      %else
+        int_T* rootPeriodicContStateIndices = %<LibGetPeriodicContStateIndices()>;
+        real_T* rootPeriodicContStateRanges = %<LibGetPeriodicContStateRanges()>;
+      %endif
+      %% Initialize the periodic continuous state fields in the RTM
+      %<RTMSet("PeriodicContStateIndices", "rootPeriodicContStateIndices")>;
+      %<RTMSet("PeriodicContStateRanges", "rootPeriodicContStateRanges")>;
+    %endif %% bEmitReg
+    %if bEmitInit
+      %if SLibZeroMemory("CState")
+        (void) %<LibGenMemFcnCall("memset", "(void*) %<LibGetPeriodicContStateIndices()>", ...
+          "0", "%<NumPeriodicContStates>*sizeof(int_T)")>;
+        (void) %<LibGenMemFcnCall("memset", "(void*) %<LibGetPeriodicContStateRanges()>", ...
+          "0", "%<2*NumPeriodicContStates>*sizeof(real_T)")>;
+      %endif
+    %endif %% bEmitInit
+    %closefile tmpBuf
+    %if !WHITE_SPACE(tmpBuf)
+      /* Periodic continuous states */
+      {
+        %<tmpBuf>\
+      }
+    %endif
+  %endif
+  %%
+  %%  Mass Matrix
+  %%
+  %if ModelIsLinearlyImplicit == "yes" && !IsModelReferenceTarget() && ...
+    !LibIsDeploymentDiagram()
+    %openfile tmpBuf
+      %if GenerateGRTWrapper
+        %<RTMSet("MassMatrixIr", "ir")>;
+        %<RTMSet("MassMatrixJc", "jc")>;
+        %<RTMSet("MassMatrixPr", "pr")>;
+      %endif
+      %if SLibZeroMemory("MassMatrix")
+        (void) %<LibGenMemFcnCall("memset", "(void *)ir", "0", ...
+          "%<ModelMassMatrixNzMax>*sizeof(int_T)")>;
+        (void) %<LibGenMemFcnCall("memset", "(void *)jc", "0", ...
+          "(%<NumContStates>+1)*sizeof(int_T)")>;
+        (void) %<LibGenMemFcnCall("memset", "(void *)pr", "0", ...
+          "%<ModelMassMatrixNzMax>*sizeof(real_T)")>;      
+      %endif
+    %closefile tmpBuf
+    %if !WHITE_SPACE(tmpBuf)
+    /* global mass matrix */
+    {
+      int_T *ir = %<LibGetMassMatrixGlobalIr()>;
+      int_T *jc = %<LibGetMassMatrixGlobalJc()>;
+      real_T *pr = %<LibGetMassMatrixGlobalPr()>;
+      
+      %<tmpBuf>\
+    }
+    %endif
+  %endif  
+  %%
+  %% DWork with internal storage
+  %%
+  %assign dworkInitAlreadyGenerated = 0
+  %assign hasDWork = !SLibModelDWorkStructIsEmpty() && !SLibIsSelfStructured()
+  %openfile tmpBuf
+  %% SLibInitDWorkOld does not handle model reference the same way.
+  %% So if we are in backwards compatibility mode, and
+  %% the target is model reference, do not enter here.
+  %if hasDWork && (!(ForceBlockIOInitOptimize && IsModelReferenceTarget())) 
+    %assign stdSSBuf = CacheStandaloneSystemDWorkInfo()
+    
+    %assign stdSSBuf = SLibInitDWork(stdSSBuf)
+
+    %if bEmitReg
+      %assign varName = IsModelReferenceTarget() && !hasStaticStructure ? "localDW":"dwork"
+      %assign varType = tDWorkType
+      %assign rtmField = "RootDWork"
+      %assign structName = LibGetDWorkStruct()
+      %if UsingMalloc
+        %% In the UsingMalloc case we allocate the DWork structure
+        %% and then initialize the Work.dwork ptr in the RTM
+
+        %if GenerateGRTWrapper
+          void *%<varName> = (void *) malloc(sizeof(%<varType>));
+        %else
+          %<varType> *%<varName> = (%<varType> *) malloc(sizeof(%<varType>));
+        %endif
+        %if stdSSBuf.DWorkBuff[0].haveFloat && ::CompiledModel.HasSimStructVars == 0
+          %assign definition = ...
+            "%<varType> *%<LibGetDWorkStruct()> = (%<varType> *) %<varName>;"
+          %% AUTOSAR compiler abstraction not needed as AUTOSAR never enters this code
+          %<SLibApplyMemSecToDataDefn(definition, ...
+            "MemSecDataInternal", "%<LibGetDWorkStruct()>")>\
+        %endif
+        %<RTMChkMemAndReturnIfErr(varName)>;
+        %<RTMSet(rtmField, varName)>;
+      %elseif GenerateGRTWrapper
+        %assert(SIZE(stdSSBuf.DWorkBuff,1) == 1)
+        %<RTMSet(rtmField, ...
+          "(void *) " + addrPrefix + structName + addrSuffix)>;
+      %elseif MultiInstanceERTCode && RTMModelPtrsToInstanceDataIsReqFcn() && !SLibGetUseRTMcgType()
+        %% In the multi-instance ERT case, we don't need to allocate
+        %% the DWork struct, but we may still need to generate code to
+        %% initialize the Work.dwork ptr in the RTM
+        %<RTMSet(rtmField, addrPrefix + structName + addrSuffix)>;
+        %<SLibAccessArgHelper(rootSystem.Interface.DWorkArgDef,"",rootSystem.CurrentTID)>
+      %endif
+    %endif  %% bEmitReg
+    
+    %if bEmitInit
+      %assign numGroups = SIZE(stdSSBuf.DWorkBuff,1)
+      %foreach groupIdx = numGroups
+        %openfile tmpBuf2
+        %if stdSSBuf.DWorkBuff[groupIdx].needMemset && !SLibIsSelfStructured()
+          %assign dw     = stdSSBuf.DWorkBuff[groupIdx].DWorkVar
+          %assign dwType = stdSSBuf.DWorkBuff[groupIdx].DWorkType
+          %if groupIdx == 0
+              %assign dworkInitAlreadyGenerated = 1
+          %endif
+          %% TopTester: test/toolbox/simulink/variants/inlineVariants/variantSource/codeGen/tGlobalGuardingGecks1.m -testspec:verifyG1437966
+          %assign sysIdx = stdSSBuf.DWorkBuff[groupIdx].SystemIdx
+          %assign system = ::CompiledModel.System[sysIdx]
+          %assign vcRecord = SLibGetSystemVariantConditions(system)
+          %if vcRecord.hasConds
+            %<vcRecord.ifCond>
+          %endif
+          
+          %<CachePWorksForModelRefTarget()>
+          (void) %<LibGenMemFcnCall("memset", ...
+            "(void *)" + addrPrefix + dw + addrSuffix, ...
+            " 0", " sizeof(%<dwType>)")>;
+          %<RestorePWorksForModelRefTarget()>
+          
+          %if vcRecord.hasConds
+            %<vcRecord.endIfCond>
+          %endif
+        %endif
+        %if InitFltsAndDblsToZero && stdSSBuf.DWorkBuff[groupIdx].haveFloat
+          %<stdSSBuf.DWorkBuff[groupIdx].initBuffer>\
+        %endif
+        
+        %% dump msg qid initialization code here
+        %if stdSSBuf.DWorkBuff[groupIdx].emitMsgInit
+          %<stdSSBuf.DWorkBuff[groupIdx].msgInitBuffer>\
+        %endif
+        
+        %closefile tmpBuf2
+        
+        %if groupIdx == 0
+          %<tmpBuf2>
+        %else
+          %assign ssIdx = stdSSBuf.DWorkBuff[groupIdx].SystemIdx
+          %<LibAddToSystemField(System[ssIdx], "CachedInitializeDataBody", tmpBuf2)>
+        %endif
+        
+      %endforeach
+    %endif %% bEmitInit
+  %endif
+  %if bEmitInit
+    %% This is unnecessary unless we are using the backwards compatibility 
+    %% mode, ForceBlockIOInitOptimize
+    %if ForceBlockIOInitOptimize
+      %% Initialize internal DWork for Model reference scalable builds
+      %% For scalable build, the single instance child model will define its 
+      %% own DWork (member of sfcn_DWork). 
+      %% Use memset to initialize this memory to zero.
+      %%
+      %if (IsModelRefScalableBuild() && baseSystem.HasDWorkArg && !SLibGetUseRTMcgType() && ...
+        (IsModelReferenceSimTarget() || SLibZeroMemory("RTDWork")) && ...
+        !GenerateClassInterface)
+        %assert (::BlockFcn == "Registration")
+        %assign dwork = IsModelReferenceTarget() && !hasStaticStructure ? ...
+          "localDW" : LibGetDWorkStruct()
+        %assign ptrDWorkLabel = ...
+          "((void *) " + addrPrefix + dwork + addrSuffix + ")"
+        %<SLibAccessArgHelper(baseSystem.Interface.DWorkArgDef,"","")>
+        %assign varGroupType = FcnSysVarGroupType(baseSystem,"DWork")
+        (void) %<LibGenMemFcnCall("memset", ptrDWorkLabel, ...
+          "0", "sizeof(%<varGroupType>)")>;
+      %endif
+    
+      %if IsModelReferenceRTWTarget() && GenerateClassInterface 
+        %assign errTxt = "C++ encapsulation is not supported with the ForceBlockIOInitOptimize feature"
+        %<LibReportError(errTxt)>
+      %endif
+    %endif
+    
+    %%
+    %% Dwork with external storage
+    %%
+    %<SLibInitStatesWithExternalStorage(!UsingMalloc)>\
+    
+    %if ::CompiledModel.DWorkAndBlockIOCombined
+      %if !LibDWorkStructIsEmpty()
+        %assign dwork = IsModelReferenceTarget() && !hasStaticStructure ? ...
+          "localDW" : LibGetDWorkStruct()
+        %assign ptrDWorkLabel = ...
+          "((void *) " + addrPrefix + dwork + addrSuffix + ")"
+        %assign blkIOInit = ""
+        %openfile blkIOInit
+        %assign needMemsetForCombinedDWorkAndBlockIO = ...
+          SLibInitBlockIO(ptrDWorkLabel)
+        %closefile blkIOInit
+        %if !dworkInitAlreadyGenerated ...
+          && !SLibIsSelfStructured() ...
+          && (stdSSBuf.DWorkBuff[0].needMemset ...
+              || needMemsetForCombinedDWorkAndBlockIO == 1)
+          %assign dw     = stdSSBuf.DWorkBuff[0].DWorkVar
+          %assign dwType = stdSSBuf.DWorkBuff[0].DWorkType
+          (void) %<LibGenMemFcnCall("memset", ...
+            "(void *) " + addrPrefix + dw + addrSuffix, ...
+            " 0", " sizeof(%<dwType>)")>;
+          %<SLibAccessArgHelper(baseSystem.Interface.DWorkArgDef,"","")>
+        %endif
+        %if !WHITE_SPACE(blkIOInit)
+          %<blkIOInit>
+        %endif
+      %elseif hasDWork %% !SLibModelDWorkStructIsEmpty()
+        %%
+        %% It is possible that there is no root level dwork, but there
+        %% is a standalone subsystem that has a dwork.
+        %%
+        %assert (HasStandaloneSubsystem || SLibGetDoesSelfExist()) && !GenerateGRTWrapper      
+        %assign unused = SLibInitBlockIO("")
+      %endif %% !LibBlockIOStructIsEmpty()    
+    %endif
+  %endif %% bEmitInit
+  
+  %closefile tmpBuf
+  %if !WHITE_SPACE(tmpBuf)
+
+    /* states (dwork) */
+    %<OpenBlock>
+    %<tmpBuf>\
+    %<CloseBlock>
+  %endif
+  %%
+  %% ===========================
+  %% Initialize external memory
+  %% ===========================
+  %%
+  %% U (external inputs)
+  %%
+  %assign inputSizeBuf = ""
+  %openfile tmpBuf
+  %if !IsModelReferenceTarget()
+    %if bEmitReg
+      %if !LibExternalInputsStructIsEmpty()
+        %if UsingMalloc && ::CompiledModel.RootIOFormat == "Part of model data structure"
+          %if ::CompiledModel.HasSimStructVars == 0
+            %openfile definition
+            %<::tInputType> *%<LibGetExternalInputStruct()> = (%<::tInputType> *) \
+            malloc(sizeof(%<::tInputType>));\
+            %closefile definition
+          %else
+            %openfile definition
+            %<RTMGet("U")> = (%<::tInputType> *) malloc(sizeof(%<::tInputType>));\
+            %closefile definition
+          %endif
+          %if ::CompiledModel.HasSimStructVars == 0
+            %assign inputStruct = LibGetExternalInputStruct()
+          %else
+            %assign inputStruct = RTMGet("U")
+          %endif
+          %% AUTOSAR compiler abstraction not needed as this is a local variable
+          %<SLibApplyMemSecToDataDefn(definition, ...
+            "MemSecDataInputs", "%<LibGetExternalInputStruct()>")>\
+          %<RTMChkMemAndReturnIfErr("%<inputStruct>")>;
+          %if ::CompiledModel.HasSimStructVars == 0
+            %if GenerateGRTWrapper
+              %assert !::GenCPP
+              %<RTMSet("U", "((void*) %<LibGetExternalInputStruct()>)")>;
+            %else
+              %<RTMSet("U", "((%<::tInputType> *) %<LibGetExternalInputStruct()>)")>;
+            %endif
+          %endif
+        %elseif GenerateGRTWrapper 
+          %assert !::GenCPP
+          %<RTMSet("U", "((void*)%<addr>%<LibGetExternalInputStruct()>)")>;
+        %elseif (MultiInstanceERTCode && RTMModelPtrsToInstanceDataIsReqFcn())
+          %<RTMSet("U", "%<addr>%<LibGetExternalInputStruct()>")>;
+          %<SLibAccessArgHelper(::CompiledModel.ExternalInputs.ExternalInput[0],"",rootSystem.CurrentTID)>
+        %endif 
+      %endif %% !LibExternalInputsStructIsEmpty()
+    %endif %% bEmitReg
+    %%
+    %openfile inputSizeBuf
+    %if bEmitInit
+      %<SLibInitExternalInputSizes()>\
+    %endif
+    %closefile inputSizeBuf
+  %endif %% !IsModelReferenceTarget()
+
+  %if bEmitInit
+    %% This call covers external input structure (i.e. with AUTO storage),
+    %% and external inputs with external storage.
+    %%
+    %% NOTE: We always need to generate initialization code for external inputs
+    %% (even for referenced models) because some of these inputs may be owned
+    %% by the referenced model.
+    %%
+    %<SLibInitExternalInputs(!UsingMalloc,...
+      fromSFcn && FcnConditionRootInputsAsSeparateArgs(),fromSFcn)>\
+  %endif %% bEmitInit
+  
+    %closefile tmpBuf
+    %if !WHITE_SPACE(tmpBuf)
+      %if GenerateClassInterface
+        %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+        %if classConfObj.hasGlobalAccessForInport && ...
+            !(fromSFcn && SLibCPPClassNeedsDerivedClassWithERTSfcnZeroMem())
+          /* external inputs */
+          %<OpenBlock>
+          %<tmpBuf>\
+          %<CloseBlock>
+        %endif
+      %else
+        /* external inputs */
+        %<OpenBlock>
+        %<tmpBuf>\
+        %<CloseBlock>
+        
+        %if !WHITE_SPACE(inputSizeBuf)
+          /* external input sizes */
+          %<OpenBlock>
+          %<inputSizeBuf>\
+          %<CloseBlock>
+        %endif
+      %endif
+    %endif
+    %%
+    %% Y (external outputs)
+    %%
+    %if !IsModelReferenceTarget()
+    %openfile tmpBuf
+
+    %if bEmitReg
+      %if !LibExternalOutputsStructIsEmpty()
+        %if UsingMalloc && ::CompiledModel.RootIOFormat == "Part of model data structure"
+          %if ::CompiledModel.HasSimStructVars == 0
+            %openfile definition
+            %<::tOutputType> *%<LibGetExternalOutputStruct()> = \
+            (%<::tOutputType> *) malloc(sizeof(%<tOutputType>));\
+            %closefile definition
+          %else
+            %openfile definition
+            %<RTMGet("Y")> = (%<::tOutputType> *) malloc(sizeof(%<::tOutputType>));\
+            %closefile definition
+          %endif
+          %if ::CompiledModel.HasSimStructVars == 0
+            %assign outputStruct = LibGetExternalOutputStruct()
+          %else
+            %assign outputStruct = RTMGet("Y")
+          %endif
+          %% AUTOSAR compiler abstraction not needed as this is a local variable
+          %<SLibApplyMemSecToDataDefn(definition, ...
+            "MemSecDataOutputs", "%<LibGetExternalOutputStruct()>")>\
+          %<RTMChkMemAndReturnIfErr("%<outputStruct>")>;
+          %if ::CompiledModel.HasSimStructVars == 0
+            %<RTMSet("Y", LibGetExternalOutputStruct())>;
+          %endif
+        %elseif GenerateGRTWrapper 
+          %<RTMSet("Y", "%<addr>%<LibGetExternalOutputStruct()>")>;
+        %elseif (MultiInstanceERTCode && RTMModelPtrsToInstanceDataIsReqFcn())
+          %<RTMSet("Y", "%<addr>%<LibGetExternalOutputStruct()>")>;
+          %<SLibAccessArgHelper(::CompiledModel.ExternalOutputs.ExternalOutput[0],"",rootSystem.CurrentTID)>
+        %endif
+      %endif %% !LibExternalOutputsStructIsEmpty()
+    %endif %% bEmitReg
+    %if bEmitInit
+      %% This call covers external output structure (i.e. with internal storage),
+      %% not including external outputs with external storage (which should
+      %% already be covered by Block IO)
+      %if fromSFcn && FcnConditionRootOutputsAsSeparateArgs()
+        %% for Sfunction wrappers, initialize local data in addition to rtY
+        %% just to be safe
+        %<SLibInitExternalOutputs(1,1,fromSFcn)>\
+      %endif
+      %<SLibInitExternalOutputs(1,0,fromSFcn)>\
+    %endif %% bEmitInit
+
+    %openfile outputSizeBuf
+    %if bEmitInit
+      %<SLibInitExternalOutputSizes()>\
+    %endif
+    %closefile outputSizeBuf
+
+    %closefile tmpBuf
+    %if !WHITE_SPACE(tmpBuf)
+      %if GenerateClassInterface
+        %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+        %if classConfObj.hasGlobalAccessForOutport && ...
+            !(fromSFcn && SLibCPPClassNeedsDerivedClassWithERTSfcnZeroMem())
+          /* external outputs */
+          %<OpenBlock>
+          %<tmpBuf>\
+          %<CloseBlock>
+        %endif
+      %else
+        /* external outputs */
+        %<OpenBlock>
+        %<tmpBuf>\
+        %<CloseBlock>
+        
+        %if !WHITE_SPACE(outputSizeBuf)
+          /* external output sizes */
+          %<OpenBlock>
+          %<outputSizeBuf>\
+          %<CloseBlock>
+        %endif
+      %endif
+    %endif
+  %endif %% !IsModelReferenceTarget()
+  %%
+  %% PrevZCStates
+  %%
+  %if NumZCEvents > 0 && !LibPrevZCStatesStructIsEmpty()
+    %if UsingMalloc || (MultiInstanceERTCode && RTMModelPtrsToInstanceDataIsReqFcn())
+      %<LibDumpModelInitializePrevZCStates(bEmitReg, bEmitInit)>
+    %endif
+  %endif  
+  %%
+  %% Cache function pointers, if necessary
+  %%
+  %assign ::CompiledModel.HasSimStructVars = tmpHasSimStructVars
+
+  %if bEmitReg
+    %if UsingMalloc && GenerateGRTWrapper
+      %<RTMModelMthsSet("mdlInitializeSizes",       "MdlInitializeSizes")>;
+      %<RTMModelMthsSet("mdlInitializeSampleTimes", "MdlInitializeSampleTimes")>;
+      %<RTMModelMthsSet("mdlStart",                 "MdlStart")>;
+      %<RTMModelMthsSet("mdlOutputs",               "MdlOutputs")>;
+      %<RTMModelMthsSet("mdlUpdate",                "MdlUpdate")>;
+      %if !SLibSingleTasking() && !SuppressSetEventsForThisBaseRateFcn && ...
+        !InlineSetEventsForThisBaseRateFcn
+        %<RTMModelMthsSet("mdlDiscreteEvents",        "_rt_SimUpdateDiscreteEvents")>;
+      %endif
+      %if NumContStates > 0
+        %<RTMModelMthsSet("mdlDerivatives", "NULL")>;
+        %<RTMModelMthsSet("mdlProjection",  "NULL")>;
+        %if ModelIsLinearlyImplicit == "yes"
+          %<RTMModelMthsSet("mdlMassMatrix",      "MdlMassMatrix")>;
+          %<RTMModelMthsSet("mdlForcingFunction", "MdlForcingFunction")>;
+        %else           
+          %<RTMModelMthsSet("mdlMassMatrix",      "NULL")>;
+          %<RTMModelMthsSet("mdlForcingFunction", "NULL")>;
+        %endif        
+      %else
+        %<RTMModelMthsSet("mdlDerivatives", "NULL")>;
+        %<RTMModelMthsSet("mdlProjection",  "NULL")>;
+        %<RTMModelMthsSet("mdlMassMatrix",      "NULL")>;
+        %<RTMModelMthsSet("mdlForcingFunction", "NULL")>;
+      %endif
+      %<RTMModelMthsSet("mdlTerminate", "MdlTerminate")>;
+      %<RTMModelMthsSet("RTModelPtr", ::tSimStruct)>;
+    %endif
+  %endif
+    
+
+  %closefile retBuf
+
+  %return retBuf
+%endfunction %% SLibDumpERTAndModelrefInitMemoryCode
+
+%function SLibERTGetStopTime()
+  %if ISINF(StopTime) || !RTMTUseStopTimeAsTFinal()
+    %% When MatFileLogging is off, ERT will not honor stop time.
+    %assign stopTime = -1
+  %elseif !ISFINITE(StopTime)
+    %assign errTxt = "Stop time must be 0.0, inf, or finite: %<StopTime>"
+    %<LibReportError(errTxt)>
+  %else
+    %assign stopTime = StopTime
+  %endif
+  
+  %return stopTime
+%endfunction
+
+%function FcnCacheAndRestoreCoderGroupPointers() void
+  %return IsModelReferenceTarget() && !IsModelRefScalableBuild() && SLibZeroMemory("RTM")
+%endfunction
+
+%% Function: LibDumpERTAndModelrefRegExecution ================================
+%% Abstract:
+%%   Dumps the model registration code.
+%%
+%function LibDumpERTAndModelrefRegExecution(bEmitReg, bEmitInit) Output
+  %assign tmpBlockFcn = ::BlockFcn
+  %assign stepSize = FundamentalStepSize
+
+  
+
+  %if bEmitReg
+    %assign multiInstance = IsModelReferenceTarget() ? !IsModelRefScalableBuild() : MultiInstanceERTCode
+    %if UsingMalloc 
+      %assign rtModelObj     = RTMGetModelSS()
+      %assign rtModelObjType = ::tSimStructType
+      %<rtModelObjType> *%<rtModelObj>;
+      %if !GenRTModel
+        %assign errMsg = "Real-Time malloc target doesn't support SimStruct, target "...
+          "must use rtModel. Malloc based targets must not have GenRTModel = 0 in " ...
+          "system target file."
+        %<LibReportFatalError(errMsg)>
+      %endif 
+      %<rtModelObj> = (%<rtModelObjType> *) malloc(sizeof(%<rtModelObjType>));
+      if(%<rtModelObj> == NULL) {
+        return NULL;
+      }
+      %if SLibZeroMemory("RTM")
+        %<SLibCacheCoderGroupPointers()>
+        (void) %<LibGenMemFcnCall("memset", "(char *)%<rtModelObj>", "0", ...
+          "sizeof(%<rtModelObjType>)")>;
+        %% If any coder groups have been set to 0, then set their pointer back
+        %<SLibRestoreCoderGroupPointers()>
+      %endif
+      
+      %if SuppressMultiTaskScheduler && (!GenerateSampleERTMain && ...
+        !SLibAutosarActive()) && ...
+        !IsModelReferenceTarget() && !GenerateGRTWrapper
+        %foreach i = NumRuntimeExportedRates
+          (%<::tSimStruct>)->Timing.TaskCounters.cLimit[%<i>] = %<FcnComputeTaskTickLimit(i)>;
+        %endforeach
+      %endif
+      
+    %elseif (IsModelReferenceTarget() && !SLibGetUseRTMcgType() && multiInstance && ...
+      !GenerateClassInterface && (::CompiledModel.ModelRefSimpInterface || SLibGetDoesSelfExist())&& SLibZeroMemory("RTM"))
+      %% In this scenario the parent model should pass down an instantiated
+      %% self which needs to be unpacked so it can be initialized
+      %assign hasStaticStructure = ...
+        GenerateClassInterface || IsModelRefScalableBuild()
+      %if !LibBlockIOStructIsEmpty()
+        %assign rtmField = "BlockIO"
+        %assign varName = IsModelReferenceTarget() && !hasStaticStructure ? "localB":"b"
+        %assign blockIO = IsModelReferenceTarget() ? varName : LibGetBlockIOStruct()
+        %assign varType = IsModelReferenceTarget() && !GenerateClassInterface ? ...
+          FcnSysVarGroupType(System[NumSystems-2], "BlockIO") : ::tBlockIOType
+        %<varType> *%<blockIO> = %<RTMGet(rtmField)>;
+      %endif
+      %if !SLibModelDWorkStructIsEmpty()
+        %assign rtmField = "RootDWork"
+        %assign stdSSBuf = CacheStandaloneSystemDWorkInfo()
+        %assign stdSSBuf = SLibInitDWork(stdSSBuf)
+        %assign structName = LibGetDWorkStruct()
+        %assign varName = IsModelReferenceTarget() && !hasStaticStructure ? "localDW":"dwork"
+        %assign dWork = IsModelReferenceTarget() ? varName : structName
+        %assign dWorkType = IsModelReferenceTarget() ? stdSSBuf.DWorkBuff[SIZE(stdSSBuf.DWorkBuff,1)-1].DWorkType : varType
+        %<dWorkType> *%<dWork> = %<RTMGet(rtmField)>;
+      %endif
+    %endif
+  %endif %% bEmitReg
+
+  %if bEmitInit  
+    %%
+    %% Initialize real-time object
+    %%
+    %if !UsingMalloc 
+      %% If use Malloc, model() registration function mallocs
+      %% and clears, so skip it here
+      
+      %if RealTimeModelAccessed
+        %assign baseSysIdx = GetBaseSystemIdx()
+        %if SLibZeroMemory("RTM") && !SLibIsCPPEncapMdlRefBuild() && ... 
+          (!MultiInstanceERTCode || SLibUseBackwardCompatibleReusableInterface() || ...
+            GenerateClassInterface)
+          %assign multiInstance = IsModelReferenceTarget() ? !IsModelRefScalableBuild() : MultiInstanceERTCode
+          %if !(IsModelReferenceTarget() && SLibGetUseRTMcgType() && multiInstance && ::CompiledModel.ModelRefSimpInterface)
+            %<SLibCacheCoderGroupPointers()>
+            %<CachePWorksForModelRefTarget()>
+            /* initialize real-time model */
+            (void) %<LibGenMemFcnCall("memset", "(void *)%<GetSimStructExpr(System[baseSysIdx],::tSimStruct)>", ...
+              "0", "sizeof(%<::tSimStructType>)")>;
+            %<SLibAccessArgHelper(::CompiledModel.System[baseSysIdx].Interface.RTMArgDef,"","")>
+            %<RestorePWorksForModelRefTarget()>
+            %% If any coder groups have been set to 0, then set their pointer back
+            %<SLibRestoreCoderGroupPointers()>
+          %endif
+        %endif
+        %if SuppressMultiTaskScheduler && (!GenerateSampleERTMain && ...
+          !SLibAutosarActive()) && !IsModelReferenceTarget()
+          %foreach i = NumRuntimeExportedRates
+            (%<GetSimStructExpr(System[baseSysIdx],::tSimStruct)>)->Timing.TaskCounters.cLimit[%<i>] = %<FcnComputeTaskTickLimit(i)>;
+          %endforeach
+        %endif
+      %endif
+    %endif %% !UsingMalloc
+  %endif %% bEmitInit
+  
+  %if bEmitReg || bEmitInit
+    %%
+    %% Create Solver data
+  
+    %if !IsModelReferenceTarget() && !SLibIsDeploymentDiagramWithNoTopSolver() && ...
+    !PurelyIntegerCode  && ...
+    (LibIsContinuous(0) || NumChildSFunctions) || (UsingMalloc && GenerateGRTWrapper)
+    %% If the above checks are changed, please also update the checks for 
+    %% solver data freeing code (rtmdlsuplib.tlc)
+    
+    %<FcnCreateAndInitializeSolverData(bEmitReg, bEmitInit)>
+    
+  %endif
+  %endif %% bEmitReg || bEmitInit
+  
+
+  
+  %if bEmitInit  
+    %if ExportFunctionsMode == 0 
+      %if GenerateGRTWrapper || RTMNonInlinedSFcnsIsReqFcn()
+      
+        %% Initialize timing info.
+        %% Initialize timing fields if the IsReqFcn of this field returns true.
+        %%
+        %% To support GRT interface, non-inline sfunction, or model-ref,
+        %% some timing fields that are not used in ert are required and need to be 
+        %% initialized. These fields are initialized here.
+        %%
+        /* Initialize timing info */
+        %if RTMModelPtrsForNonERTIsReqFcn() || SLibModelHierarchyContainsNoninlinedSfcn()
+          {
+            int_T  *mdlTsMap      = %<RTMGet("SampleTimeTaskIDArray")>;
+            %%
+            %if NumRuntimeExportedRates >= 1 && ...
+              NumRuntimeExportedRates < RollThreshold
+              %% do not use a loop
+              %foreach sampIdx = NumRuntimeExportedRates
+                mdlTsMap[%<sampIdx>] = %<sampIdx>;
+              %endforeach
+            %elseif NumRuntimeExportedRates >= RollThreshold
+              %% use a loop
+              int_T i;
+              
+              for(i = 0; i < %<NumRuntimeExportedRates>; i++) {
+                mdlTsMap[i] = i;
+              }
+            %endif
+            %<RTMSet("SampleTimeTaskIDPtr", "&mdlTsMap[0]")>;
+            %<RTMSet("SampleTimePtr", "&%<RTMGet("SampleTimeArray")>[0]")>;
+            %<RTMSet("OffsetTimePtr", "&%<RTMGet("OffsetTimeArray")>[0]")>;
+            %<LibDumpModelInitializeSampleTimes()>\
+          }
+        %endif
+        
+        %if RTMTimePtrIsReqFcn()
+          %<RTMSet("TPtr", "&%<RTMGet("TaskTimeArray")>[0]")>;
+        %endif
+        
+        %if SLibModelHierarchyContainsNoninlinedSfcn() || GenerateGRTWrapper
+          {
+            int_T  *mdlSampleHits = %<RTMGet("SampleHitArray")>;
+            %if SLibSingleTasking()
+              %if NumRuntimeExportedRates >= 1 && ...
+                NumRuntimeExportedRates < RollThreshold
+                %% do not use a loop
+                %foreach sampIdx = NumRuntimeExportedRates
+                  mdlSampleHits[%<sampIdx>] = 1;
+                %endforeach
+              %elseif NumRuntimeExportedRates >= RollThreshold
+                %% use a loop
+                int_T i;
+                
+                for(i = 0; i < %<NumRuntimeExportedRates>; i++) {
+                  mdlSampleHits[i] = 1;
+                }
+              %endif
+            %elseif RTMChildSfunctionIsReqFcn()
+              int_T *mdlPerTaskSampleHits = %<RTMGet("PerTaskSampleHitsArray")>;
+              
+              %<RTMSet("PerTaskSampleHitsPtr", "&mdlPerTaskSampleHits[0]")>;
+              mdlSampleHits[0] = 1;
+            %endif
+            %<RTMSet("SampleHitPtr", "&mdlSampleHits[0]")>;
+          }
+        %endif
+      %elseif ( LibIsContinuous(0) && ...
+        !IsModelReferenceTarget() )
+        %assert RTMTimePtrIsReqFcn()
+        %<RTMSet("TPtr", "&%<RTMGet("TaskTimeArray")>[0]")>;
+      %endif
+    %endif
+    %if IsModelReferenceTarget() && !GenerateClassInterface
+      %% Declare the global timing  variables at the top of
+      %% model.c, and extern them in model_private.h
+      %<FcnInitializeModelRefGlobalTimingEngine()>
+    %endif
+    %if IsModelReferenceTarget() && ... 
+      !IsModelReferenceForASimstructBasedTarget() && ...
+      SLibModelHasControllableRate() && ...
+      !GenerateClassInterface
+      %assert SLibIsERTCodeFormat()
+      %<RTMSet("CtrlRateMdlRefTimingPtr", "CtrlRateMdlRefTimingPtr")>;
+    %endif
+  %endif %% bEmitInit  
+  
+  
+  %if bEmitReg || bEmitInit
+    %if !IsModelReferenceForASimstructBasedTarget()
+      
+      %% current
+      %if bEmitInit
+        
+        %%
+        %% Setup absolute time
+        %%
+        %if !IsModelReferenceTarget() && StartTime != 0.0
+          %assign errTxt = "Start time must be 0.0 for the chosen target: %<StartTime>."
+          %<LibReportFatalError(errTxt)>
+        %endif
+        
+        %if (SLibNeedAbsoluteTime() || MatFileLogging || ExtMode) ...
+          && !IsModelReferenceTarget()
+          
+          %if PurelyIntegerCode && MatFileLogging
+            %<LibReportError("Do not yet support integer-only MAT-file logging.")>
+          %elseif PurelyIntegerCode && !MatFileLogging
+            %% nop
+          %else
+            %if RTMTFinalIsReqFcn()
+              %% Initialize stop time
+              %<RTMSet("TFinal","%<SLibERTGetStopTime()>")>;
+            %endif
+            %foreach tid = NumSampleTimes
+              %if SampleTime[tid].NeedFloatTime == "yes" && ...
+                !PurelyIntegerCode
+                %<RTMGet("StepSize%<tid>")>  = %<SampleTime[tid].ClockTickStepSize>;
+              %endif
+            %endforeach
+          %endif
+        %endif
+        
+        %if RTMFirstInitCondFlagIsReqFcn()
+          %<RTMSet("FirstInitCond", 1)>;
+        %endif
+        
+        %% All offsets will be initialized by the top model
+        %% when using the global timing engine
+        %if !IsModelReferenceTarget()
+          %<FcnInitializeSampleTimeOffsets()>
+        %endif
+        
+        %if IsModelReferenceTarget() %% IsModelReferenceTarget()
+          %if !GenerateClassInterface
+            %% Setup the error status flag
+            %if !SuppressErrorStatus
+              /* initialize error status */
+              %<RTMSet("ErrorStatusPointer", "rt_errorStatus")>;
+            %endif
+            %% Setup the stop requested flag
+            %if RTMStopReqAccessed()
+              /* initialize stop requested flag */
+              %<RTMSet("StopRequestedPtr", "rt_stopRequested")>;
+              
+            %endif
+            %% Setup the rtwsolverinfo
+            %if LibIsContinuous(0) || (NumChildSFunctions > 0) 
+              /* initialize RTWSolverInfo */
+              %<RTMSet("RTWSolverInfo", "rt_solverInfo")>;
+              %if LibIsContinuous(0)
+                %<FcnModelRefCreateAndInitializeSolverData()>
+              %endif
+            %endif
+          %endif %%!GenerateClassInterface
+          
+          %% In the child model initialize we need to intialize the 
+          %% dWorks that corresponds to the global data transfer ids
+          %if ISFIELD(::CompiledModel, "NumDataTransfers") && ::CompiledModel.NumDataTransfers > 0
+            %% %assign rteBlkSysId = ::CompiledModel.RteBlockSysId
+            %% %assign rteBlkBlkId = ::CompiledModel.RteBlockBlkId
+            %% %assign rteBlkBlk = ::CompiledModel.System[rteBlkSysId].Block[rteBlkBlkId]
+            %assign rteBlkDWorkIndex = ::CompiledModel.RteBlockDWorkIndex
+            %foreach dtIdx = ::CompiledModel.NumDataTransfers
+              %<LibBlockDWork(::CompiledModel.DWorks.DWork[rteBlkDWorkIndex],"", "", dtIdx)> = gblDataTransferIds[%<dtIdx>];
+              %% %<LibBlockDWork(DWork[0],"", "", dtIdx)> = gblDataTransferIds[%<dtIdx>];
+            %endforeach
+          %endif
+
+        %else %% IsModelReferenceTarget()
+          %%
+          %% Initialize error status (only if real-time model has not been accessed
+          %% since this will force a memset of rtM regardless).
+          %%
+          %if !SuppressErrorStatus && !RealTimeModelAccessed && SLibZeroMemory("RTM")
+            
+            /* initialize error status */
+            %<RTMSet("ErrorStatus",SLibGetNullDefinitionFromTfl())>;
+          %endif
+        %endif %% IsModelReferenceTarget()
+      %endif %% bEmitInit
+      
+      %if bEmitReg || bEmitInit
+        %%
+        %% Setup data logging
+        %%
+        %if MatFileLogging == 1 
+          %assert(!IsModelReferenceTarget())
+          %% data logging setup
+          
+          %<SLibDumpModelRegDataLoggingSetup(bEmitReg, bEmitInit)>
+        %endif
+        %%
+        %% Setup external mode
+        %%
+        %if ExtMode == 1
+          %assert(!IsModelReferenceTarget())
+          %if SLibIsERTCodeFormat()
+            
+            %if bEmitInit
+              /* External mode info */
+              %<SLibDumpModelChecksumReg()>
+            %endif %% bEmitInit
+            
+            %% Dump the system mode vector addresses.
+            %<SLibDumpExtModeReg(bEmitReg, bEmitInit)>
+          %endif
+        %endif
+      %endif %% bEmitReg || bEmitInit
+      
+      
+    %else %% !IsModelReferenceForASimstructBasedTarget
+      %if bEmitInit
+        %if !IsModelReferenceTarget()
+          %<FcnInitializeSampleTimeOffsets()>
+        %endif
+        %<RTMSet("MdlRefSfcnS", tMdlRefSfcnS)>;
+        
+        %if IsModelReferenceTarget() && !GenerateClassInterface
+          %% slplugin function call for model reference accel mode
+          %if IsModelReferenceSimTarget()
+            if (!slIsRapidAcceleratorSimulating()) {
+              %assign simS = RTMsGet(System[GetBaseSystemIdx()], "MdlRefSfcnS")
+              slmrRunPluginEvent(%<simS>, "%<CompiledModel.Name>", "START_OF_SIM_MODEL_MODELREF_ACCEL_EVENT");
+            }
+          %endif
+        %endif
+        
+        %% In the child model initialize we need to intialize the 
+        %% dWorks that corresponds to the global data transfer ids
+        %if ISFIELD(::CompiledModel, "NumDataTransfers") && ::CompiledModel.NumDataTransfers > 0
+          %% %assign rteBlkSysId = ::CompiledModel.RteBlockSysId
+          %% %assign rteBlkBlkId = ::CompiledModel.RteBlockBlkId
+          %% %assign rteBlkBlk = ::CompiledModel.System[rteBlkSysId].Block[rteBlkBlkId]
+          %assign rteBlkDWorkIndex = ::CompiledModel.RteBlockDWorkIndex
+          %foreach dtIdx = ::CompiledModel.NumDataTransfers
+            %<LibBlockDWork(::CompiledModel.DWorks.DWork[rteBlkDWorkIndex],"", "", dtIdx)> = gblDataTransferIds[%<dtIdx>];
+            %% %<LibBlockDWork(DWork[0],"", "", dtIdx)> = gblDataTransferIds[%<dtIdx>];
+          %endforeach
+        %endif
+        
+      %endif %% bEmitInit
+    %endif %% !IsModelReferenceForASimstructBasedTarget
+  %endif %% bEmitReg || bEmitInit
+  
+  
+
+  %if bEmitInit
+  %if RTMNonInlinedSFcnsIsReqFcn() || GenerateGRTWrapper
+    %% SolverInfo
+    %assign solverInfo = "%<RTMGetSolverInfo()>"
+    %<RTMSet("RTWSolverInfoPtr", solverInfo)>;
+    %% StepSize
+    %<RTMSet("StepSize", FixedStepOpts.FixedStep)>;
+    %<RTMSolverSet("FixedStepSize", FixedStepOpts.FixedStep)>;
+    %% SolverMode
+    %if ::CompiledModel.FixedStepOpts.SolverMode == "MultiTasking"
+      %<RTMSolverSet("SolverMode", "SOLVER_MODE_MULTITASKING")>;
+    %else
+      %<RTMSolverSet("SolverMode", "SOLVER_MODE_SINGLETASKING")>;
+    %endif
+  %elseif RTMStepSizeIsReqFcn()
+    %% StepSize
+    %<RTMSet("StepSize", FixedStepOpts.FixedStep)>;
+  %endif
+  %endif %% bEmitInit
+  
+  %if bEmitReg || bEmitInit
+  
+  %<SLibDumpERTAndModelrefInitMemoryCode(bEmitReg, bEmitInit, 0)>
+  
+  %endif %% bEmitReg || bEmitInit
+
+  %%
+  %% Model mapping info
+  %%
+  %if bEmitReg
+    %<SLibDumpModelMappingInfo()>\
+  %endif %% bEmitReg
+  %%
+  %% Init MassMatrix-related DWorks (and Base pointer for Model blocks)
+  %%
+  %if bEmitInit
+  %if ModelIsLinearlyImplicit == "yes" 
+            
+    %if IsModelReferenceTarget()
+      /* Init MassMatrixPr Base and Offsets */
+      {          
+        %<RTMGet("MassMatrixBasePr")> = localMM;
+          
+        %foreach mmIdx = ::CompiledModel.MassMatrices.NumMassMatrices
+          %assign mm = ::CompiledModel.MassMatrices.MassMatrix[mmIdx]
+          %assign prOffset = mm.IndexPr
+          
+          %assign grSrc = mm.GrSrc
+          %assign comment  = "/* %<SLibGrBlockCommentName(grSrc)> */"    
+          
+          %assign grSubSys = ::CompiledModel.BlockHierarchyMap.Subsystem[grSrc[0]]
+          %assign grBlock  = grSubSys.Block[grSrc[1]]
+          
+          %assign dwIdx = -1  %% invalid
+          %assign dw = ""
+          %assign foundMassMatrixDWork = TLC_FALSE
+          %foreach blkDW = grBlock.NumDWorks
+            %assign dwIdx = grBlock.DWork[blkDW]._idx
+            %assign dw = ::CompiledModel.DWorks.DWork[dwIdx]          
+            %if dw.Name == "MASS_MATRIX_PR"
+              %assign foundMassMatrixDWork = TLC_TRUE 
+              %break
+            %endif
+          %endforeach          
+          %assert foundMassMatrixDWork        
+          
+          %<SLibAccessArgHelper(System[NumSystems-2].Interface.DWorkArgDef,"","")>            
+          %if ISFIELD(mm, "ForEachSSLoopBnds")
+              %% The owner block is inside For Each subsystem.
+              %% Need to initialize the DWork value correctly for each iteration
+             %assign ::NeedForEachLoopInReg = TLC_TRUE
+             %assign ::NumForEachLoopHierarchyLevel = SIZE(mm.ForEachSSLoopBnds,1)
+             %assign ::ForEachLoopHierarchyLevel = ::NumForEachLoopHierarchyLevel
+             %assign mmPrOffset = "%<prOffset>"
+             {
+               %% Form loop for every parent For Each subsystem
+             %foreach ssIdx = SIZE(mm.ForEachSSLoopBnds,1)
+               %assign iterVar = "i_%<ForEachLoopHierarchyLevel>"
+               %assign ::ForEachLoopHierarchyLevel = ::ForEachLoopHierarchyLevel - 1
+                 int32_T %<iterVar>;
+                 for (%<iterVar> = 0; %<iterVar> < %<mm.ForEachSSLoopBnds[::ForEachLoopHierarchyLevel]>; %<iterVar>++) {
+               %assign mmPrOffset = mmPrOffset + "+" + iterVar + "*%<mm.ForEachSSMassMatrixPrSize[::ForEachLoopHierarchyLevel]>"
+             %endforeach
+             %assign ::ForEachLoopHierarchyLevel = 1
+          %else
+            %assign mmPrOffset = "%<prOffset>"
+          %endif
+          
+          %<SLibBlockMassMatrixPrOffsetInternal("", "", 0, dwIdx, dw, 1)> = %<mmPrOffset>; %<comment>        
+          %if ISFIELD(mm, "ForEachSSLoopBnds")
+              %% Close the loop for every parent For Each subsystem
+             %foreach ssIdx = SIZE(mm.ForEachSSLoopBnds,1)
+                 }
+             %endforeach
+             }
+             %assign ::NeedForEachLoopInReg = TLC_FALSE
+          %endif
+          
+        %endforeach
+      }       
+    %else   %% IsModelReferenceTarget()
+
+      %<FcnGenInitMassMatrixPrInRoot()> 
+
+    %endif  
+  %endif
+  %endif %% bEmitInit
+      
+  %assign ::BlockFcn = tmpBlockFcn
+%endfunction %% LibDumpERTAndModelrefRegExecution() Output
+
+
+%% Function: SLibErtWideInit ===================================================
+%% Abstract:
+%%   ertwide.tlc remnant.  Performs error checking an initial setup for
+%%   Embedded-C code format
+%%
+%function SLibErtWideInit() void
+  %if !IsModelReferenceForASimstructBasedTarget()
+    %% =========================================================================
+    %% Error checking
+    %%
+
+    %% Temporarily ERT only supports {ODE1, ODE2, ODE3, ODE4, ODE5, ODE8, ODE14x, FSDiscrete}
+    %assign notSupported = !(ISEQUAL(Solver,"ode1") || ISEQUAL(Solver,"ode2")  ...
+      || ISEQUAL(Solver,"ode3") || ISEQUAL(Solver,"FixedStepDiscrete")         ...
+      || ISEQUAL(Solver,"ode4") || ISEQUAL(Solver,"ode5") || ISEQUAL(Solver,"ode8") ...
+      ||ISEQUAL(Solver,"ode14x"))
+
+  %if notSupported
+      %%
+      %% No continuous task blocks allowed
+      %% LibIsContinuous(0) may be wrong if all continuous blocks were reduced
+      %if LibIsContinuous(0)
+	%assign blockList = []
+
+	%foreach sysIdx = NumSystems
+	  %assign system = System[sysIdx]
+	  %with system
+	    %foreach blkIdx = NumBlocks+NumVirtualOutportBlocks
+	      %assign block = Block[blkIdx]
+	      %with block
+		%if ISFIELD(block,"TID")
+		  %if TYPE(TID) == "Number"
+		    %% limit list to 10 blocks
+		    %if LibIsContinuous(TID) && SIZE(blockList, 1) < 10
+		      %assign blockList = ...
+			blockList + SLibGrBlockPath(block.GrSrc)
+		    %endif
+		  %endif
+		%endif
+	      %endwith
+	    %endforeach
+	    %if SIZE(blockList, 1) >= 10
+	      %break
+	    %endif
+	  %endwith
+	%endforeach
+
+	%assign numBlocks = SIZE(blockList, 1)
+	%% LibIsContinuous(0) may be wrong if all continuous blocks were reduced
+	%% Make sure at least one continuous block remained
+	%if IsModelReferenceTarget()
+	  %assign str = "Model reference"
+	%else
+	  %assign str = "Embedded-C code format"
+	%endif
+
+	%if numBlocks > 0
+	  %assign errTxt = "\n\nThe %<str> does not support " ...
+	    "continuous sample time blocks.  "
+	  %if numBlocks == 1
+	    %assign str = "This block either specifies or inherits a " ...
+	      "continuous rate:\n\n%<blockList>"
+	  %else
+	    %assign str = "Here are %<numBlocks> blocks that " ...
+	      "either specify or inherit a continuous rate:\n\n%<blockList>"
+	  %endif
+	  %assign errTxt = errTxt + str
+	  %<LibReportError(errTxt)>
+	%endif
+      %endif
+    %endif %% temporary {ode1, ode2, ode3, ode4, ode5, ode8, fixedstepdiscrete}
+
+  %endif %% !IsModelReferenceForASimstructBasedTarget
+
+  %% ERTSfunction doesn't support External Mode
+  %if (GenerateErtSFunction == 1) && ConfigSet.ExtMode == 1
+    %assign errTxt = "\n\nThe ERT option to create a SIL block " ...
+      "does not support Simulink External Mode."
+    %<LibReportError(errTxt)>
+  %endif
+
+%endfunction %% SLibErtWideInit
+
+%% Function: SLibDumpLocalVariablesForBlockFcn ================================
+%% Abstract:
+%%   Dumps local variables needed in model entry point function
+%%
+%function SLibDumpLocalVariablesForBlockFcn(rootSystem, blkFcn) Output
+  %if SLibUseBackwardCompatibleReusableInterface() && !SLibAutosarActive()
+    %% Should not dump local variables when using old reusable call interface.
+    %% The only exception is multi-instance AUTOSAR runnables.
+    %return 
+  %endif
+  
+  %assign origBlockFcn = ::BlockFcn
+  %%
+    
+  %if TYPE(blkFcn) == "Vector"
+    %assign fcns = blkFcn
+  %else
+    %assert blkFcn != "InitializeOnly"  
+    %assign fcns = ["%<blkFcn>"]
+  %endif
+  %%
+  %assign rtmDumped             = TLC_FALSE
+  %assign paramDumped           = TLC_FALSE
+  %assign blockIODumped         = TLC_FALSE
+  %assign dWorkDumped           = TLC_FALSE
+  %assign contStatesDumped      = TLC_FALSE
+  %assign periodicCStatesDumped = TLC_FALSE
+  %assign prevZCStatesDumped    = TLC_FALSE
+  %assign externalInputsDumped  = TLC_FALSE
+  %assign externalOutputsDumped = TLC_FALSE
+  %assign tid = rootSystem.CurrentTID
+  %assign coderDataGroupDumped = ...
+      Vector(%<::CompiledModel.NumCoderDataGroups>) [0@%<::CompiledModel.NumCoderDataGroups>]
+
+  %%
+    
+  %assert !GenerateClassInterface
+     
+  %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  %assign rootModule = ::CompiledModel.RTWCGModules.RTWCGModule[rootSystem.CGIRModuleIdx]
+  %assign argName = ""
+  %if SLibAutosarActive()
+    %assign argName = FcnGetMultiInstanceRunnableArgs(1)
+  %endif
+
+  %foreach idx = SIZE(fcns)[1]
+    %assign ::BlockFcn = fcns[idx]  
+    
+    %assign isPeriodicRateGrouping = SLibSystemFcnPeriodicRateGrouping(rootSystem, ::BlockFcn)
+    %with rootSystem.Interface
+      %% RTM argument (AUTOSAR only)
+      %if !reqInsts.SimStructInst && FcnArgNeeded(RTMArgDef, ...
+        tid,isPeriodicRateGrouping) && !rtmDumped
+        %if SLibAutosarActive()
+          %assign ARPIMName = FEVAL( "arxml.arxml_private", ...
+            "p_create_aridentifier", ::tSimStruct, AutosarMaxShortNameLength)
+          %<::tSimStructType> *%<::tSimStruct> = Rte_Pim_%<ARPIMName>(%<argName>);
+        %endif
+        %assign rtmDumped = TLC_TRUE
+      %endif      
+      %% Parameter argument
+      %if !reqInsts.ParamsInst && FcnArgNeeded(ParameterArgDef,...
+        tid,isPeriodicRateGrouping) && !paramDumped
+        %if SLibAutosarActive()
+          %assign ARPIMName = FEVAL( "arxml.arxml_private", ...
+            "p_create_aridentifier", LibGetParametersStruct(), AutosarMaxShortNameLength)
+          %<::tParametersType> *%<::tParameters> = Rte_Pim_%<ARPIMName>(%<argName>);
+        %else
+          %if !ISEMPTY(SLibGetParamPointerFromRTM(0))
+            %<::tParametersType> *%<::tParameters> = %<SLibGetParamPointerFromRTM(1)>;
+          %endif
+        %endif
+        %assign paramDumped = TLC_TRUE
+      %endif
+
+      %% BlockIO argument
+      %if !reqInsts.BlockIOInst && FcnArgNeeded(BlockIOArgDef, ...
+        tid,isPeriodicRateGrouping) && !blockIODumped
+        %if SLibAutosarActive()
+          %assign ARPIMName = FEVAL( "arxml.arxml_private", ...
+            "p_create_aridentifier", LibGetBlockIOStruct(), AutosarMaxShortNameLength)
+          %<::tBlockIOType> *%<::tBlockIO> = Rte_Pim_%<ARPIMName>(%<argName>);
+        %else
+          %if !ISEMPTY(SLibGetBlockIOPointerFromRTM(0)) && !SLibIsSelfStructured()
+            %assign varName = tBlockIO
+            %<::tBlockIOType> *%<varName> = %<SLibGetBlockIOPointerFromRTM(1)>;
+          %endif
+        %endif
+        %assign blockIODumped = TLC_TRUE
+      %endif 
+      %% DWork argument
+      %if !reqInsts.DworkInst && FcnArgNeeded(DWorkArgDef,...
+        tid,isPeriodicRateGrouping) && !dWorkDumped
+        %if SLibAutosarActive()
+          %assign ARPIMName = FEVAL( "arxml.arxml_private", ...
+            "p_create_aridentifier", LibGetDWorkStruct(), AutosarMaxShortNameLength)
+          %<::tDWorkType> *%<::tDWork> = Rte_Pim_%<ARPIMName>(%<argName>);
+        %else
+          %if !ISEMPTY(SLibGetDWorkPointerFromRTM(0)) && !SLibIsSelfStructured()
+            %assign varName = tDWork
+            %<::tDWorkType> *%<varName> = %<SLibGetDWorkPointerFromRTM(1)>;
+          %endif
+        %endif
+        %assign dWorkDumped = TLC_TRUE
+      %endif
+      %% CoderDataGroup arguments
+      %if ::CompiledModel.NumCoderDataGroups > 0
+        %foreach idx = ::CompiledModel.NumCoderDataGroups
+          %assign group = ::CompiledModel.CoderDataGroup[idx]
+          %assign groupArgDefFieldName = "CoderDataGroup" + group.Name + "ArgDef"
+          %assign groupArgDef = rootSystem.Interface.%<groupArgDefFieldName>
+          %assign fcnArgNeeded = FcnArgNeeded(groupArgDef, ...
+                                              tid, ...
+                                              isPeriodicRateGrouping)
+          %% When localvar is not emitted in IR, we need to dump it here
+          %assign dumpLocalVarInTLC = (::BlockFcn == "ModelInitialize") || ...
+            (::BlockFcn == "Registration")
+          %assign simplifiedNoDump = ...
+            rootModule.SimplifiedInterface && ...
+            !dumpLocalVarInTLC
+          %if fcnArgNeeded && ...
+            (SLibRootCoderGroupVarGroupIdx(group) > -1) && ...
+            !coderDataGroupDumped[idx] && ...
+            !simplifiedNoDump && ...
+            SLibAccessGroupThroughSelf(group)
+            %assign instanceString = SLibCoderDataGroupInstance(group)
+            %assign typeString = SLibTypeQualifierForGroup(group) + " " + SLibCoderDataGroupType(group)
+            %if SLibAutosarActive()
+              %assign ARPIMName = FEVAL( "arxml.arxml_private", ...
+                "p_create_aridentifier", LibGetCoderDataGroupStruct(::CompiledModel.CoderDataGroup[idx]), AutosarMaxShortNameLength)
+              %<typeString> *%<instanceString> = Rte_Pim_%<ARPIMName>(%<argName>);
+              %assign coderDataGroupDumped[idx] = TLC_TRUE
+            %elseif !group.IsSelf
+              %if !SLibAccessGroupThroughSelf(group)
+                %<typeString> *%<instanceString> = &(%<SLibCoderDataGroupInstance(group)>);
+                %assign coderDataGroupDumped[idx] = TLC_TRUE
+              %else
+                %<typeString> *%<instanceString> = %<SLibGetCoderDataGroupPointerFromRTM(group, 0)>;
+                %assign coderDataGroupDumped[idx] = TLC_TRUE
+              %endif
+            %endif
+          %endif
+        %endforeach
+      %endif
+      %% ContStates argument
+      %if !reqInsts.ContStatesInst && FcnArgNeeded(ContStatesArgDef,...
+        tid,isPeriodicRateGrouping) && !contStatesDumped
+        %if SLibAutosarActive()
+          %assign ARPIMName = FEVAL( "arxml.arxml_private", ...
+            "p_create_aridentifier", LibGetContinuousStateStruct(), AutosarMaxShortNameLength)
+          %<::tContStateType> *%<::tContState> = Rte_Pim_%<ARPIMName>(%<argName>);
+        %else
+          %<::tContStateType> *%<::tContState> = %<SLibGetContStatesPointerFromRTM(1)>;
+        %endif
+        %assign contStatesDumped = TLC_TRUE
+      %endif
+      %% PeriodicCStates argument
+      %if (::BlockFcn == "ModelInitialize" || ::BlockFcn == "Registration") && !periodicCStatesDumped ...
+        && !reqInsts.PeriodicContStatesInst && !LibPeriodicContStatesInstanceIsEmpty() ...
+        && FcnArgNeeded(ContStatesArgDef,tid,isPeriodicRateGrouping)
+        %if SLibAutosarActive()
+          %assign ARPIMName = FEVAL("arxml.arxml_private", ...
+            "p_create_aridentifier", LibGetPeriodicContStateIndices(), AutosarMaxShortNameLength)
+          %<tPeriodicStateIndType>* %<tPeriodicStateInd> = Rte_Pim_%<ARPIMName>(%<argName>);
+          %assign ARPIMName = FEVAL("arxml.arxml_private", ...
+            "p_create_aridentifier", LibGetPeriodicContStateRanges(), AutosarMaxShortNameLength)
+          %<tPeriodicStateRngType>* %<tPeriodicStateRng> = Rte_Pim_%<ARPIMName>(%<argName>);
+        %else
+          %<tPeriodicStateIndType>* %<tPeriodicStateInd> = %<SLibGetPeriodicStateIndicesPtrFromRTM(1)>;
+          %<tPeriodicStateRngType>* %<tPeriodicStateRng> = %<SLibGetPeriodicStateRangesPtrFromRTM(1)>;
+        %endif
+        %assign periodicCStatesDumped = TLC_TRUE
+      %endif
+      %% PrevZCStates argument
+      %if !reqInsts.PrevZCStatesInst && FcnArgNeeded(ZCEventArgDef,...
+        tid,isPeriodicRateGrouping) && !prevZCStatesDumped
+        %if SLibAutosarActive()
+          %assign ARPIMName = FEVAL( "arxml.arxml_private", ...
+            "p_create_aridentifier", LibGetPreviousZCStruct(), AutosarMaxShortNameLength)
+          %<::tPrevZCStateType> *%<::tPrevZCState> = Rte_Pim_%<ARPIMName>(%<argName>);
+        %else
+          %if !ISEMPTY(SLibGetPreviousZCStructFromRTM(0)) && !SLibIsSelfStructured()
+            %<::tPrevZCStateType> *%<::tPrevZCState> = %<SLibGetPreviousZCStructFromRTM(1)>;
+          %endif
+        %endif
+        %assign prevZCStatesDumped = TLC_TRUE
+      %endif
+      %assign needLocalVar = (::BlockFcn == "ModelInitialize" || ::BlockFcn == "Registration")
+      %% ExternalInputs argument
+      %if ::CompiledModel.RootIOFormat == "Part of model data structure" || ...
+        (needLocalVar && SLibHasGlobalExternalInputsWithFPC())
+        %if !reqInsts.ExtInpsInst && !LibExternalInputsStructIsEmpty() && ...
+          !externalInputsDumped
+          %%assert RootIOStructures
+          %if (SLibExtIOStructArgNeeded("Input",tid,isPeriodicRateGrouping) || SLibHasGlobalExternalInputsWithFPC())
+            %<::tInputType> *%<::tInput> = (%<::tInputType> *) %<RTMGet("U")>;
+            %assign externalInputsDumped = TLC_TRUE
+          %endif
+        %endif
+      %endif
+      %% ExternalOutputs argument 
+      %if ::CompiledModel.RootIOFormat == "Part of model data structure" || ...
+        (needLocalVar && SLibHasGlobalExternalOutputsWithFPC())
+        %if !reqInsts.ExtOutputsInst && !LibExternalOutputsStructIsEmpty() && ...
+          !externalOutputsDumped
+          %%assert RootIOStructures
+          %if (SLibExtIOStructArgNeeded("Output",tid,isPeriodicRateGrouping) || SLibHasGlobalExternalOutputsWithFPC())
+            %<::tOutputType> *%<::tOutput> = (%<::tOutputType> *) %<RTMGet("Y")>;
+            %assign externalOutputsDumped = TLC_TRUE
+          %endif
+        %endif
+      %endif
+    %endwith %% rootSystem.Interface
+    
+  %endforeach %% SIZE(fcns)[1]
+  
+  %% Revert to original BlockFcn
+  %assign ::BlockFcn = origBlockFcn
+  
+%endfunction
+
+%% Function: SLibFunctionContainsAccessFunctions ================================
+%% Abstract:
+%%   Checks ModuleFcn.ContainsAccessFunctions field for requested fcn
+%%
+%function SLibFunctionContainsAccessFunctions(system, blkFcn) void
+
+  %assign fcnType = blkFcn
+  %if fcnType == "OutputUpdate"
+   %assign fcnType = "Outputs"
+  %endif
+
+  %if SLibSystemFcnPeriodicRateGrouping(system, blkFcn)
+  	%assign fcnType = "%<fcnType>_TID%<system.CurrentTID>"
+  %endif
+
+  %assign modRec = ::CompiledModel.RTWCGModules.RTWCGModule[system.CGIRModuleIdx]
+  %assign fcnIdx = ISFIELD(modRec,"SystemFunctionTypes") && ISFIELD(modRec.SystemFunctionTypes,fcnType) ...
+                   ? GETFIELD(modRec.SystemFunctionTypes,fcnType) : -1
+
+  %if fcnIdx > -1 && fcnIdx < modRec.NumFunctions
+    %if modRec.Function[fcnIdx].ContainsAccessFunctions
+     %return TLC_TRUE
+   %endif
+  %endif
+
+  %return TLC_FALSE
+%endfunction  %%SLibFunctionContainsAccessFunctions
+
+%function SLibIsRTMUnusedForBlockFcn(rootSystem, blkFcn) void
+  
+  %if SLibUseBackwardCompatibleReusableInterface()
+    %return TLC_FALSE
+  %endif
+  
+  %assign origBlockFcn = ::BlockFcn
+  
+  %if TYPE(blkFcn) == "Vector"
+    %assign fcns = blkFcn
+  %else
+    %assert blkFcn != "InitializeOnly"  
+    %assign fcns = ["%<blkFcn>"]
+  %endif
+  
+  %assert !GenerateClassInterface
+  
+  %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")  
+  
+  %assign RTMUnused = TLC_TRUE  
+  %foreach idx = SIZE(fcns)[1]
+    %assign ::BlockFcn = fcns[idx]  
+    
+    %if SLibFunctionContainsAccessFunctions(rootSystem, ::BlockFcn)
+      %assign RTMUnused = TLC_FALSE
+	  %break
+    %endif
+    
+    %assign isPeriodicRateGrouping = SLibSystemFcnPeriodicRateGrouping(rootSystem, ::BlockFcn)
+    
+    %with rootSystem.Interface
+      %% Parameter argument
+      %if !reqInsts.ParamsInst && FcnArgNeeded(ParameterArgDef,...
+        rootSystem.CurrentTID,isPeriodicRateGrouping) 
+        %assign RTMUnused = TLC_FALSE
+        %break
+      %endif          
+      %% BlockIO argument
+      %if !reqInsts.BlockIOInst && FcnArgNeeded(BlockIOArgDef, ...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RTMUnused = TLC_FALSE
+        %break
+      %endif
+      %% DWork argument
+      %if !reqInsts.DworkInst && FcnArgNeeded(DWorkArgDef,...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RTMUnused = TLC_FALSE
+        %break
+      %endif
+      %% ContStates argument
+      %if !reqInsts.ContStatesInst && FcnArgNeeded(ContStatesArgDef,...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RTMUnused = TLC_FALSE
+        %break
+      %endif
+      %% PrevZCStates argument
+      %if !reqInsts.PrevZCStatesInst && FcnArgNeeded(ZCEventArgDef,...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RTMUnused = TLC_FALSE
+        %break
+      %endif
+      %foreach idx = ::CompiledModel.NumCoderDataGroups
+        %assign group = ::CompiledModel.CoderDataGroup[idx]
+        %assign groupArgDefFieldName = "CoderDataGroup" + group.Name + "ArgDef"
+        %assign groupArgDef = rootSystem.Interface.%<groupArgDefFieldName>
+        %if FcnArgNeeded(groupArgDef,...
+            rootSystem.CurrentTID,isPeriodicRateGrouping)
+          %assign RTMUnused = TLC_FALSE
+          %break
+        %endif
+      %endforeach
+      %if ::CompiledModel.RootIOFormat == "Part of model data structure"
+        %% ExternalInputs argument      
+        %if !reqInsts.ExtInpsInst && !LibExternalInputsStructIsEmpty()
+          %assert RootIOStructures
+          %if SLibExtIOStructArgNeeded("Input",rootSystem.CurrentTID,isPeriodicRateGrouping)
+            %assign RTMUnused = TLC_FALSE
+            %break
+          %endif
+        %endif
+        %% ExternalOutputs argument 
+        %if !reqInsts.ExtOutputsInst && !LibExternalOutputsStructIsEmpty()
+          %assert RootIOStructures
+          %if SLibExtIOStructArgNeeded("Output",rootSystem.CurrentTID,isPeriodicRateGrouping)
+            %assign RTMUnused = TLC_FALSE
+            %break
+          %endif
+        %endif
+      %endif
+    %endwith %% rootSystem.Interface
+    
+  %endforeach %% SIZE(fcns)[1]
+  
+  %% Revert to original BlockFcn
+  %assign ::BlockFcn = origBlockFcn
+  
+  %return RTMUnused
+  
+%endfunction
+
+%% 
+%function SLibIsInstanceHandleUnusedForBlockFcn(rootSystem, blkFcn) void
+  %assert SLibAutosarActive()
+  %assert !GenerateClassInterface 
+
+  %% Never generate UNUSED_PARAMETER macro on 'self' argument till internal
+  %% infrastructure is enhanced
+  %return TLC_FALSE
+
+  %assign origBlockFcn = ::BlockFcn
+  
+  %if TYPE(blkFcn) == "Vector"
+    %assign fcns = blkFcn
+  %else
+    %assert blkFcn != "InitializeOnly"  
+    %assign fcns = ["%<blkFcn>"]
+  %endif
+  
+  %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  
+  %assign RteInstanceUnused = TLC_TRUE  
+  %foreach idx = SIZE(fcns)[1]
+    %assign ::BlockFcn = fcns[idx]  
+    
+    %assign isPeriodicRateGrouping = SLibSystemFcnPeriodicRateGrouping(rootSystem, ::BlockFcn)
+    
+    %with rootSystem.Interface
+      %% RTM argument
+      %if !reqInsts.SimStructInst && FcnArgNeeded(RTMArgDef, ...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RteInstanceUnused = TLC_FALSE
+      %endif
+      %% Parameter argument
+      %if !reqInsts.ParamsInst && FcnArgNeeded(ParameterArgDef,...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RteInstanceUnused = TLC_FALSE
+      %endif
+      %% BlockIO argument
+      %if !reqInsts.BlockIOInst && FcnArgNeeded(BlockIOArgDef, ...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RteInstanceUnused = TLC_FALSE
+      %endif
+      %% DWork argument
+      %if !reqInsts.DworkInst && FcnArgNeeded(DWorkArgDef,...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RteInstanceUnused = TLC_FALSE
+      %endif
+      %% ContStates argument
+      %if !reqInsts.ContStatesInst && FcnArgNeeded(ContStatesArgDef,...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RteInstanceUnused = TLC_FALSE
+      %endif
+      %% PrevZCStates argument
+      %if !reqInsts.PrevZCStatesInst && FcnArgNeeded(ZCEventArgDef,...
+        rootSystem.CurrentTID,isPeriodicRateGrouping)
+        %assign RteInstanceUnused = TLC_FALSE
+      %endif  
+    %endwith %% rootSystem.Interface
+    
+  %endforeach %% SIZE(fcns)[1]
+  
+  %% Revert to original BlockFcn
+  %assign ::BlockFcn = origBlockFcn
+  
+  %return RteInstanceUnused
+  
+%endfunction
+
+
+
+%% DocFunction{Other Useful Functions}: LibPackModelDataIntoRTM ===============
+%% Abstract:
+%%      Pack model data (such as block IO, dWork, parameters, etc.) into the 
+%%      real-time model data structure. This is  
+%function FcnPackModelDataIntoRTM() Output
+  %assign selfContainsReference = TLC_FALSE
+  %assign rootSystem = ::CompiledModel.System[NumSystems-1]
+  %if SLibGetUseRTMcgType() && ISFIELD(rootSystem,"SelfVarGroupIndex")
+    %assign vargroup = ::CompiledModel.VarGroups.VarGroup[rootSystem.SelfVarGroupIndex[0]]
+    %foreach mIdx = vargroup.NumVarGroupElements
+      %if !ISEMPTY(FEVAL("regexp",vargroup.VarGroupElements[mIdx],"^RVG\\d+")) || ...
+        !ISEMPTY(FEVAL("regexp",vargroup.VarGroupElements[mIdx],"^RCDG\\d+"))
+        %assign selfContainsReference = TLC_TRUE
+      %endif
+    %endforeach
+  %endif
+  %if !(MultiInstanceERTCode && !UsingMalloc  && !GenerateClassInterface) ...
+    && !selfContainsReference ...
+    || SLibUseBackwardCompatibleReusableInterface()
+    %return ""
+  %endif
+  
+  /* Pack model data into RTM */
+  
+  %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  
+  %if !reqInsts.ParamsInst && ...
+    !SLibPrmBufferIsEmpty("SimulinkGlobal", "Instance") && ...
+    !GenerateClassInterface
+    %assign tmpHasSimStructVars = ::CompiledModel.HasSimStructVars
+    %assign ::CompiledModel.HasSimStructVars = 0
+    %<SLibGetParamPointerFromRTM(0)> = &%<LibGetParametersStruct()>;
+    %assign prmsName = SLibGetPrmsName(SLibGetOldStrNames())
+    %assign ::CompiledModel.HasSimStructVars = tmpHasSimStructVars
+  %endif
+  %if !reqInsts.BlockIOInst && !LibBlockIOInstanceIsEmpty() && ...
+    !GenerateClassInterface && !SLibGetUseRTMcgType()
+    %<SLibGetBlockIOPointerFromRTM(0)> = &%<LibGetBlockIOStruct()>;
+  %endif
+  %if !reqInsts.DworkInst && !LibDWorkInstanceIsEmpty() && ...
+    !GenerateClassInterface && !SLibGetUseRTMcgType()
+    %<SLibGetDWorkPointerFromRTM(0)> = &%<LibGetDWorkStruct()>;
+  %endif
+  %if ::CompiledModel.NumCoderDataGroups > 0
+    %if !GenerateClassInterface
+      %foreach idx = ::CompiledModel.NumCoderDataGroups
+        %assign group = ::CompiledModel.CoderDataGroup[idx]
+        %if !LibCoderDataGroupStructIsEmpty(group) && ...
+          !group.IsOpaque && ...
+          (!SLibIsGroupSelfCoderGroup(group)) && ...
+          SLibAccessViaPointerInSelf(group)
+          %assign dstptr = SLibGetCoderDataGroupPointerFromRTM(group, 0)
+          %assign tmpHasSimStructVars = ::CompiledModel.HasSimStructVars
+          %assign ::CompiledModel.HasSimStructVars = TLC_FALSE
+          %assign srcptr = "&" + LibGetCoderDataGroupStruct(group)
+          %assign ::CompiledModel.HasSimStructVars = tmpHasSimStructVars
+          %<dstptr> = %<srcptr>;
+        %endif
+      %endforeach
+      %if !ISEMPTY(::CompiledModel.CoderDataGroups)  
+        %assign instanceIdx = 1
+        %foreach idx = SIZE(::CompiledModel.CoderDataGroups.CoderDataGroup, 1)
+          %assign group = ::CompiledModel.CoderDataGroups.CoderDataGroup[idx]
+          %if (group.AsStructure == "Standalone") && ...
+            group.IsInstanceSpecific && !group.SingleInstMdlRef
+            %assign dstptr = group.PointerPath
+            %assign srcptr = "&" + group.Name + "_" + STRING(instanceIdx)
+            %<dstptr> = %<srcptr>;
+            %assign instanceIdx = instanceIdx + 1
+          %endif
+        %endforeach  
+      %endif
+    %endif
+  %endif
+  %if !reqInsts.ContStatesInst && !LibContStatesInstanceIsEmpty() && ...
+    !GenerateClassInterface
+    %<SLibGetContStatesPointerFromRTM(0)> = &%<LibGetContinuousStateStruct()>;
+  %endif
+  %if !reqInsts.PeriodicContStatesInst && !LibPeriodicContStatesInstanceIsEmpty() && ...
+    !GenerateClassInterface
+    %<SLibGetPeriodicStateIndicesPtrFromRTM(0)> = %<LibGetPeriodicContStateIndices()>;
+    %<SLibGetPeriodicStateRangesPtrFromRTM(0)> = %<LibGetPeriodicContStateRanges()>;
+  %endif
+  %if !reqInsts.PrevZCStatesInst && !LibPrevZCStatesInstanceIsEmpty() && ...
+    !GenerateClassInterface && !SLibGetUseRTMcgType()
+    %<SLibGetPreviousZCStructFromRTM(0)> = &%<LibGetPreviousZCStruct()>;
+  %endif
+  %if ::CompiledModel.RootIOFormat == "Part of model data structure" 
+    %if !reqInsts.ExtInpsInst && !LibExternalInputsInstanceIsEmpty() &&...
+      !GenerateClassInterface
+       %<RTMGet("U")> = &%<LibGetExternalInputStruct()>;
+    %endif
+    %if !reqInsts.ExtOutputsInst && !LibExternalOutputsInstanceIsEmpty() && ...
+      !GenerateClassInterface
+      %<RTMGet("Y")> = &%<LibGetExternalOutputStruct()>;
+    %endif
+  %endif
+  
+%endfunction  
+
+%function SLibDumpUnusedParameterForRTM(fcnName) Output
+  
+  %if MultiInstanceERTCode && !GenerateClassInterface && ...
+    SLibIsRTMUnusedForBlockFcn(rootSystem,fcnName)
+    %<SLibUnusedParameter(::tSimStruct)>
+  %endif
+  
+%endfunction
+
+%function SLibDumpUnusedParameterForInstanceHandle(fcnName) Output
+  
+  %if SLibAutosarActive() && MultiInstanceERTCode && ...
+    SLibIsInstanceHandleUnusedForBlockFcn(rootSystem,fcnName)
+    %<SLibUnusedParameter(FcnGetInstanceHandleName())>
+  %endif
+  
+%endfunction
+
+
+%% Function: SLibErtSfunction ==================================================
+%% Abstract:
+%%   ertwide.tlc remnant.  Performs error checking an initial setup for
+%%   Embedded-C code format
+%%
+%function SLibErtSfunction() void
+  %assert(!IsModelReferenceTarget())
+
+  %% ===========================================================================
+  %% Optionally create timing_engine.h
+  %%
+  %if AutoBuildProcedure && !GenerateGRTWrapper
+    %include "ertautobuild.tlc"
+  %endif
+
+  %% ===========================================================================
+  %% Optionally create S-Function wrapper for ERT-C-Code
+  %%
+  %if GenerateErtSFunction == 1
+    %assert(!SLibAutosarActive())
+    %include "ertsfcnbody.tlc"
+  %endif
+%endfunction %% SLibErtSfunction
+
+
+%% Function: SLibGenERTPrivateRTMMacros =================================
+%% Abstract:
+%%
+%function SLibGenERTPrivateRTMMacros() void
+  %if GenRTModel
+    %openfile tmpBuf
+    %<RTMGenMacroDefines("PRIVATE")>
+    %closefile tmpBuf
+    %openfile tmpDefBuf
+    %if !WHITE_SPACE(tmpBuf)
+      /* Private macros used by the generated code to access rtModel */
+      %<tmpBuf>
+    %endif
+    %closefile tmpDefBuf
+    %<SLibCacheCodeToFile("mdl_priv_macro_define", tmpDefBuf)>
+  %endif
+%endfunction
+
+%% Function: SLibGenErtFunctionName =============================
+%%
+%%
+%function SLibGenErtFunctionName(tid, fcnType)
+  %if SLibAutosarActive() && !SLibSingleTasking()
+    %return SLibModelStepFcnName(tid)
+  %elseif fcnType == "step"
+    %if TYPE(tid) == "Number" && tid < NumRuntimeExportedRates
+      %assign fcnName = SLibModelStepFcnName(tid)
+    %else
+      %assign fcnName = SLibModelStepFcnName("")
+    %endif
+  %elseif fcnType == "output"
+    %if TYPE(tid) == "Number" && tid < NumRuntimeExportedRates
+      %assign fcnName = FcnGetModelOutputFcnNameFromCoderDictionary(tid)
+    %else
+      %assign fcnName = FcnGetModelOutputFcnNameFromCoderDictionary("")
+    %endif
+  %elseif fcnType == "update"
+    %if TYPE(tid) == "Number" && tid < NumRuntimeExportedRates
+      %assign fcnName = FcnGetModelUpdateFcnNameFromCoderDictionary(tid)
+    %else
+      %assign fcnName = FcnGetModelUpdateFcnNameFromCoderDictionary("")
+    %endif
+  %else
+    %assign fcnName = "%<Name>_%<fcnType>"
+    %if TYPE(tid) == "Number" && tid < NumRuntimeExportedRates
+      %assign fcnName = "%<fcnName>%<tid>"
+    %endif
+  %endif
+  %return fcnName
+%endfunction
+
+%% Function: FcnGetModelOutputFcnNameFromCoderDictionary =======================
+%%   Get output function name from coder dictionary
+%%
+%function FcnGetModelOutputFcnNameFromCoderDictionary(tid) void
+  %assert CombineOutputUpdateFcns==TLC_FALSE  
+  %assign fcnName = ""
+
+  %if CGMODEL_ACCESS("CGModel.isModelEntryFunctionPresent","Output")
+    %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+      %assign fcnName = CGMODEL_ACCESS("CGModel.getModelEntryFunctionName","Output", "%<tid>")
+    %else
+      %% Append TID to base name (Needed for Bosch feature flag)
+      %assign fcnName = CGMODEL_ACCESS("CGModel.getModelEntryFunctionName","Output", "%<tid>")+"%<tid>"
+    %endif
+  %else
+    %assign fcnName = "%<Name>_output%<tid>"
+  %endif
+  %return fcnName 
+%endfunction
+
+%% Function: FcnGetModelUpdateFcnNameFromCoderDictionary =======================
+%%   Get update function name from coder dictionary
+%%
+%function FcnGetModelUpdateFcnNameFromCoderDictionary(tid) void
+  %assert CombineOutputUpdateFcns==TLC_FALSE  
+  %assign fcnName = ""
+  
+  %if CGMODEL_ACCESS("CGModel.isModelEntryFunctionPresent","Update")
+    %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+      %assign fcnName = CGMODEL_ACCESS("CGModel.getModelEntryFunctionName","Update", "%<tid>")
+    %else
+      %% Append TID to base name (Needed for Bosch feature flag)
+      %assign fcnName = CGMODEL_ACCESS("CGModel.getModelEntryFunctionName","Update", "%<tid>")+"%<tid>"
+    %endif
+  %else
+    %assign fcnName = "%<Name>_update%<tid>"
+  %endif
+    
+  %return fcnName   
+%endfunction
+
+%function SLibIsERTFunctionStatic() void
+  %return  GenerateGRTWrapper && !ExtMode && NumContStates == 0
+%endfunction
+
+%% Function: SLibGenErtFunctionType =============================
+%%
+%%
+%function SLibGenErtFunctionType(swAddrName) void
+  %if SLibFcnProtoCtrlActive()
+    %assign fcnData = FcnGetFunctionPrototypeRecord()
+    %assign returnType = FcnModelStepFcnReturnCode(fcnData, "ReturnType")
+  %elseif GenerateClassInterface
+    %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+    %assign returnType = FcnModelStepFcnReturnCode(classConfObj, "ReturnType")
+  %else
+    %assign returnType = "void"
+  %endif
+  %if SLibIsERTFunctionStatic()
+    %return "static %<returnType>"
+  %elseif SLibAutosarCompilerAbstractionRequired()
+    %return SLibAutosarCompilerAbstractionForFcnDeclRtnType(returnType, "FuncCalledByRTE", swAddrName)
+  %else
+    %return returnType
+  %endif
+%endfunction
+
+%function SLibNeedExternRootSysRateGroupingFcn()
+  %assign retValue = TLC_FALSE
+  
+  %if SLibIsERTCodeFormat() && SLibIsPeriodicRateGrouping()
+    %assign retValue = (GenerateSampleERTMain || RateBasedStepFcn) && ...
+      (!SLibGenerateNativeThreads())
+  %endif
+  
+  %return retValue
+%endfunction
+
+%function SLibNeedDumpRootSysPrototypeInPrivateHeader(fcnType,tid)
+  %assign rootSys =  System[NumSystems-1]
+  %assign rateGrouping = (TYPE(tid) == "Number") && ...
+    SLibSystemFcnPeriodicRateGrouping(rootSys,fcnType)
+  
+  %if rateGrouping
+    %return !SLibNeedExternRootSysRateGroupingFcn() && ...
+      !SLibIsERTFunctionStatic() && !GenerateClassInterface
+  %else
+    %% Non rate grouping fcn prototypes of root system are 
+    %% dumped in model.h. Don't need dump in private.h
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+
+%% blkStateChangeFlag may be set, need to run one more minor step
+%%
+%function SLibDumpOneMoreMinorOutput(fcnName, fcnArgType, tid)
+  %openfile tempBuf
+  %if ::CompiledModel.ModelBlocksUseContTimeOutputInconsistentWithStateAtMajorStep || ISFIELD(::CompiledModel, "HasContTimeOutputInconsistentWithStateAtMajorStep") 
+    %if (ISEQUAL(tid,0) || ISEQUAL(tid, "")) && (NumContStates > 0)
+      /* ContTimeOutputInconsistentWithStateAtMajorOutputFlag is set, need to run a minor output */ 
+      if (%<RTMIs("MajorTimeStep")>) {
+        if (%<RTMGetContTimeOutputInconsistentWithStateAtMajorStep()>) {
+          rtsiSetSimTimeStep(%<RTMGetSolverInfo()>,MINOR_TIME_STEP);  
+          %<RTMClearContTimeOutputInconsistentWithStateAtMajorStep()>;
+          %<fcnName>(%<SLibModelFcnArgs(fcnArgType,2, 0)>);                            
+          rtsiSetSimTimeStep(%<RTMGetSolverInfo()>, MAJOR_TIME_STEP);
+        }    
+      }
+    %endif
+  %endif
+  %closefile tempBuf
+  %return tempBuf
+%endfunction
+
+    
+%% Function: SLibGenErtOutputFunction ====================================
+%% Description:
+%%    TYPE(tid) ==  number, generate rate grouping code
+%%         tid >=0 and tid < NumRuntimeExportedRates :
+%%                          generate code for tid, %<mdlName>_output%<tid>
+%%         tid == NumRuntimeExportedRates :
+%%                          generate main function wrapper %<mdlName>_output calling
+%%                          all rate grouped function  %<mdlName>_output%<tid>
+%%    tid == "", generate non rate grouping code, %<mdlName>_output
+%%
+%function SLibGenErtOutputFunction(tid)
+  %assign rootSystem = System[NumSystems-1]
+  %assign mdlName    = Name
+  %assign buffsRec   = ::CompiledModel.CachedCodeBuffsForRootSys
+  %assign isPeriodicRateGrouping = SLibIsMultiRateAndPeriodicRateGrouping(rootSystem)
+  %assign fcnName    = SLibGenErtFunctionName(tid, "output")
+  %assign fcnReturns    = SLibGenErtFunctionType("")
+  
+  %assign isLastTID = ISEQUAL(tid, NumRuntimeExportedRates)
+  %if SLibEntryFcnNameExists()
+    %assign isLastTID = ISEQUAL(tid, NumSampleTimes)
+  %endif
+  %if isLastTID
+    %assign fcnAbstract = "Model output wrapper function for compatibility with a static main program"
+    %assign rootSystem.CurrentTID = ""
+    %<LibSetGlobalSysFcnsForArgAccess("WrapperFcn")>
+    %openfile tmpBuffer    
+    %assign fcnParams = GetErtModelFcnArgs("Output",TLC_FALSE,"")
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "model"; GeneratedBy "ertlib.tlc"; Type "Output"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<addToBackupCodeMetrics(rootSystem, "Outputs", fcnName, tid)>
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+    %<fcnReturns> %<fcnName>(%<fcnParams>) {
+
+      %% Profiler declaration code
+      %<SLibGenProfSysDeclare(rootSystem, "Output")>
+
+      %% Profiler start code
+      %<SLibGenProfSysStart(rootSystem, "Output")>
+
+      %% If concurrent tasks, tid is the task index, and generates code like:
+      %% switch (tid) case 0: ...
+      %%              case 1: ...
+      %%              case 2: ...
+      %% Otherwise, tid is the sample time index, and generates code like:
+      %% switch (tid) case 0: ...  %% if TID01EQ, skips case 1
+      %%              case 2: ... 
+      %%              case 3: ...   
+      switch(%<::CompiledModel.GlobalScope.tTID>) {
+	%foreach tidIdx = NumRuntimeExportedRates
+          %if (FixedStepOpts.TID01EQ && tidIdx == 1 && !SLibConcurrentTasks()) ...
+            || (ISEQUAL(tidIdx, NumRuntimeExportedRates -1) && ...
+            SLibConcurrentTasks() && FixedStepOpts.TID01EQ)
+            %continue
+	  %endif
+	  case %<tidIdx> :  
+          %if !SLibConcurrentTasks() || !(FixedStepOpts.TID01EQ && tidIdx>0)
+            %assign aCurrentTID = tidIdx
+          %else
+            %assign aCurrentTID = tidIdx + 1
+          %endif 
+          %assign modelOutputFcnName = SLibGenErtFunctionName(aCurrentTID, "output")
+          %assign rootSystem.CurrentTID = aCurrentTID
+          %if !ISEQUAL(::CompiledModel.ConfigSet.CodeProfilingInstrumentation, "off")
+            %assign profSectionIdx = SLibProfilerGetSectionIdx(modelOutputFcnName)
+            %<SLibProfilerSystemStart(rootSystem, profSectionIdx)>
+          %endif
+          %<modelOutputFcnName>(%<GetErtModelFcnArgs("Output",2,aCurrentTID)>);
+          %if !ISEQUAL(::CompiledModel.ConfigSet.CodeProfilingInstrumentation, "off")
+            %<SLibProfilerSystemFinish(rootSystem, profSectionIdx)>
+          %endif
+          break;
+        %endforeach
+	default :
+	break;
+      }
+      %% Profiler finish code
+      %<SLibGenProfSysEnd(rootSystem, "Output")>
+     }
+     %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %closefile tmpBuffer
+    %<LibSetGlobalSysFcnsForArgAccess("")>
+    %assign rootSystem.CurrentTID = -1
+    %return(tmpBuffer)
+  %else
+    %assign  rootSystem.CurrentTID = tid
+    %with rootSystem
+    %assign needMajorTimeGuard = NumContStates > 0
+    %openfile tmpBuffer
+    %if !isPeriodicRateGrouping
+      %assign fcnAbstract = "Model output function"
+    %else
+      %assign fcnAbstract = "Model output function for TID%<tid>"
+    %endif
+    %assign ::BlockFcn = "Output"
+    %assign timingCodeBuf = ""
+    %if !(EXISTS("ExcludeSolverCode") && ExcludeSolverCode == TLC_TRUE)
+      %assign timingCodeBuf= ...
+        ErtOrModelrefGetTimingForTopOfOutputFcn(rootSystem, tid)
+    %endif
+    %openfile fcnProtoType
+    %assign fcnParams = SLibModelFcnArgs("Output",TLC_FALSE,tid)
+    %<fcnReturns> %<fcnName>(%<fcnParams>)\
+    %closefile fcnProtoType
+    %if SLibNeedDumpRootSysPrototypeInPrivateHeader("Output", tid)
+      %<LibAddToSystemField(rootSystem, "SystemFcnPrototype","%<fcnProtoType>;")>
+    %endif
+    %openfile outputCode
+    %<SLibDumpLocalTidInSystem(rootSystem, "Output")>
+    %if (!ISEQUAL(tid, 0) || ISEQUAL(tid, "")) && ...
+      LibSystemFcnIsEmptyForTID(rootSystem,"Output") && ...
+      WHITE_SPACE(timingCodeBuf)
+      /* (no output code required) */
+
+      %% Profiler start code
+      %<SLibGenProfSysStart(rootSystem, "Output")>
+      
+    %else
+      %<LibGetSystemLocalVars(rootSystem, "Output", tid)>
+      %<SLibGetFcnLocalVars(rootSystem, "Output", tid)>
+
+      %% Profiler start code
+      %<SLibGenProfSysStart(rootSystem, "Output")>
+
+      %<LibDumpSystemUserCode(rootSystem,"Output","Header")>\
+      %if !WHITE_SPACE(timingCodeBuf)
+        
+        %<timingCodeBuf>      
+      %endif
+     
+      %<LibDumpSystemUserCode(rootSystem,"Output","Body")>\
+      %<LibDumpSystemFcn(rootSystem,"Output%<tid>")>\
+      %<LibDumpSystemUserCode(rootSystem,"Output","Trailer")>\
+    %endif
+    %%
+    %<FcnHandlesUnusedTIDArg(rootSystem, "Output")>
+    %%
+    %closefile outputCode
+    %if WHITE_SPACE(outputCode)
+      %assign outputCode = "/* (no output code required) */"
+    %endif
+    %openfile fcnContent
+
+    %% Profiler declaration code
+    %<SLibGenProfSysDeclare(rootSystem, "Output")>
+    
+    %<outputCode>
+    
+    %% Profiler finish code
+    %<SLibGenProfSysEnd(rootSystem, "Output")>
+
+    %closefile fcnContent
+    
+    %openfile localVariables
+    %if MultiInstanceERTCode && !GenerateClassInterface
+      %<SLibDumpLocalVariablesForBlockFcn(rootSystem,"Output")>
+    %endif
+    %closefile localVariables
+          
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "model"; GeneratedBy "ertlib.tlc"; Type "Output"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<addToBackupCodeMetrics(rootSystem, "Outputs", fcnName, tid)>
+    %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+      %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Output", tid,  "Pre")>\
+    %else
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+    %endif
+    %<fcnProtoType> %<LibTaskComment(tid)>
+    {
+      %if !WHITE_SPACE(localVariables)
+        %<localVariables>
+      %endif
+      %<fcnContent>
+      
+      %if SLibAutosarActive()
+        %<SLibDumpUnusedParameterForInstanceHandle("Output")>        
+      %else
+        %<SLibDumpUnusedParameterForRTM("Output")>
+      %endif
+    }
+    %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+      %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Output", tid,  "Post")>\
+    %else
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %endif
+    %closefile tmpBuffer
+    %assign rootSystem.CurrentTID = -1
+    %endwith
+    %return(tmpBuffer)
+  %endif
+%endfunction %% SLibGenErtOutputFunction(tid)
+
+%% Function: SLibGenErtUpdateFunction ====================================
+%% Description:
+%%    TYPE(tid) ==  number, generate rate grouping code
+%%         tid >=0 and tid < NumRuntimeExportedRates :
+%%                          generate code for tid, %<mdlName>_update%<tid>
+%%         tid == NumRuntimeExportedRates :
+%%                          generate main function wrapper %<mdlName>_update calling
+%%                          all rate grouped function  %<mdlName>_update%<tid>
+%%    tid == "", generate non rate grouping code, %<mdlName>_update
+%%
+%% Function: SLibGenErtUpdateFunction ======================================
+%function SLibGenErtUpdateFunction(tid)
+  %assign rootSystem = System[NumSystems-1]
+  %assign mdlName    = Name
+  %assign buffsRec   = ::CompiledModel.CachedCodeBuffsForRootSys
+  %assign isPeriodicRateGrouping = SLibSystemFcnPeriodicRateGrouping(rootSystem, "Update")
+  %assign fcnName    = SLibGenErtFunctionName(tid, "update")
+  %assign fcnReturns = SLibGenErtFunctionType("")
+
+  %assign isLastTID = ISEQUAL(tid, NumRuntimeExportedRates)
+  %if SLibEntryFcnNameExists()
+    %assign isLastTID = ISEQUAL(tid, NumSampleTimes)
+  %endif
+  %if isLastTID
+    %assign fcnAbstract = "Model update wrapper function for compatibility with a static main program"
+    %assign rootSystem.CurrentTID = ""
+    %openfile tmpBuffer
+    %assign fcnParams = GetErtModelFcnArgs("Update",TLC_FALSE,"")
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "model"; GeneratedBy "ertlib.tlc"; Type "Update"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<addToBackupCodeMetrics(rootSystem, "Update", fcnName, tid)>
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+    %<fcnReturns> %<fcnName>(%<fcnParams>) {
+
+      %% Profiler declaration code
+      %<SLibGenProfSysDeclare(rootSystem, "Update")>
+
+      %% Profiler start code
+      %<SLibGenProfSysStart(rootSystem, "Update")>
+      
+      %% If concurrent tasks, tid is the task index, and generates code like:
+      %% switch (tid) case 0: ...
+      %%              case 1: ...
+      %%              case 2: ...
+      %% Otherwise, tid is the sample time index, and generates code like:
+      %% switch (tid) case 0: ...  %% if TID01EQ, skips case 1
+      %%              case 2: ... 
+      %%              case 3: ...
+      switch(%<::CompiledModel.GlobalScope.tTID>) {
+        %foreach tidIdx = NumRuntimeExportedRates
+          %if (FixedStepOpts.TID01EQ && tidIdx == 1 && !SLibConcurrentTasks()) ...
+            || (ISEQUAL(tidIdx, NumRuntimeExportedRates -1) && ...
+            SLibConcurrentTasks() && FixedStepOpts.TID01EQ)
+            %continue
+          %endif
+          case %<tidIdx> :
+          %if !SLibConcurrentTasks() || !(FixedStepOpts.TID01EQ && tidIdx>0)
+            %assign aCurrentTID = tidIdx
+          %else
+            %assign aCurrentTID = tidIdx + 1
+          %endif 
+          %assign modelUpdateFcnName = SLibGenErtFunctionName(aCurrentTID, "update")
+          %assign rootSystem.CurrentTID = aCurrentTID
+          %if !ISEQUAL(::CompiledModel.ConfigSet.CodeProfilingInstrumentation, "off")
+            %assign profSectionIdx = SLibProfilerGetSectionIdx(modelUpdateFcnName)
+            %<SLibProfilerSystemStart(rootSystem, profSectionIdx)>
+          %endif
+          %<modelUpdateFcnName>(%<GetErtModelFcnArgs("Update",2,aCurrentTID)>);
+          %if !ISEQUAL(::CompiledModel.ConfigSet.CodeProfilingInstrumentation, "off")
+            %<SLibProfilerSystemFinish(rootSystem, profSectionIdx)>
+          %endif
+          break;
+        %endforeach
+        default :
+        break;
+      }
+
+      %% Profiler finish code
+      %<SLibGenProfSysEnd(rootSystem, "Update")>
+    }
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %closefile tmpBuffer
+    %assign rootSystem.CurrentTID = -1
+    %return(tmpBuffer)
+  %else
+    %assign recursivefcnName    =  SLibGenErtFunctionName(tid, "output")
+    %with rootSystem
+    %assign rootSystem.CurrentTID = tid
+    %assign continuousUpdate = ...
+        (ISEQUAL(tid,0) || ISEQUAL(tid, "")) && (NumContStates > 0)
+    %openfile tmpBuffer
+    %if !isPeriodicRateGrouping
+      %assign fcnAbstract = "Model update function"
+    %else
+      %assign fcnAbstract = "Model update function for TID%<tid>"
+    %endif
+    %openfile fcnProtoType
+    %if continuousUpdate
+      %assign fcnParams = SLibModelFcnArgs("UpdateContStates",TLC_FALSE,tid)
+    %else
+      %assign fcnParams = SLibModelFcnArgs("RootUpdate",TLC_FALSE,tid)
+    %endif
+    %<fcnReturns> %<fcnName>(%<fcnParams>)\
+    %closefile fcnProtoType
+    %if SLibNeedDumpRootSysPrototypeInPrivateHeader("Update", tid)
+      %<LibAddToSystemField(rootSystem, "SystemFcnPrototype","%<fcnProtoType>;")>
+    %endif
+    %openfile updateCode 
+    %<SLibDumpLocalTidInSystem(rootSystem, "Update")>
+    %<LibGetSystemLocalVars(rootSystem,"Update",tid)>
+    %<SLibGetFcnLocalVars(rootSystem,"Update",tid)>
+    %<LibDumpSystemUserCode(rootSystem,"Update","Header")>\
+    %<LibDumpSystemUserCode(rootSystem,"Update","Body")>\    
+    %<LibDumpSystemFcn(rootSystem,"Update%<tid>")>\
+    %% blkStateChangeFlag may be set, need to run one more minor step
+    %% 
+    %<SLibDumpOneMoreMinorOutput(recursivefcnName, "Output", tid)>\
+    %<LibDumpSystemUserCode(rootSystem,"Update","Trailer")>\
+    %if !(EXISTS("ExcludeSolverCode") && ExcludeSolverCode == TLC_TRUE)
+      %<ErtOrModelrefGetTimingForBottomOfUpdateFcn(rootSystem, tid, TLC_TRUE)>
+    %endif
+    %<FcnHandlesUnusedTIDArg(rootSystem, "Update")>
+    %closefile updateCode
+    %%
+    %if WHITE_SPACE(updateCode)
+      %assign updateCode = "/* (no update code required) */"
+    %endif
+    %%
+    %openfile fcnContent
+
+    %% Profiler declaration code
+    %<SLibGenProfSysDeclare(rootSystem, "Update")>
+    
+    %% Profiler start code
+    %<SLibGenProfSysStart(rootSystem, "Update")>
+    
+    %<updateCode>
+    
+    %% Profiler finish code
+    %<SLibGenProfSysEnd(rootSystem, "Update")>
+    
+    %closefile fcnContent
+    
+    %assign unusedParamCode = ""
+    %openfile localVariables
+    %if MultiInstanceERTCode && !GenerateClassInterface
+      %if continuousUpdate
+        %assign blkFcn = "UpdateContStates"
+      %else
+        %assign blkFcn = "RootUpdate"
+      %endif
+      %if SLibAutosarActive()
+        %assign unusedParamCode = SLibDumpUnusedParameterForInstanceHandle(blkFcn)
+      %else
+        %assign unusedParamCode = SLibDumpUnusedParameterForRTM(blkFcn)
+      %endif
+      %<SLibDumpLocalVariablesForBlockFcn(rootSystem,blkFcn)>
+    %endif
+    %closefile localVariables
+    
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "model"; GeneratedBy "ertlib.tlc"; Type "Update"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<addToBackupCodeMetrics(rootSystem, "Update", fcnName, tid)>
+    %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+      %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Update", tid,  "Pre")>\
+    %else
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+    %endif
+    %<fcnProtoType> %<LibTaskComment(tid)>
+    {
+      %if !WHITE_SPACE(localVariables)
+        %<localVariables>
+      %endif
+      %<fcnContent>
+      
+      %<unusedParamCode>
+    }
+    %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+      %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Update", tid,  "Post")>\
+    %else
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %endif
+    %if continuousUpdate
+      %% generate root system Derivative function
+      %<SLibGetBodyDerivativeFcnCache(rootSystem)>
+    %endif
+    %closefile tmpBuffer
+    %assign rootSystem.CurrentTID = -1
+    %endwith
+    %return tmpBuffer
+  %endif
+%endfunction %% SLibGenErtUpdateFunction(tid)
+
+%function SLibGenExporFunctionName(tid) 
+  %if TYPE(tid) == "Number"
+    %% Currently, exported function name is store in ExternalInputs. 
+    %% Classic exported functions use root inport to define export function
+    %% name. 
+    %%
+    %% Need revisit the following code when Task object include entry function 
+    %% prototype information. Customer should be able to specify entry function 
+    %% name when create a task. xxx byu xxx
+    %% 
+    %foreach idx = ExternalInputs.NumExternalInputs
+      %assign externalInput = ExternalInputs.ExternalInput[idx]
+      %if externalInput.FunctionCallInitiator == "yes" && ...
+        externalInput.TID == tid
+        %if ISFIELD(externalInput,"AsyncOutputUpdateFcn")
+        %return externalInput.AsyncOutputUpdateFcn
+        %elseif ISFIELD(SampleTime[tid],"TaskName")
+          %return SampleTime[tid].TaskName
+        %endif
+      %endif
+    %endforeach
+    %if SLibExplicitTaskingTID(tid) && SampleTime[tid].Asynchronous == "yes" || ...
+      SLibResetOrResetWithInitEventTID(tid)
+
+      %if ISFIELD(SampleTime[tid],"EntryFcnName")
+        %return "%<SampleTime[tid].EntryFcnName>"
+      %endif
+    %else
+      %if ISFIELD(SampleTime[tid],"TaskName")
+        %return "%<::CompiledModel.Name>_export_%<SampleTime[tid].TaskName>"
+      %endif
+    %endif
+  %endif
+  %return ""
+%endfunction
+
+%% Function: SLibGenErtOutputUpdateFunction =====================================
+%% Description:
+%%    TYPE(tid) ==  number, generate rate grouping code
+%%         tid >=0 and tid < NumRuntimeExportedRates :
+%%                          generate code for tid, %<mdlName>_step%<tid>
+%%         tid == NumRuntimeExportedRates :
+%%                          generate main function wrapper %<mdlName>_step calling
+%%                          all rate grouped function  %<mdlName>_step%<tid>
+%%    tid == "", generate non rate grouping code, %<mdlName>_step
+%%
+%function SLibGenErtOutputUpdateFunction(tid)
+  
+  
+  %assign tmpBlockFcn = ::BlockFcn
+  %assign ::BlockFcn = "OutputUpdate"  
+  %assign rootSystem = System[NumSystems-1]
+  %assign mdlName    = Name
+  %assign buffsRec = ::CompiledModel.CachedCodeBuffsForRootSys
+  %assign isPeriodicRateGrouping = SLibSystemFcnPeriodicRateGrouping(rootSystem, "OutputUpdate")
+  %assign isExportFcnRateGrouping = TLC_FALSE
+  
+  
+  %assign isLastTID = ISEQUAL(tid, NumRuntimeExportedRates)
+  %if SLibEntryFcnNameExists()
+    %assign isLastTID = ISEQUAL(tid, NumSampleTimes)
+  %endif
+  %if !isLastTID
+     %assign isExportFcnRateGrouping = SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate", tid)
+  %endif
+  
+  %if !GenerateClassInterface
+    %if isExportFcnRateGrouping || SLibIsExportFcnDiagram()
+      %assign fcnName  = SLibGenExporFunctionName(tid)      
+      %% skip init event, because we use model initialize function as the init
+      %% code.      
+      %if WHITE_SPACE(fcnName) || ...
+        (ISFIELD(SampleTime[tid], "EventSourceType") && ...
+         SampleTime[tid].EventSourceType == "PowerUpEvent")
+        %return ""
+      %endif
+    %else
+      %assign fcnName    = SLibGenErtFunctionName(tid, "step")
+    %endif
+  %else
+    %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+    %if SLibSingleTasking() && !isExportFcnRateGrouping
+      %if ISFIELD(classConfObj,"FunctionName")
+        %assign fcnName =   "%<classConfObj.ModelClassName>::%<classConfObj.FunctionName>" 
+      %elseif SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate",tid)
+        %assign fcnName =   classConfObj.ModelClassName+"::"+SampleTime[tid].EntryFcnName
+      %else
+        %return ""
+      %endif
+    %else %%MR/MT, must be void-void case
+      %if SLibIsExportFcnDiagram() && !SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate",tid)
+        %return ""
+      %endif
+      %if isLastTID
+        %% Switchyard wrapper function name in rtmodel.cpp for static main
+        %assign fcnName =   SLibModelStepFcnName("")
+      %else
+        %if isExportFcnRateGrouping
+          %assign tskID = %<tid>
+          %assign fcnName =   "%<classConfObj.ModelClassName>::%<::CompiledModel.SampleTime[tskID].EntryFcnName>"
+        %elseif ISFIELD(classConfObj,"FunctionName")
+          %assign fcnName =   "%<classConfObj.ModelClassName>::%<classConfObj.FunctionName>%<tid>"
+        %endif
+      %endif
+    %endif
+  %endif
+  %assign swAddrName = ""
+  %if SLibAutosarCompilerAbstractionRequired()
+    %if SLibIsRateGroupedSLFcn(rootSystem, "OutputUpdate", tid) 
+      %% Simulink Function
+      %assign slFcnName = SLibGetRateGroupedSimulinkFunctionName(rootSystem, "OutputUpdate", tid)
+      %assign swAddrName = SLibGetFcnMemSecUUIDForFunction("SimulinkFunction", slFcnName)
+    %elseif SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate", tid)
+      %% Export function & Async function
+      %assign fcnCallInportBlockName = FEVAL("regexprep", ...
+        SampleTime[tid].TaskName, ".*\/", "")
+      %assign swAddrName = SLibGetFcnMemSecUUIDForFunction("FcnCallInport", fcnCallInportBlockName)
+    %else
+      %% Step function
+      %assign swAddrName = SLibGetFcnMemSecUUIDForFunction("Step", tid)
+    %endif
+  %endif
+  %assign fcnReturns  = SLibGenErtFunctionType(swAddrName)
+
+  %if isLastTID
+    %assign fcnAbstract = "Model step wrapper function for compatibility with a static main program"
+    %assign rootSystem.CurrentTID = ""
+    %openfile tmpBuffer
+    %assign fcnParams = GetErtModelFcnArgs("OutputUpdate",TLC_FALSE,"")
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "model"; GeneratedBy "ertlib.tlc:SLibGenErtOutputUpdateFunction"; ...
+      Type "Output and update"; GeneratedFor FcnGeneratedFor(rootSystem)}
+    %if SLibNeedWrapperStepFcn()==2 && GenerateClassInterface && !ISEMPTY(::NamespaceName)
+      %% Generate switchyard step function in namespace scope
+      namespace %<::NamespaceName> {
+    %endif
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %<addToBackupCodeMetrics(rootSystem, "Outputs", fcnName, tid)>
+    %undef fcnRec
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+    %<fcnReturns> %<fcnName>(%<fcnParams>) {
+
+      %% Profiler declaration code
+      %<SLibGenProfSysDeclare(rootSystem, "OutputUpdate")>
+
+      %% Profiler start code
+      %<SLibGenProfSysStart(rootSystem, "OutputUpdate")>
+      
+      %% If concurrent tasks, tid is the task index, and generates code like:
+      %% switch (tid) case 0: ...
+      %%              case 1: ...
+      %%              case 2: ...
+      %% Otherwise, tid is the sample time index, and generates code like:
+      %% switch (tid) case 0: ...  %% if TID01EQ, skips case 1
+      %%              case 2: ... 
+      %%              case 3: ...
+        
+      switch(%<::CompiledModel.GlobalScope.tTID>) {
+	%foreach tidIdx = NumRuntimeExportedRates
+	  %if (FixedStepOpts.TID01EQ && tidIdx == 1 && !SLibConcurrentTasks()) || ...
+            (ISEQUAL(tidIdx, NumRuntimeExportedRates -1) && SLibConcurrentTasks()...
+            && FixedStepOpts.TID01EQ)
+	    %continue
+	  %endif
+	  case %<tidIdx> :
+          %if !SLibConcurrentTasks() || !(FixedStepOpts.TID01EQ && tidIdx>0)
+            %assign aCurrentTID = tidIdx
+            %assign modelStepFcnName = SLibModelStepFcnName(tidIdx)
+          %else
+            %assign aCurrentTID = tidIdx + 1
+            %assign modelStepFcnName = SLibModelStepFcnName(tidIdx+1)
+          %endif
+          %assign rootSystem.CurrentTID = aCurrentTID
+          %if !ISEQUAL(::CompiledModel.ConfigSet.CodeProfilingInstrumentation, "off")
+            %assign profSectionIdx = SLibProfilerGetSectionIdx(modelStepFcnName)
+            %<SLibProfilerSystemStart(rootSystem, profSectionIdx)>
+          %endif
+          %<modelStepFcnName>(%<GetErtModelFcnArgs("OutputUpdate",2,aCurrentTID)>);
+          %if !ISEQUAL(::CompiledModel.ConfigSet.CodeProfilingInstrumentation, "off")
+            %<SLibProfilerSystemFinish(rootSystem, profSectionIdx)>
+          %endif
+          break;
+	%endforeach
+	default :
+	break;
+      }
+      %% Profiler finish code
+      %<SLibGenProfSysEnd(rootSystem, "OutputUpdate")>
+    }
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %if SLibNeedWrapperStepFcn()==2 && GenerateClassInterface && !ISEMPTY(::NamespaceName)
+      %% close namespace scope
+      }
+    %endif
+    %closefile tmpBuffer
+    %assign rootSystem.CurrentTID = -1
+    %return(tmpBuffer)
+  %else
+    %with rootSystem
+    %assign rootSystem.CurrentTID = tid
+    %assign needMajorTimeGuard = (NumContStates > 0)
+    %assign continuousUpdate = ...
+          (ISEQUAL(tid,0) || ISEQUAL(tid, "")) && (NumContStates > 0)
+    %openfile tmpBuffer
+    %if !isPeriodicRateGrouping
+      %assign fcnAbstract = "Model step function"
+    %else
+      %if isExportFcnRateGrouping && LibAsynchronousTriggeredTID(tid)
+        %assign fcnAbstract = "Output function"
+      %else
+      %assign fcnAbstract = "Model step function for TID%<tid>"
+    %endif
+    %endif
+    %assign timingCodeBuf = ""
+    %if !(EXISTS("ExcludeSolverCode") && ExcludeSolverCode == TLC_TRUE)
+      %if isExportFcnRateGrouping && LibAsynchronousTriggeredTID(tid)
+        %assign timingCodeBuf = ...
+          FcnGenerateTimeManagementForAsyncTs("Outputs", tid,"top")
+      %else
+        %assign timingCodeBuf = ...
+          ErtOrModelrefGetTimingForTopOfOutputFcn(rootSystem, tid)
+      %endif
+    %endif
+    %openfile fcnProtoType
+    %assign ppIf = ""
+    %assign ppEndif = ""
+    %if isExportFcnRateGrouping
+       %% Leverage the pre-processor conditions in CodeVariants TID to set 
+       %% pre-processor conditionals for entry point functions
+       %% in export function models
+       %assign varCond =  SLibVariantConditionForTID(tid)
+       %if !ISEMPTY(varCond)
+         %assign ppIf = SLibIfVariantConditionForm16b(varCond)  
+         %assign ppEndif = SLibEndIfVariantConditionForm16b(varCond)
+       %endif   
+    %endif
+    
+    %assign fcnProto = ""
+    %assign isRateGroupedSLFcn = SLibIsRateGroupedSLFcn(rootSystem, "OutputUpdate", tid)
+    %assign isServiceFcn = SLibIsServiceFcn(rootSystem, "OutputUpdate", tid)
+    %if isExportFcnRateGrouping && (isRateGroupedSLFcn || isServiceFcn)
+      %% The prototype for rate grouped Simulink functions are fully defined
+      %% in IR. Just use that prototype rather than recomputing it.
+      %assign thisModule = ::CompiledModel.RTWCGModules.RTWCGModule[rootSystem.CGIRModuleIdx]
+      %assign aFcnPrototype = SLibGetRateGroupedFcnPrototype(thisModule, tid)
+      %assign fcnProto = aFcnPrototype.Prototype
+      %assign fcnParams = aFcnPrototype.Params
+      %assign fcnReturns = aFcnPrototype.Return
+      %if SLibAutosarCompilerAbstractionRequired()
+        %assign memsecUUID = ""
+        %if SLibAutosarIsMultiRunnableFcn(fcnName)
+          %assign slFcnName = SLibGetRateGroupedSimulinkFunctionName(rootSystem, "OutputUpdate", tid)
+          %assign memsecUUID = SLibGetFcnMemSecUUIDForFunction("SimulinkFunction", slFcnName)
+          %assign memclass = "FuncCalledByRTE"
+        %else
+          %assign memclass = "FuncInternal"
+        %endif
+        %assign fcnReturns = SLibAutosarCompilerAbstractionForFcnDeclRtnType(fcnReturns, memclass, memsecUUID)
+        %assign fcnProto =  fcnReturns + " " + aFcnPrototype.Name + "(" + fcnParams
+      %endif
+      %if GenerateClassInterface
+        %assign fcnProto = fcnReturns + " " + fcnName + "(" + fcnParams
+      %endif
+    %endif
+    %if ISEMPTY(fcnProto)
+      %if continuousUpdate
+        %assign fcnParams = SLibModelFcnArgs("UpdateContStates",TLC_FALSE,tid)
+      %else
+        %assign fcnParams = SLibModelFcnArgs("OutputUpdate",TLC_FALSE,tid)
+      %endif
+      %<ppIf>
+      %assign fcnProto = fcnReturns + " " + fcnName + "(" + fcnParams + ")"
+    %endif
+    %<fcnProto>\
+    %closefile fcnProtoType
+    %assign sysFcnDecl = LibExternInFcnDecls() + fcnProto + ";"
+    %if SLibNeedDumpRootSysPrototypeInPrivateHeader("OutputUpdate",tid)
+      %<LibAddToSystemField(rootSystem, "SystemFcnPrototype", sysFcnDecl)>
+    %endif
+
+    %openfile fcnContent
+      %if GenerateClassInterface
+        %% We know we are in a member function body, so set the cpp object name to be
+        %% this. Will restore it to its original name when finishing constructing 
+        %% this function body.
+        %assign backUpCPPObjectName = ::CPPObjectName
+        %assign ::CPPObjectName = "this"
+      %endif
+      
+      %assign localOutputVars = SLibGetFcnLocalVars(rootSystem, "Output", tid)
+      %assign localUpdateVars = SLibGetFcnLocalVars(rootSystem, "Update", tid)
+      %assign needBraces = !ISEMPTY(localOutputVars) && !ISEMPTY(localUpdateVars)
+      %openfile outputUpdateCode
+      %<SLibDumpLocalTidInSystem(rootSystem, "OutputUpdate")>
+      %<LibGetSystemLocalVars(rootSystem, "Output", tid)>
+      %if !needBraces
+        %<localOutputVars>
+        %<localUpdateVars>
+      %endif
+      %if SLibFcnProtoCtrlActive()
+        %assign fcnData = FcnGetFunctionPrototypeRecord()
+        %<FcnModelStepFcnReturnCode(fcnData, "ReturnDeclaration")>
+        %<FcnModelStepBufferInputsCode(fcnData)>
+      %elseif GenerateClassInterface
+        %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+        %if classConfObj.hasReturnValue
+          %<FcnModelStepFcnReturnCode(classConfObj, "ReturnDeclaration")>
+        %endif
+        %<FcnModelStepBufferInputsCode(classConfObj)>
+      %endif
+
+      %% Profiler start code
+      %<SLibGenProfSysStart(rootSystem, "OutputUpdate")>
+
+      %<LibDumpSystemUserCode(rootSystem,"Output","Header")>\
+      %% If absolute time is accessed by this TID,
+      %% maintain absolute timer for this TID, otherwise
+      %% don't need absolute timer
+      %if !WHITE_SPACE(timingCodeBuf)
+        
+        %<timingCodeBuf>      
+      %endif
+      
+      %<LibDumpSystemUserCode(rootSystem,"Output","Body")>\
+      %if needBraces && !ISEMPTY(localOutputVars)
+        %<"{">
+        %<localOutputVars>
+      %endif
+      %<LibDumpSystemFcn(rootSystem,"Output%<tid>")>\
+      %if needBraces && !ISEMPTY(localOutputVars)
+        %<"}">
+      %endif    
+      %<LibDumpSystemUserCode(rootSystem,"Output","Trailer")>\
+      %if ISEQUAL(tid, "") || ISEQUAL(tid, 0)
+        %if ISFIELD(buffsRec,"LogBuffer") && !WHITE_SPACE(buffsRec.LogBuffer)
+          %assign needMajorTimeGuard = NumContStates > 0
+
+	  %if needMajorTimeGuard
+	    if (%<RTMIs("MajorTimeStep")>) {
+	  %endif
+	  %<buffsRec.LogBuffer>\
+	  %if needMajorTimeGuard
+	     } /* end MajorTimeStep */
+	  %endif
+	%endif
+        
+        %% FMU Logging
+        %if EXISTS("FMULogging") && FMULogging == 1
+          %if NumContStates > 0
+            if (%<RTMIs("MajorTimeStep")>) {
+          %endif          
+          fmu_LogOutput();        
+          %if NumContStates > 0
+            } /* end MajorTimeStep */
+          %endif
+        %endif
+      
+      %endif
+      
+      %% Generate Update code for step
+      %openfile updateCode 
+      %if !LibSystemUserCodeIsEmpty(rootSystem, "Update", "Header")
+        %<"{">
+        %<LibDumpSystemUserCode(rootSystem,"Update","Header")>\
+      %endif
+      %<LibDumpSystemUserCode(rootSystem,"Update","Body")>\
+      %if needBraces && !ISEMPTY(localUpdateVars)
+        %if !continuousUpdate
+          %<"{">
+        %endif
+        %<localUpdateVars>
+      %endif
+      %<LibDumpSystemFcn(rootSystem,"Update%<tid>")>\
+      %if needBraces && !ISEMPTY(localUpdateVars) && !continuousUpdate
+        %<"}">
+      %endif    
+      %%
+      %% blkStateChangeFlag may be set, need to run one more minor step
+      %%      
+      %<SLibDumpOneMoreMinorOutput(fcnName, "UpdateContStates", tid)>\                
+      %<LibDumpSystemUserCode(rootSystem,"Update","Trailer")>\
+      %if !LibSystemUserCodeIsEmpty(rootSystem, "Update", "Header")
+        %<"}">
+      %endif
+      %if ISFIELD(buffsRec,"ExtModeTrailer%<tid>") && ...
+        !WHITE_SPACE(buffsRec.ExtModeTrailer%<tid>)
+        %assign tmpBuff = buffsRec.ExtModeTrailer%<tid>
+        %<tmpBuff>\
+      %endif
+      %closefile updateCode 
+      
+      %if !WHITE_SPACE(updateCode)
+        %if continuousUpdate 
+          if (%<RTMIs("MajorTimeStep")>) {
+            %<updateCode>
+          } /* end MajorTimeStep */
+        %else
+          %<updateCode>
+        %endif
+      %endif
+      
+      %if !GenerateGRTWrapper 
+        %if !(EXISTS("ExcludeSolverCode") && ExcludeSolverCode == TLC_TRUE)
+          %if LibAsynchronousTriggeredTID(tid)
+            %<FcnGenerateTimeManagementForAsyncTs("Output", tid,"bottom")>
+          %else
+            %% Update timer here only if we don't generate grt interface.
+            %% For grt interface, time must be updated in
+            %% mdlUpdatefcn.
+            %<ErtOrModelrefGetTimingForBottomOfUpdateFcn(rootSystem, tid, TLC_FALSE)>
+          %endif
+        %endif
+      %endif
+      %if !GenerateClassInterface
+        %<FcnHandlesUnusedTIDArg(rootSystem, "Output")>
+      %endif
+      %closefile outputUpdateCode
+
+      %openfile returnStatement
+      %if SLibFcnProtoCtrlActive()
+        %assign fcnData = FcnGetFunctionPrototypeRecord()
+        %<FcnModelStepBufferOutputsCode(fcnData)>
+        %<FcnModelStepFcnReturnCode(fcnData,"ReturnStatement")>
+      %elseif GenerateClassInterface
+        %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+        %<FcnModelStepBufferOutputsCode(classConfObj)>
+        %<FcnModelStepFcnReturnCode(classConfObj,"ReturnStatement")>
+      %endif
+      %closefile returnStatement
+
+      %if WHITE_SPACE(outputUpdateCode)
+        %assign outputUpdateCode = "/* (no output/update code required) */"
+      %endif
+      %if rootSystem.Type == "root" ...
+        && SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate", tid) ...
+        && SampleTime[tid].IsUnionTs != "yes" ...
+        && !GenerateClassInterface ...
+        && !SLibAutosarActive()
+        %assign fcnInfo = SLibSystemFcnInfoRecord(rootSystem, "Output")
+        %% exclude rate grouped SLF since they should appear in their
+        %% own header file.
+        %% test/toolbox/simulink/modelref/fcncall/client_server/tCodegen8/lvlTwo_g1113221
+        %assign simulinkFunctionPrototypeInModelHeader = isRateGroupedSLFcn && ...
+          !SLibRateGroupedSimulinkFunctionNeedsDeclaration(rootSystem, "OutputUpdate", tid)
+        %if !ISEMPTY(fcnInfo.FcnPrototype) && (!isRateGroupedSLFcn || simulinkFunctionPrototypeInModelHeader)
+          %openfile entryPointBuf
+            
+          /* Exported entry point function */
+          %<ppIf>
+          %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+            %% Export function & Async function
+            %% NOTE: SampleTime[tid].TaskName returns block name for export function,
+            %%  and full block path for async function
+            %assign fcnCallInportBlockName = FEVAL("regexprep", ...
+              SampleTime[tid].TaskName, ".*\/", "")
+            %<SLibGetFcnMemSecPragmaForFunction(fcnInfo.Name, "FcnCallInport", fcnCallInportBlockName,  "Pre")>\
+          %else
+            %<SLibGetFcnMemSecPragmaForSystemOnDecl(fcnInfo.Name, "MemSecFuncExecute", "Pre", rootSystem)>\
+          %endif
+          %<sysFcnDecl>
+          %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled")
+            %% Export function & Async function
+            %% NOTE: SampleTime[tid].TaskName returns block name for export function,
+            %%  and full block path for async function
+            %assign fcnCallInportBlockName = FEVAL("regexprep", ...
+              SampleTime[tid].TaskName, ".*\/", "")
+            %<SLibGetFcnMemSecPragmaForFunction(fcnInfo.Name, "FcnCallInport", fcnCallInportBlockName,  "Post")>\
+          %else
+            %<SLibGetFcnMemSecPragmaForSystemOnDecl(fcnInfo.Name, "MemSecFuncExecute", "Post", rootSystem)>\
+          %endif
+          %<ppEndif>  
+          %closefile entryPointBuf
+          %<SLibCacheSystemCodeToFile("sys_fcn_decl", rootSystem, entryPointBuf)>
+        %endif
+      %endif
+      
+      %% Profiler declaration code
+      %<SLibGenProfSysDeclare(rootSystem, "OutputUpdate")>
+      
+      %<outputUpdateCode>
+      
+      %% Profiler finish code
+      %<SLibGenProfSysEnd(rootSystem, "OutputUpdate")>
+      %<returnStatement>
+
+      %if GenerateClassInterface
+        %% We know we have finished constructing a member function body, so
+        %% we restore the object name to be its original name as promised.
+        %assign ::CPPObjectName = backUpCPPObjectName
+      %endif
+    %closefile fcnContent
+    %%<ppEndif>
+    
+    %openfile localVariables
+    %if MultiInstanceERTCode && !GenerateClassInterface
+      %<SLibDumpLocalVariablesForBlockFcn(rootSystem,"OutputUpdate")>
+    %endif
+    %closefile localVariables
+    
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "model"; GeneratedBy "ertlib.tlc"; Type "Step"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %<addToBackupCodeMetrics(rootSystem, "Outputs", fcnName, tid)>
+    %undef fcnRec
+    %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled") || SLibAutosarActive()
+      %if SLibIsRateGroupedSLFcn(rootSystem, "OutputUpdate", tid) 
+        %% Simulink Function
+        %assign slFcnName = SLibGetRateGroupedSimulinkFunctionName(rootSystem, "OutputUpdate", tid)
+        %<SLibGetFcnMemSecPragmaForFunction(fcnName, "SimulinkFunction", slFcnName,  "Pre")>\
+      %elseif SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate", tid) 
+        %% Export function & Async function
+        %% NOTE: SampleTime[tid].TaskName returns block name for export function,
+        %%  and full block path for async function
+        %assign fcnCallInportBlockName = FEVAL("regexprep", ...
+          SampleTime[tid].TaskName, ".*\/", "")
+        %<SLibGetFcnMemSecPragmaForFunction(fcnName, "FcnCallInport", fcnCallInportBlockName,  "Pre")>\
+      %else
+        %% Step function
+        %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Step", tid,  "Pre")>\
+      %endif
+    %else
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+    %endif
+    %<ppIf>
+    %<fcnProto> %<LibTaskComment(tid)>  
+    {
+      %if !WHITE_SPACE(localVariables)
+        %<localVariables>
+      %endif
+      %<fcnContent>
+      
+      %if SLibAutosarActive()
+        %<SLibDumpUnusedParameterForInstanceHandle("OutputUpdate")>
+      %else
+        %<SLibDumpUnusedParameterForRTM("OutputUpdate")>
+      %endif      
+    } %% end of combined output/update fcn
+    %<ppEndif>
+    %if CGMODEL_ACCESS("CGModel.isIndividualFunctionMappingEnabled") || SLibAutosarActive()
+      %if SLibIsRateGroupedSLFcn(rootSystem, "OutputUpdate", tid) 
+        %% Simulink Function
+        %assign slFcnName = SLibGetRateGroupedSimulinkFunctionName(rootSystem, "OutputUpdate", tid)
+        %<SLibGetFcnMemSecPragmaForFunction(fcnName, "SimulinkFunction", slFcnName,  "Post")>\
+      %elseif SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate", tid) 
+        %% Export function & Async function
+        %% NOTE: SampleTime[tid].TaskName returns block name for export function,
+        %%  and full block path for async function
+        %assign fcnCallInportBlockName = FEVAL("regexprep", ...
+          SampleTime[tid].TaskName, ".*\/", "")
+        %<SLibGetFcnMemSecPragmaForFunction(fcnName, "FcnCallInport", fcnCallInportBlockName,  "Post")>\
+      %else
+        %% Step function
+        %<SLibGetFcnMemSecPragmaForFunction(fcnName, "Step", tid,  "Post")>\
+      %endif
+    %else
+      %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+    %endif
+    %if continuousUpdate
+      %% generate root system Derivative function
+      %<SLibGetBodyDerivativeFcnCache(rootSystem)>
+    %endif
+    %%
+    %closefile tmpBuffer
+    %assign rootSystem.CurrentTID = -1
+    %endwith
+    %assign ::BlockFcn = tmpBlockFcn
+    %return(tmpBuffer)
+  %endif
+%endfunction %% SLibGenErtOutputUpdateFunction
+
+%% Function:  LibDumpExpFucUpdateRootOutput =====================================
+%% Description:
+%%  This function is only called when ExportFunctionsMode == 1.
+%%  This function generates data push to root outport blocks from exported
+%%  functions outputs if necessary.
+%function LibDumpExpFucUpdateRootOutput(currentSys,fcnType) Output
+  %if ExportFunctionsMode != 1 || SLibAutosarActive() || currentSys.Exported != "yes"
+    %return 
+  %endif  
+  %assign rootSystem = System[NumSystems-1]
+  %with rootSystem
+    %if NumModelOutputs > 0  && ...
+      ISFIELD(currentSys, "ExternalOutputs")
+      %foreach idx = SIZE(currentSys.ExternalOutputs, 1)
+        %assign extOut       = ExternalOutputs.ExternalOutput[currentSys.ExternalOutputs[idx]]
+        %assign sysIdx       = extOut.Block[0]
+        %assign blkIdx       = extOut.Block[1]
+        %assign outportBlock = System[sysIdx].Block[blkIdx]
+        %if !SLibExternalOutputIsVirtual(outportBlock)
+          %% %if fcnType == "OutputUpdate" && ...
+          %%  LibAsynchronousTriggeredTID(outportBlock.TID) && ...
+          %%  SampleTime[outportBlock.TID].IsUnionTs == "yes"
+            %% Root output port code have been generated and dumpped for async ts in 
+            %% system, OutputUpdateFcn. No need dump again here. 
+            %% 
+          %%  %continue
+          %%%endif
+          %with outportBlock
+            %% This following code is cloned from block/outport.tlc Output function
+            %assign hasExtRollReg = ISFIELD(currentSys, "NumExternalOutputRollRegions")
+            %assign ExtOutRollReg = hasExtRollReg ? ...
+              currentSys.ExternalOutputRollRegion[idx].Elements : RollRegions
+            %assign rollVars = ["outportblk", "U"]
+            %if LibBlockInputHasSymbolicWidth(0)
+              %assign port        = FcnGetInputPortRecord(0)
+              %assign numRollRegions =  hasExtRollReg ...
+                ? currentSys.NumExternalOutputRollRegions ...
+                : SLibNumInputPortRegions(outportBlock, 0)
+              %if numRollRegions > 1
+                %assign err = "Muxed signals with symbolic dimensions are not supported for exported function outputs."
+                %<LibBlockReportError(outportBlock, err)>
+              %endif
+              %assign loopVar = "i0"
+              %assign width   = LibBlockInputSignalSymbolicWidth(0)
+              {
+                int_T %<loopVar>;
+                for (%<loopVar>=0; %<loopVar> < %<width>; %<loopVar>++) {
+                  %<LibBlockDstSignalLocation("outportblk", loopVar, "", 0)> ...
+                    = %<LibBlockInputSignal(0, loopVar, "", 0)>;
+                }
+              }
+            %else              
+              %roll sigIdx = ExtOutRollReg, lcv = RollThreshold, outportBlock, "Roller", rollVars
+                %<LibBlockDstSignalLocation("outportblk", "", lcv, sigIdx)> ...
+                  = %<LibBlockInputSignal(0, "", lcv, sigIdx)>;
+              %endroll
+            %endif
+          %endwith
+        %endif
+      %endforeach
+    %endif      
+  %endwith
+%endfunction
+
+%% Fucntion: SLibErtGenLoggingUpdateCode =========================
+%%
+%%
+%function SLibErtGenLoggingUpdateCode(buffsRec, isPeriodicRateGrouping) void
+  %assign ::BlockFcn = "Output"
+  %openfile logBuffer
+  %if MatFileLogging == 1
+    %assign rootSystem = System[NumSystems-1]
+    %assign rootSystem.CurrentTID = 0 
+    /* Matfile logging */
+    %if RootSystemIsSingleRate || SLibSingleTasking() || ...
+      isPeriodicRateGrouping
+      %<SLibGenTXYLogVarUpdate()>
+      %if isPeriodicRateGrouping
+	%% The logging code is added to the tid01eq output code when
+	%% rate grouping. Make sure the necessary arguments are passed.
+	%% Add to output or outputupdate
+	%assign arg = ::CompiledModel.System[NumSystems-1].Interface.RTMArgDef
+	%if CombineOutputUpdateFcns == 1
+	  %assign ::BlockFcn = "OutputUpdate"
+	%endif
+	%<SLibAddTIDtoAccessTIDList(arg, ::BlockFcn, "", FixedStepOpts.TID01EQ)>
+	%assign ::BlockFcn = "Output"
+      %endif
+    %else
+      %if ::IncludeLoggingInstrumentation
+        %<FcnGenerateTidGuardOpenCode(0)>
+      %else
+        %<FcnGenerateTidGuardOpenCodeInMain(0)>
+      %endif
+      %<SLibGenTXYLogVarUpdate()>
+      %<FcnGenerateTidGuardCloseCode(0)>
+    %endif
+    %assign rootSystem.CurrentTID = -1
+  %endif
+  %closefile logBuffer
+  %addtorecord buffsRec LogBuffer logBuffer
+
+%endfunction %% SLibErtGenLoggingUpdateCode
+
+%% Function: SLibErtGenStopSimCode(buffsRec) ======================
+%%
+%%
+%function SLibErtGenStopSimCode(buffsRec, isPeriodicRateGrouping) void
+  %assign ::BlockFcn = "RootUpdate"
+  %assign rootSystem = System[NumSystems-1]
+  %assign rootSystem.CurrentTID = 0
+  %openfile stopSimBuffer
+  %if !IsModelReferenceTarget() && !GenerateGRTWrapper
+    %if MatFileLogging || (ExtMode && !PurelyIntegerCode && (!ExtModeXCP || ExtModeXCPClassicInterface))
+
+      /* signal main to stop simulation */
+      %<FcnGenerateTidGuardOpenCode(0)>
+      %% Since you can't have PurelyIntegerCode while MatFileLogging,
+      %% only need to handle real_T time.
+      %% If continuous time, use taskTime(TID01EQ), otherwise taskTime(0)
+      %assign taskTime = (NumContStates > 0) ? ...
+          LibGetTaskTime(FixedStepOpts.TID01EQ) : LibGetTaskTime(0)
+      if ( (%<RTMGet("TFinal")>!=-1) &&
+      !((%<RTMGet("TFinal")>-%<taskTime>) > %<taskTime> * ...
+        %<LibGetMathConstant("EPSILON",tSS_DOUBLE)>)) {
+        %<RTMSetErrStat("\"Simulation finished\"")>;
+      }
+      %if ExtMode || NumChildSFunctions
+	if (%<RTMGetStopRequested()>) {
+	  %<RTMSetErrStat("\"Simulation finished\"")>;
+	}
+      %endif
+      %<FcnGenerateTidGuardCloseCode(0)>
+    %elseif ExtMode && PurelyIntegerCode && (!ExtModeXCP || ExtModeXCPClassicInterface)
+
+      if ( (rteiGetTFinalTicks(%<RTMGet("RTWExtModeInfo")>)!=-1) &&
+      !((uint32_T)rteiGetTFinalTicks(%<RTMGet("RTWExtModeInfo")>) >
+      %<LibGetTaskTime(0)>)) {
+	%<RTMSetErrStat("\"Simulation finished\"")>;
+      }
+      %if ExtMode
+	if (%<RTMGetStopRequested()>) {
+	  %<RTMSetErrStat("\"Simulation finished\"")>;
+	}
+      %endif
+    %endif
+    %% Issue warning if TFinal is longer than LifeSpan. Timer may overflow
+    %% before reach TFinal. Model may runs forever.
+    %assign stopTime = SLibERTGetStopTime()
+    %assign lifeSpanInSeconds = ::CompiledModel.ConfigSet.EvaledLifeSpan * 86400
+    %if stopTime > lifeSpanInSeconds
+      %assign warnTxt = "Stop time %<stopTime> (seconds) is out the range of "...
+        "Application life span %<::CompiledModel.ConfigSet.EvaledLifeSpan> (days). "...
+        "Generated code may fail to stop because timer can overflow before the stop time is reached. "...
+        "Consider choosing smaller 'Stop time' on Solver pane, or longer "...
+        "'Application life span' on Optimization pane."
+      %<LibReportWarning(warnTxt)>
+    %endif
+  %endif
+  %closefile stopSimBuffer
+  %assign rootSystem.CurrentTID = -1
+
+  %addtorecord buffsRec StopSimBuffer stopSimBuffer
+%endfunction %% SLibErtGenStopSimCode(buffsRec)
+
+
+%function SLibErtGenFirstInitConditionCode(buffsRec) void
+  %assign ::BlockFcn = "RootUpdate"
+  %openfile firstInitCondition
+  %if RTMFirstInitCondFlagIsReqFcn()
+    %% Need to turn off firstInitCond flag
+    /* set "at time zero" to false */
+    if (%<RTMIs("FirstInitCond")>) {
+      %<RTMSet("FirstInitCond", 0)>;
+    }
+  %endif
+  %closefile   firstInitCondition
+  %addtorecord buffsRec FirstInitCondition firstInitCondition
+%endfunction
+
+%function SLibEntryFcnNameExists()
+  %if SLibIsExportFcnDiagram() || RateGroupedAsyncFcns
+    %foreach TIDIdx = NumSampleTimes
+      %if ISFIELD(SampleTime[TIDIdx], "EntryFcnName") && !ISEMPTY(SampleTime[TIDIdx].EntryFcnName)
+        %return TLC_TRUE
+      %endif
+    %endforeach
+  %endif
+  %return TLC_FALSE
+%endfunction
+
+%% Test if any entry fcn's exist except for IRT
+%function SLibNonIRTEntryFcn()
+  %if SLibIsExportFcnDiagram() || RateGroupedAsyncFcns
+    %foreach TIDIdx = NumSampleTimes
+      %if ISFIELD(SampleTime[TIDIdx], "EntryFcnName") ...
+        && !ISEMPTY(SampleTime[TIDIdx].EntryFcnName) ...
+        && !SLibNonInlinedIRTEventTID(TIDIdx)
+        
+        %return TLC_TRUE
+      %endif
+    %endforeach
+  %endif
+  %return TLC_FALSE
+%endfunction
+
+%function SLibErtGenerateNonRateGroupingOutputAndUpdateForRoot(rootSystem) Output
+  %%   Generate non-rate-grouping  code for periodic ert auto functions.
+  %%
+  %% When FcnUsingModulesToGenerateCode, non-rate-grouping code 
+  %% is put with tid0
+  %%
+  %assign currentTid = SLibSystemFcnPeriodicRateGrouping(rootSystem, "Output") ? 0:""
+  %assign rootSystem.CurrentTID = currentTid
+  %if CombineOutputUpdateFcns == 1
+
+    %<SLibGenErtOutputUpdateFunction(currentTid)>
+  %else
+
+    %<SLibGenErtOutputFunction(currentTid)>
+
+    %<SLibGenErtUpdateFunction(currentTid)>
+  %endif
+  %%   end of Generate non-rate grouping  code for ert auto functions.  .
+  %%----------------------------------------------------------------
+%endfunction
+
+%function  ErtGenerateOutputAndUpdateForRoot()
+  %assign tmpBlockFcn = ::BlockFcn
+  %assign ::BlockFcn = "OutputUpdate"
+  %assert (!IsModelReferenceTarget())
+
+  %assign rootSystem = System[NumSystems-1]
+  %assign isPeriodicRateGrouping = SLibIsMultiRateAndPeriodicRateGrouping(rootSystem)
+    
+  %if GenerateSampleERTMain && SLibIsAsyncTaskOnlyModel() && ...
+    !LibIsDeploymentDiagram() && !FcnSysModuleIsRateGrouping(rootSystem,"Output")
+    %return ""
+  %endif
+
+  %openfile buff
+  %if LibIsDeploymentDiagram()
+    %<SLibDeploymentGenerateOutputAndUpdate()>
+  %elseif FcnSysModuleIsRateGrouping(rootSystem,"Output")
+    %% -------------------------------------------------------
+    %%   Generate rate grouping  code for ert auto functions.
+    %if SLibIsExportFcnDiagram() || !isPeriodicRateGrouping   
+      %assign genLocalMain = 0
+    %elseif GenerateGRTWrapper
+      %assign genLocalMain = 1
+    %elseif (GenerateSampleERTMain || RateBasedStepFcn) && !SLibConcurrentTasks()
+      %% if generateSampleERTMain, not step main fcn generated in model.c,
+      %% it is generated in SampleERTMain function.
+      %assign genLocalMain = 0
+    %else
+      %assign genLocalMain = 1
+    %endif
+    %assign maxSampleTime = NumRuntimeExportedRates
+    %% If there are other entry points, then shouldn't be generating the
+    %% local main.  Reset methods are an exception -- the main won't call it,
+    %% but still makes sense to gerenate the wrapper for all the sync rates
+    %if SLibEntryFcnNameExists()
+      %assign maxSampleTime = NumSampleTimes
+      %assert (genLocalMain==0) || !SLibNonIRTEntryFcn()
+    %endif
+
+    %foreach TIDIdx = maxSampleTime + genLocalMain
+      %if TIDIdx < maxSampleTime && ...
+        (SLibInitEventTID(TIDIdx) || ...
+         SLibTermEventTID(TIDIdx) || ...
+         SLibResetOrResetWithInitEventTID(TIDIdx))
+        %continue
+      %endif
+      %assign isAsyncRateGrouping = TIDIdx >= NumRuntimeExportedRates
+      %assign isAsyncTID = TIDIdx >= NumRuntimeExportedRates
+      %assign isExportFcnRateGrouping = TLC_FALSE
+      %if TIDIdx < maxSampleTime
+        %assign isExportFcnRateGrouping = SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate", TIDIdx)
+      %endif
+      %if !isPeriodicRateGrouping && !SLibIsExportFcnDiagram() && TIDIdx == 0
+        %if GenerateSampleERTMain && SLibIsAsyncTaskOnlyModel() && ...
+          !LibIsDeploymentDiagram()
+          %% Do not generate a step function if SLibIsAsyncTaskOnlyModel
+          %continue
+        %endif
+        %<SLibErtGenerateNonRateGroupingOutputAndUpdateForRoot(rootSystem)>
+      %elseif isPeriodicRateGrouping || isAsyncTID
+        %% loop over all sample times. If an async sample time is found
+        %% and it has a non empty task name, emit the output and update
+        %% functions.
+        %assign generateFunctions = 1
+        %assign currentTid = TIDIdx
+        %if isAsyncTID && (TIDIdx < NumSampleTimes)
+          %if SLibIsExplicitTaskingExportFcnRateGrouping("OutputUpdate", currentTid)
+            %assign fcnName  = SLibGenExporFunctionName(TIDIdx)
+            %if WHITE_SPACE(fcnName)
+              %assign generateFunctions = 0
+            %endif
+          %endif
+        %elseif GenerateSampleERTMain && SLibIsAsyncTaskOnlyModel()
+          %if !isPeriodicRateGrouping && !GenerateClassInterface
+            %assign currentTid = SLibSystemFcnPeriodicRateGrouping(rootSystem, "Output") ? 0:""
+          %else
+            %continue
+          %endif
+        %elseif !isPeriodicRateGrouping
+          %assign currentTid = SLibSystemFcnPeriodicRateGrouping(rootSystem, "Output") ? 0 :""
+        %endif
+        %if !generateFunctions || ...
+          (TIDIdx < maxSampleTime && ISFIELD(SampleTime[TIDIdx], "IsUnionTs") && SampleTime[TIDIdx].IsUnionTs == "yes") 
+          %continue
+        %endif
+        
+        %if ISEQUAL(SolverType, "FixedStep") && FixedStepOpts.TID01EQ && (TIDIdx==1)
+          %continue
+        %endif
+        %assign rootSystem.CurrentTID = currentTid
+        %if ISEQUAL(TIDIdx, maxSampleTime) && ... 
+          (SLibNeedWrapperStepFcn()==2)
+          %% Dump wrapper step function definition in rtmodel.c/.cpp instead of 
+          %% <model>.c/.cpp
+          %openfile switchYardDefnBuffer
+          %selectfile switchYardDefnBuffer
+        %endif
+        %assign genSwitchyard = (genLocalMain == 1) && TIDIdx == maxSampleTime
+        %if genSwitchyard || ((TIDIdx < maxSampleTime) && (!ISFIELD(SampleTime[TIDIdx], "DumpedAsyncOutputCode") || ...
+          SampleTime[TIDIdx].DumpedAsyncOutputCode == TLC_FALSE))
+          %if CombineOutputUpdateFcns == 1 || isExportFcnRateGrouping || SLibIsExportFcnDiagram()
+
+            %<SLibGenErtOutputUpdateFunction(currentTid)>
+          %else
+
+            %<SLibGenErtOutputFunction(currentTid)>
+
+            %<SLibGenErtUpdateFunction(currentTid)>
+            %% end of separate output/update fcn
+          %endif
+        %endif
+        %if ISEQUAL(TIDIdx, maxSampleTime) && ... 
+          (SLibNeedWrapperStepFcn()==2)
+          %closefile switchYardDefnBuffer
+          %<SLibCacheCodeToFile("rtmodel_src_fcn_defn", switchYardDefnBuffer)>   
+          %selectfile buff
+        %endif
+      %endif
+    %endforeach
+    %%   end of Generate rate grouping  code for ert auto functions.
+    %% -----------------------------------------------------------
+  %else
+    %<SLibErtGenerateNonRateGroupingOutputAndUpdateForRoot(rootSystem)>
+  %endif
+  %if GenerateGRTWrapper
+    %assign ::CompiledModel.GRTWrapper = ::CompiledModel.GRTWrapper + ...
+      FcnGenerateGRTOutputUpdateWrapper()
+  %endif
+
+  %closefile buff
+  %assign ::BlockFcn = tmpBlockFcn
+  %return buff
+%endfunction
+
+%% Function: FcnGenerateInitializeSizes ====================================
+%%   This function is called when if generate grt wrapper and one 
+%%   of the followings is Not true
+%%    GenerateSampleERTMain 
+%%    SLibIsAsyncTaskOnlyModel
+%%
+%function FcnGenerateInitializeSizes()
+  %openfile tmpBuf  
+  %assign fcnName = "MdlInitializeSizes"
+  %assign fcnReturns = "%<SLibGetGRTWrapperLinkage()> void"
+  %assign fcnParams = "void"
+  %assign rootSystem = System[NumSystems-1]
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "model"; GeneratedBy "ertlib.tlc"; Type "Initialize"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<addToBackupCodeMetrics(rootSystem, "ModelInitializeSizes", fcnName, "")>
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\  
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %<LibDumpModelInitializeSizes()>\
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Post")>\
+  %closefile tmpBuf
+  %return tmpBuf
+%endfunction
+
+%% Function: FcnGenerateGRTOutputUpdateWrapper ====================================
+%%   This function is called when GenerateGRTWrapper is true.
+%%
+%%
+%function FcnGenerateGRTOutputUpdateWrapper()
+  %assign mdlName = Name
+  %assign rootSystem = System[NumSystems-1]
+  %assign rootSystem.CurrentTID = ""
+
+  %assert CombineOutputUpdateFcns == 0
+  %openfile tmpBuf
+  %% MdlOutput MdlUpdate
+  %assign needAdjustTID = !SLibSingleTasking() && ...
+    !LibIsSingleRateSystem(rootSystem) && ...
+    ISEQUAL(SolverType, "FixedStep") && FixedStepOpts.TID01EQ
+
+  %if needAdjustTID
+    %openfile adjustTID
+    if (%<LibTID()> == 1) %<LibTID()> = 0;
+    %closefile adjustTID
+  %else
+    %assign adjustTID = ""
+  %endif
+  %assign ::SystemFcnsForArgAccess = "WrapperFcn"
+
+    %assign fcnName = "MdlOutputs"
+    %if UsingMalloc
+      %assign arg = "%<::tSimStructType>* %<::tSimStruct>, int_T %<::CompiledModel.GlobalScope.tTID>"
+    %else
+      %assign arg = "int_T %<::CompiledModel.GlobalScope.tTID>"
+    %endif
+    %assign fcnReturns = "%<SLibGetGRTWrapperLinkage()> void"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params arg; Abstract ""; ...
+      Category "model"; GeneratedBy "ertlib.tlc"; Type "Output"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<addToBackupCodeMetrics(rootSystem, "Outputs", fcnName, "")>
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+    %<fcnReturns> %<fcnName>(%<arg>) {
+      %if !LibIsDeploymentDiagram() && !SLibConcurrentTasks()
+      %<adjustTID>
+      %endif
+      %if CombineOutputUpdateFcns == 1
+        %<SLibModelStepFcnName("")>(%<SLibModelFcnArgs("OutputUpdate",TLC_TRUE,"%<::tTID>")>);
+      %else
+        
+        %<SLibGenErtFunctionName("", "output")>(%<SLibModelFcnArgs("Output",TLC_TRUE,"%<::tTID>")>);
+      %endif
+      %if SLibSingleTasking()
+        %<SLibUnusedParameter(::tTID)>
+      %endif
+    }
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+       
+    %assign fcnName = "MdlUpdate"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params arg; Abstract ""; ...
+      Category "model"; GeneratedBy "ertlib.tlc"; Type "Output"; ...
+      GeneratedFor FcnGeneratedFor(rootSystem)}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %<addToBackupCodeMetrics(rootSystem, "Update", fcnName, "")>
+    %undef fcnRec
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Pre")>\
+    %<fcnReturns> %<fcnName>(%<arg>) {
+      %% GRT interface requires updating timer in MdlUpdate function.
+      %if !LibIsDeploymentDiagram() && !SLibConcurrentTasks()
+      %<adjustTID>
+      %endif
+      %if CombineOutputUpdateFcns == 1
+        %if !(EXISTS("ExcludeSolverCode") && ExcludeSolverCode == TLC_TRUE)
+          %if SLibIsExportFcnDiagram() && LibAsynchronousTriggeredTID(tid)
+            %<FcnGenerateTimeManagementForAsyncTs("Outputs", tid,"bottom")>
+          %else
+            %<ErtOrModelrefGetTimingForBottomOfUpdateFcn(rootSystem, "", TLC_FALSE)>
+          %endif
+        %endif
+      %else
+        %if UsingMalloc
+          %<SLibGenErtFunctionName("", "update")>(%<SLibModelFcnArgs("RootUpdate",TLC_TRUE,"%<::tTID>")>);
+        %else
+          %<SLibGenErtFunctionName("", "update")>(%<SLibModelFcnArgs("Update",TLC_TRUE,"%<::tTID>")>);
+        %endif
+      %endif
+      %if SLibSingleTasking()
+        %<SLibUnusedParameter(::tTID)>
+      %endif
+    }
+    %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncExecute", "Post")>\
+
+  %% Others Mdl function called from grt_main.
+  %if UsingMalloc
+    %assign arg = "%<::tSimStructType>* %<::tSimStruct>"
+  %else
+    %assign arg = "void"
+  %endif
+  
+  %assign fcnName = "MdlInitializeSizes"
+  %assign fcnReturns = "%<SLibGetGRTWrapperLinkage()> void"
+  %assign fcnParams = arg
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "model"; GeneratedBy "ertlib.tlc"; Type "Initialize"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<addToBackupCodeMetrics(rootSystem, "ModelInitializeSizes", fcnName, "")>
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %if UsingMalloc
+      /* %<::tSimStruct> is required for backward compatibility. 
+      * Argument %<::tSimStruct> is not used in the function. */
+      %<SLibUnusedParameter(::tSimStruct)>
+    %endif
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Post")>\
+
+  %assign fcnName = "MdlInitializeSampleTimes"
+  %assign fcnReturns = "%<SLibGetGRTWrapperLinkage()> void"
+  %assign fcnParams = arg
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "model"; GeneratedBy "ertlib.tlc"; Type "Initialize"; ...
+    GeneratedFor FcnGeneratedFor(rootSystem)}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<addToBackupCodeMetrics(rootSystem, "", fcnName, "")>
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %if UsingMalloc
+      /* %<::tSimStruct> is required for backward compatibility. 
+      * Argument %<::tSimStruct> is not used in the function. */
+      %<SLibUnusedParameter(::tSimStruct)>
+    %endif
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, "MemSecFuncInitTerm", "Post")>\
+  %assign ::SystemFcnsForArgAccess = []
+
+  %closefile tmpBuf
+  %assign rootSystem.CurrentTID = -1
+  
+  %return tmpBuf
+%endfunction
+
+%% Function: SLibErtAutoFunctions ==============================================
+%% Abstract:
+%%   Return a buffer with the Embedded-C auto functions.  The auto functions
+%%   include the generated run-time code main routine and model algorithm.
+%%
+%function SLibErtAutoFunctions() void
+
+  %assign rootSystem = System[NumSystems-1]
+  %assign isPeriodicRateGrouping = SLibIsMultiRateAndPeriodicRateGrouping(rootSystem)
+  %addtorecord ::CompiledModel CachedCodeBuffsForRootSys {}
+  %assign buffsRec = ::CompiledModel.CachedCodeBuffsForRootSys
+
+  %<SLibGenERTPrivateRTMMacros()>
+
+  %% The buffer stop simulation code should be in the context
+  %% of the step method, thus the object name should be the implicit
+  %% "this" object
+  %if GenerateClassInterface
+    %assign saveCPPObjectName = ::CPPObjectName
+    %assign ::CPPObjectName = "this"
+  %endif
+
+  %% Buffer stop simulation
+  %<SLibErtGenStopSimCode(buffsRec, isPeriodicRateGrouping)>
+
+  %% Restore the cpp object name to be whatever should be outside 
+  %% the context of the step method.
+  %if GenerateClassInterface
+    %assign ::CPPObjectName = saveCPPObjectName
+  %endif
+  
+  %<SLibErtGenFirstInitConditionCode(buffsRec)>
+
+  %% Model Reference uses a global timing engine, so the parent
+  %% will take care of the scheduler and absolute time.
+  %if !IsModelReferenceTarget() 
+    %% Buffer update absolute time
+      %<SLibErtGenUpdateAbsoluteTimeCode(NumSystems-1, buffsRec, isPeriodicRateGrouping)>
+      %<FcnDumpMultiRateScheduler()>
+  %endif
+
+  %if !IsModelReferenceTarget()
+    %% The following buffer code should be in the context
+    %% of the step method, thus the object name should be the implicit
+    %% "this" object
+    %if GenerateClassInterface
+      %assign saveCPPObjectName = ::CPPObjectName
+      %assign ::CPPObjectName = "this"
+    %endif
+
+    %% Cach external mode code
+    %<SLibErtGenExtModeCode(buffsRec, isPeriodicRateGrouping)>
+    
+    %% Buffer logging update code
+    %<SLibErtGenLoggingUpdateCode(buffsRec, isPeriodicRateGrouping)>
+   
+    %% If deployment diagram, do not dump top level solver code because they are 
+    %% dumped at the task level
+    %if (NumContStates > 0) && !SLibIsDeploymentDiagramWithNoTopSolver() && ...
+      !(EXISTS("ExcludeSolverCode") && ExcludeSolverCode == TLC_TRUE)
+      %<SLibDumpSolverCode("", TLC_FALSE)>\
+    %endif
+    
+    %% Restore the cpp object name to be whatever should be outside 
+    %% the context of the step method.
+    %if GenerateClassInterface
+      %assign ::CPPObjectName = saveCPPObjectName
+    %endif
+
+  %endif
+
+  %openfile autoFunctions
+  %foreach sysIdx = NumSystems - 1
+    %% Write them to "Functions" cache
+    %<SLibGetSystemBodyCache(System[sysIdx])>
+  %endforeach
+
+  %% Dump subfunctions of the root system
+  %<LibGetSystemField(rootSystem, "CachedSubFunctions")>
+  
+  %if !IsModelReferenceTarget() && (ExportFunctionsMode != 1) 
+    %% Generate output and update function for root system
+    %<ErtGenerateOutputAndUpdateForRoot()>
+  %endif
+
+  %if ExportFunctionsMode == 1 
+    %if NumRuntimeExportedRates > 1
+      %assign errTxt = "Model specifies multiple periodic rates. This mode of operation"
+      %assign errTxt = "%<errTxt> is not supported for exported function-calls."
+      %<LibReportError(errTxt)>
+    %elseif SLibNeedAbsoluteTime() && !SLibAutosarActive()
+      %assign errTxt = "Model is time dependent."
+      %assign errTxt = "%<errTxt> A common cause of this error is the use of"
+      %assign errTxt = "%<errTxt> S-function blocks which access absolute time."    
+      %<LibReportError(errTxt)>  
+    %elseif MatFileLogging
+      %assign errTxt = "MAT-file logging not supported for exported function-calls."
+      %<LibReportError(errTxt)>
+    %endif
+    %if !(GenerateSampleERTMain && SLibIsAsyncTaskOnlyModel()) && ...
+      GenerateGRTWrapper
+      %assign ::CompiledModel.GRTWrapper = ::CompiledModel.GRTWrapper + ...
+        FcnGenerateInitializeSizes()
+    %endif
+  %endif
+  
+  %closefile autoFunctions
+
+  %assert (!IsModelReferenceTarget() || WHITE_SPACE(autoFunctions))
+  %return autoFunctions
+
+%endfunction %% SLibErtAutoFunctions
+
+%% Function: SLibErtNeedNonFiniteInit ==========================================
+%% Abstract:
+%%   Return whether call to nonfinite initialize function is needed.
+%%   Note, this function dependent on all caching being completed due to
+%%   call to SLibRealNonFinitesRequired().
+%%
+%function SLibERTNeedNonFiniteInit() void
+  %if ( GenerateGRTWrapper && !SLibIsERTTarget() ) || ... 
+    SLibRealNonFinitesRequired() || ...
+      ModelReferenceTargetType == "SIM"
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %% SLibERTNeedNonFiniteInit
+
+%% Function: SLibGetGRTWrapperLinkage ==========================================
+%% Abstract:
+%%   Return the linkage specifier prefix for GRT wrapper model APIs.  Examples:
+%%                 void MdlOutputs for GRT        C   targets
+%%      extern "C" void MdlOutputs for GRT        C++ targets
+%%      static     void MdlOutputs for GRT malloc C   targets
+%%
+%function SLibGetGRTWrapperLinkage() void
+  %assert GenerateGRTWrapper == TLC_TRUE
+  %assign MdlApiLinkageSpecifier = ::ExternCPrefix
+  %%  Assign the linkage specification for Mdl* APIs
+  %%  (eg. static, extern "C", default, etc.)
+  %if UsingMalloc
+    %%  GRT malloc C:                  static
+    %%  GRT malloc C++:                static
+    %%  GRT malloc C++ encapsulated:   unsupported
+    %assign MdlApiLinkageSpecifier = "static"
+  %endif %% 
+  %return MdlApiLinkageSpecifier
+%endfunction %% SLibGetGRTWrapperLinkage()
+
+%function SLibUseBackwardCompatibleReusableInterface() void
+  %return TLC_FALSE || SLibAutosarActive()
+%endfunction %% SLibUseBackwardCompatibleReusableInterface()
+
+%endif %% _ERTLIB_
+
+%% [EOF] ertlib.tlc

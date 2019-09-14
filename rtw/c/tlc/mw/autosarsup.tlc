@@ -1,0 +1,825 @@
+%%
+%% Autosar tlc functions.
+%%
+%% Abstract:
+%%   Support Autosar
+%%
+%% =====================================================================
+
+%%   Copyright 2004-2018 The MathWorks, Inc.
+
+%selectfile NULL_FILE
+
+%% Function to extract ArgSpecData etc. from RTWAutosar class
+%function FcnGetAutosarRecord() void
+  %return FcnGetAutosarDataMap()
+%endfunction
+
+%% Function to extract Inputs/outputs etc. from RTWAutosar class. The data
+%% is mapped, hence is efficient
+%function FcnGetAutosarDataMap() void
+  %if !ISFIELD(::CompiledModel.RTWAutosar, "MapData")
+    %with ::CompiledModel.RTWAutosar
+      %if ISFIELD(::CompiledModel.RTWAutosar, "ComponentName")
+        %assign path = ...
+          FEVAL("arxml.splitAbsolutePath", ComponentName)
+        %assign mainInterfaceName = path[SIZE(path, 1)-1]
+      %else
+        %assign mainInterfaceName = ...
+          FEVAL("autosar.api.Utils.componentName", ::CompiledModel.Name)
+      %endif
+      
+      %createrecord mapData {                                 \
+        InitRunnableName        InitRunnables.Runnable.Name;     \
+        InitRunnableSymbol      InitRunnables.Runnable.Symbol;   \
+        PeriodicRunnableName    AutosarRunnables.Runnable[0].Name; \
+        PeriodicRunnableSymbol  AutosarRunnables.Runnable[0].Symbol; \
+        ComponentName           mainInterfaceName;               \
+        MainInterfaceName       mainInterfaceName                \
+      }
+            
+      %addtorecord ::CompiledModel.RTWAutosar MapData mapData
+    %endwith   %% ::CompiledModel.RTWAutosar
+
+    %if !ISFIELD(::CompiledModel.RTWAutosar, "ExportedDataTypesIdx")
+      %addtorecord ::CompiledModel.RTWAutosar ExportedDataTypesIdx { }
+    %endif
+    
+    %if !ISFIELD(::CompiledModel.RTWAutosar, "ARPrimitiveTypes")
+      %addtorecord ::CompiledModel.RTWAutosar ARPrimitiveTypes {     \
+        Boolean    "boolean_T"     \
+        SInt4      "int8_T"        \
+        SInt8      "int8_T"        \
+        SInt16     "int16_T"       \
+        SInt32     "int32_T"       \
+        UInt4      "uint8_T"       \
+        UInt8      "uint8_T"       \
+        UInt16     "uint16_T"      \
+        UInt32     "uint32_T"      \
+        Float      "real32_T"       \
+        Double     "real_T"        \
+      }
+    %endif
+    
+    %% Record data types as exported
+    %% check on Inports
+    %with ::CompiledModel.ExternalInputs
+      %foreach idx = NumExternalInputs
+        %assign ei = ExternalInput[idx]
+        %assign dtypeId = SLibGetRecordDataTypeId(ei)
+        %<SLibAutosarMarkDataTypeAsExported(dtypeId)>
+        %<SLibAutosarMarkChildrenDataTypeAsExported(dtypeId)>
+      %endforeach
+    %endwith
+
+    %% check on Outports
+    %with ::CompiledModel.ExternalOutputs
+      %foreach idx = NumExternalOutputs
+        %assign ei = ExternalOutput[idx]
+        %assign dtypeId = SLibGetRecordDataTypeId(ei)
+        %<SLibAutosarMarkDataTypeAsExported(dtypeId)>
+        %<SLibAutosarMarkChildrenDataTypeAsExported(dtypeId)>
+      %endforeach
+    %endwith
+
+    %% check on Simulink Functions and Function Caller block arguments
+    %with ::CompiledModel
+      %if NumSimulinkFunctions > 0    
+        %foreach fcnIdx = NumSimulinkFunctions 
+           %assign fcnRec = SimulinkFunction[fcnIdx]
+           %if SLibSimulinkFunctionNeedsDeclaration(fcnRec)
+             %foreach dtIdx = SIZE(fcnRec.ArginCGTypeIdx, 1)
+               %assign idx = fcnRec.ArginCGTypeIdx[dtIdx]
+               %if idx >= ::CompiledModel.DataTypes.NumSLBuiltInDataTypes
+                 %assign idx = LibCGTypeToSLType(idx)
+               %endif
+               %assign dtypeId = CompiledModel.DataTypes.DataType[idx].Id
+               
+               %<SLibAutosarMarkDataTypeAsExported(dtypeId)>
+               %<SLibAutosarMarkChildrenDataTypeAsExported(dtypeId)>              
+             %endforeach
+             %foreach dtIdx = SIZE(fcnRec.ArgoutCGTypeIdx, 1)
+               %assign idx = fcnRec.ArgoutCGTypeIdx[dtIdx]
+               %if idx >= ::CompiledModel.DataTypes.NumSLBuiltInDataTypes
+                 %assign idx = LibCGTypeToSLType(idx)
+               %endif
+               %assign dtypeId = CompiledModel.DataTypes.DataType[idx].Id
+               %if dtIdx != fcnRec.ReturnArgIndex || ISEQUAL(CompiledModel.DataTypes.DataType[idx].Name, "Std_ReturnType")
+                 %<SLibAutosarMarkDataTypeAsExported(dtypeId)>
+                 %<SLibAutosarMarkChildrenDataTypeAsExported(dtypeId)>              
+               %endif
+             %endforeach
+           %endif
+         %endforeach
+      %endif
+    %endwith
+
+    %% check on client blocks
+    %foreach sysIdx = ::CompiledModel.NumSystems
+      %with ::CompiledModel.System[sysIdx]
+        %foreach idx = NumBlocks
+          %assign blk = Block[idx]
+          %if (blk.Type == "S-Function") && (blk.ParamSettings.FunctionName == "sfun_autosar_clientop")
+            %foreach portIdx = blk.NumDataInputPorts
+              %assign port = blk.DataInputPort[portIdx]
+              %assign dtypeId = SLibGetRecordDataTypeId( port )
+              %<SLibAutosarMarkDataTypeAsExported(dtypeId)>
+              %<SLibAutosarMarkChildrenDataTypeAsExported(dtypeId)>
+            %endforeach
+            %foreach portIdx = blk.NumDataOutputPorts
+              %assign port = blk.DataOutputPort[portIdx]
+              %assign dtypeId = SLibGetRecordDataTypeId( port )
+              %<SLibAutosarMarkDataTypeAsExported(dtypeId)>
+              %<SLibAutosarMarkChildrenDataTypeAsExported(dtypeId)>
+            %endforeach
+          %endif
+        %endforeach
+      %endwith
+    %endforeach
+    
+    %% IRVs
+    %assign autosar = ::CompiledModel.RTWAutosar
+    %assign numAutosarRunnables = SIZE(autosar.AutosarRunnables.Runnable, 1)
+    %foreach rIdx = numAutosarRunnables
+      %assign runnable = autosar.AutosarRunnables.Runnable[rIdx]
+      %if !ISFIELD(runnable, "IOFunction")
+        %continue
+      %endif
+      %assign numIOFcns = SIZE(runnable.IOFunction, 1)
+      %foreach fIdx = numIOFcns
+        %assign ioFcn = runnable.IOFunction[fIdx]
+        %assign dtypeId = SLibGetRecordDataTypeId( ioFcn )
+        %switch ioFcn.Class
+          %case "ImplicitInterrunnableRead"
+          %case "ImplicitInterrunnableWrite"
+          %case "ExplicitInterrunnableRead"
+          %case "ExplicitInterrunnableWrite"
+            %<SLibAutosarMarkDataTypeAsExported(dtypeId)>
+            %<SLibAutosarMarkChildrenDataTypeAsExported(dtypeId)>
+            %break
+          %default
+            %% okay as it's not an IRV
+        %endswitch
+      %endforeach
+    %endforeach
+
+  %else
+    %% Do nothing
+  %endif
+  %return ::CompiledModel.RTWAutosar.MapData
+%endfunction
+
+	
+%% Function: SLibAutosarMatrixIOAsArray =========================
+%% Abstract:
+%%   Checks whether AutosarMatrixIOAsArray is enabled
+%%
+%function SLibAutosarMatrixIOAsArray() void
+  %return ISFIELD(::CompiledModel.ConfigSet, "AutosarMatrixIOAsArray") && ...
+          ::CompiledModel.ConfigSet.AutosarMatrixIOAsArray
+%endfunction
+
+%% Function: SLibAutosarCompilerAbstractionRequired =========================
+%% Abstract:
+%%   Checks whether code needs AUTOSAR compiler abstraction macros
+%%
+%function SLibAutosarCompilerAbstractionRequired() void
+  %return SLibAutosarActive() && ::CompiledModel.ConfigSet.AutosarCompilerAbstraction && !IsModelReferenceTarget()
+%endfunction
+
+%function SLibAutosarGetSchemaVersion() void
+  %if ISFIELD(::CompiledModel.ConfigSet, "AutosarSchemaVersion")
+    %return ::CompiledModel.ConfigSet.AutosarSchemaVersion    
+  %else
+    %return "UNDEFINED"
+  %endif
+
+%endfunction
+
+%% Function: SLibAutosarIsAR4 =========================
+%% Abstract:
+%%   Is this an AUTOSAR R4.x model?
+%%
+%function SLibAutosarIsAR4() void
+  %if (SLibAutosarGetSchemaVersion() == "UNDEFINED")
+    %return TLC_FALSE
+  %else
+    %return CAST("Real", SLibAutosarGetSchemaVersion()) >= 4.0
+  %endif
+%endfunction
+
+
+%function SLibGetAutosarMemClass(memclasstype) void
+  %if !ISFIELD(::CompiledModel.RTWAutosar, "MemClass")
+    %addtorecord ::CompiledModel.RTWAutosar MemClass {}
+  %endif
+
+  %if !ISFIELD(::CompiledModel.RTWAutosar.MemClass, memclasstype)
+    %switch memclasstype
+      %case "FuncCalledByRTE"
+        %assign memclass = AutosarSWCName() + "_CODE"
+        %break
+      %case "FuncInternal"
+        %assign memclass = AutosarSWCName() + "_CODE_LOCAL"
+        %break
+      %case "DataGlobal"
+        %assign memclass = AutosarSWCName() + "_VAR"
+        %break
+      %case "DataAutomatic"
+        %assign memclass = "AUTOMATIC"
+        %break
+      %default
+        %<LibReportFatalError(...
+          "SLibAutosarGetMemClass: Invalid memclass type: " + memclasstype)>
+    %endswitch
+    %addtorecord ::CompiledModel.RTWAutosar.MemClass %<memclasstype> memclass
+  %endif
+
+  %return ::CompiledModel.RTWAutosar.MemClass.%<memclasstype>
+%endfunction
+
+%% Function: SLibGetAutosarMemClassForRunnable =================================
+%% Abstract:
+%%   Function to compute memory class for a runnable, in order for it to be 
+%%   used in the compiler abstraction macro.
+%%
+%function SLibGetAutosarMemClassForRunnable(swAddrName) void
+  %if ISEMPTY(swAddrName)
+    %% Use default compiler abstraction when no SwAddrMethod is configured
+    %return SLibGetAutosarMemClass("FuncCalledByRTE")
+  %endif
+  
+  %if !ISFIELD(::CompiledModel.RTWAutosar, "MemClass")
+    %addtorecord ::CompiledModel.RTWAutosar MemClass {}
+  %endif
+  
+  %if !ISFIELD(::CompiledModel.RTWAutosar.MemClass, swAddrName)
+    %assign memclass = AutosarSWCName() + "_" + "%<swAddrName>"
+    %addtorecord ::CompiledModel.RTWAutosar.MemClass %<swAddrName> memclass
+  %endif
+  
+  %return ::CompiledModel.RTWAutosar.MemClass.%<swAddrName>
+%endfunction
+
+%% Function: SLibAutosarCompilerAbstractionForFcnDeclRtnType =======================
+%% Abstract:
+%%    Appends AUTOSAR compiler abstraction macro to function declaration return type.
+%%
+%% Takes in a function type string:
+%% FuncCalledByRTE: Function is called by AUTOSAR RTE (only applicable to runnables)
+%% FuncInternal   : Function is locally called
+%% 
+%% e.g. SLibAutosarCompilerAbstractionForFcnDeclRtnType(void, "FuncCalledByRTE")
+%% returns: FUNC(void, <SWC>_CODE)
+%%
+%function SLibAutosarCompilerAbstractionForFcnDeclRtnType(rtnDataType, fcnType, swAddrName) void
+  %if SLibAutosarCompilerAbstractionRequired()
+    %% Model is configured for AUTOSAR
+    %% Note: (SLibAutosarActive == TLC_FALSE) for referenced models
+    %if fcnType == "FuncCalledByRTE" 
+      %return "FUNC(" + rtnDataType +", " + SLibGetAutosarMemClassForRunnable(swAddrName) + ")"
+    %else
+      %return "FUNC(" + rtnDataType +", " + SLibGetAutosarMemClass(fcnType) + ")"
+    %endif
+  %else
+    %return rtnDataType
+  %endif
+%endfunction
+
+
+%% Function: SLibAutosarCompilerAbstractionForDataDecl =======================
+%% Abstract:
+%%    Appends AUTOSAR compiler abstraction macro to data declarations
+%%
+%% Takes in a variable type string:
+%% DataGlobal   : Global data
+%% DataAutomatic: Automatic (stack allocated) data
+%% 
+%function SLibAutosarCompilerAbstractionForDataDecl(isConst, datatype, isPtr, ptrIsConst, name, varType) void
+
+  %if isPtr
+    %if ptrIsConst
+      %assign constPrefix = "CONST"
+    %else
+      %assign constPrefix = ""
+    %endif
+    %if isConst
+      %return "%<constPrefix>P2CONST(%<datatype>, %<SLibGetAutosarMemClass(varType)>, %<SLibGetAutosarMemClass("DataGlobal")>) %<name>"
+    %else
+      %return "%<constPrefix>P2VAR(%<datatype>, %<SLibGetAutosarMemClass(varType)>, %<SLibGetAutosarMemClass("DataGlobal")>) %<name>"
+    %endif   
+  %else
+    %if isConst
+      %return "CONST(%<datatype>, %<SLibGetAutosarMemClass(varType)>) %<name>"
+    %else
+      %return "VAR(%<datatype>, %<SLibGetAutosarMemClass(varType)>) %<name>"
+    %endif
+  %endif
+  
+%endfunction  
+ 
+%% Function: SLibIsAutosarMemorySection
+%% Abstract:
+%%   This function returns true if the memory section is AUTOSAR compatible
+%function SLibIsAutosarMemorySection(msDef)
+  %return ISFIELD(msDef, "RefPackageName") && ...
+          ISEQUAL(msDef.RefPackageName, "AUTOSAR") && ...
+          (ISEQUAL(msDef.RefDefnName, "SwAddrMethod") || ...
+          ISEQUAL(msDef.RefDefnName, "SwAddrMethod_Const") || ...
+          ISEQUAL(msDef.RefDefnName, "SwAddrMethod_Const_Volatile") || ...
+          ISEQUAL(msDef.RefDefnName, "SwAddrMethod_Volatile"))
+%endfunction
+
+%% Function: SLibAutosarWarnOrErrorForNonExportedDataTypes ====================
+%% Abstract:
+%% DataTypes that are used on the interface of the SWC are exported and 
+%% will appear in the Rte_Type.h which is generated by an RTE generator. 
+%% However, any types that are internal to the SWC will not be exported.
+%% This function checks whether these types have their HeaderFile set to 
+%% Rte_Type.h and if so, a warning/error is reported. Such types will be
+%% generated in model_types.h
+%% 
+%function SLibAutosarWarnOrErrorForNonExportedDataTypes(dtIdx, dtName, dtHeaderFile) void
+              
+      %if SLibAutosarIsDataTypeExported(dtIdx)
+        %%check that user has set header file correctly
+        %if dtHeaderFile == "" || dtHeaderFile == "\"Rte_Type.h\""
+          %% okay
+        %else
+          %<SLibReportErrorWithIdAndArgs("RTW:tlc:CannotExportDtype", dtName)>
+        %endif
+        
+        %% For struct data types we need to make sure that the type definition is also exported
+        %if LibIsStructDataType(dtIdx)
+          %assign idAliasedThruTo = LibGetDataTypeIdAliasedThruToFromId(dtIdx)
+          %if idAliasedThruTo != dtIdx
+            %assign nameAliasedThruTo = LibGetDataTypeNameFromId(idAliasedThruTo)
+            %if !SLibAutosarIsDataTypeExported(idAliasedThruTo)
+              %<SLibReportErrorWithIdAndArgs("RTW:tlc:CannotExportDtype2", ...
+                ["%<dtName>", "%<nameAliasedThruTo>", "%<dtName>", "%<dtName>"])>
+            %endif
+          %endif
+        %endif
+
+      %else %% Internal DataType
+        %% okay
+      %endif
+            
+%endfunction
+
+
+%% Function: SLibAutosarMarkDataTypeAsExported ====================
+%% Abstract:
+%% Mark data type as exported and hence known by the RTE,
+%% exported data types do not need to be declared in model_type.h as they will
+%% be declared in the generated Rte_Type.h file
+%% 
+%function SLibAutosarMarkDataTypeAsExported(CGTypeIdx) void
+
+    %if !SLibAutosarActive()
+      %% Early return for non AUTOSAR model
+      %return
+    %endif
+  
+  
+    %if !ISFIELD(::CompiledModel.RTWAutosar, "ExportedDataTypesIdx")
+      %addtorecord ::CompiledModel.RTWAutosar ExportedDataTypesIdx { }
+    %endif
+  
+    %assign dtStr = "datatype%<CGTypeIdx>"
+    
+    %if !ISFIELD(::CompiledModel.RTWAutosar.ExportedDataTypesIdx, dtStr)
+    %addtorecord ::CompiledModel.RTWAutosar.ExportedDataTypesIdx %<dtStr> 1
+  %else
+    %% The data type has been already visited but force the flag
+    %assign ::CompiledModel.RTWAutosar.ExportedDataTypesIdx.%<dtStr> = 1
+    %return
+    %endif
+    
+  %% Recurse on alias types
+  %if LibIsAliasDataType(CGTypeIdx)
+    %assign aliasedToTypeId = LibGetDataTypeIdAliasedToFromId(CGTypeIdx)
+    %assign aliasedToTypeName = LibGetDataTypeNameFromId(aliasedToTypeId)
+    %assign aliasedToExported = SLibAutosarIsDataTypeExported(aliasedToTypeId)
+    %<SLibAutosarMarkDataTypeAsExported(aliasedToTypeId)>
+    %if !ISFIELD(::CompiledModel.RTWAutosar.ARPrimitiveTypes, aliasedToTypeName) &&...
+        !aliasedToExported && !LibIsEnumDataType(CGTypeIdx)
+      %% This aliased to type isn't an AUTOSAR primitive type nor a top level 
+      %% alias type -> need to report a warning about this type 
+      %assign ::CompiledModel.RTWAutosar.ExportedDataTypesIdx.datatype%<aliasedToTypeId> = 0      
+    %endif
+  %endif  
+
+  %assign dt = ::CompiledModel.DataTypes.DataType[CGTypeIdx]
+  
+  %if !ISEMPTY(dt)
+    %assign dtIsUserProvided = dt.IsUserProvided
+    %if dtIsUserProvided
+      %assign dtHeaderFileQuoted = LibHeaderFileForDataType(dt)
+      %<SLibAutosarWarnOrErrorForNonExportedDataTypes(CGTypeIdx, dt.Name, dtHeaderFileQuoted)>
+    %endif
+  %endif
+%endfunction
+
+
+%% Function: SLibAutosarMarkChildrenDataTypeAsExported ====================
+%% Abstract:
+%% Mark the children data types of the data type as exported
+%%
+%function SLibAutosarMarkChildrenDataTypeAsExported( parentDataTypeId ) void
+  
+  %foreach idxE = LibDataTypeNumElements( parentDataTypeId )
+    %assign eDTypeId = LibDataTypeElementDataTypeId( parentDataTypeId, idxE )
+    %<SLibAutosarMarkDataTypeAsExported( eDTypeId )>
+    %<SLibAutosarMarkChildrenDataTypeAsExported( eDTypeId )>
+  %endforeach
+  
+%endfunction
+
+
+%% Function: SLibAutosarIsDataTypeExported ====================
+%% Abstract:
+%% Returns TLC_TRUE if data type is exported and hence known by the RTE,
+%% exported data types do not need to be declared in model_type.h as they will
+%% be declared in the generated Rte_Type.h file
+%% 
+%function SLibAutosarIsDataTypeExported(CGTypeIdx) void
+
+  %% Make sure that Autosar map is populated
+  %assign autosarSpec = FcnGetAutosarRecord()
+  
+  %assign dtStr = "datatype%<CGTypeIdx>"
+  %if ISFIELD(::CompiledModel.RTWAutosar.ExportedDataTypesIdx, dtStr) &&...
+      ISEQUAL(::CompiledModel.RTWAutosar.ExportedDataTypesIdx.%<dtStr>, 1)
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+  
+%endfunction
+ 
+%function AutosarSWCName() void
+  %assign autosarSpec = FcnGetAutosarRecord()
+  %return autosarSpec.MainInterfaceName 
+%endfunction
+
+
+%function SLibAutosarIsMultiRunnableFcn(functionName)
+  %% are we dealing with a runnable?
+  %assign autosar = ::CompiledModel.RTWAutosar
+  %assign numAutosarRunnables = SIZE(autosar.AutosarRunnables.Runnable, 1)
+  %foreach rIdx = numAutosarRunnables
+    %assign runnableSymbol = autosar.AutosarRunnables.Runnable[rIdx].Symbol
+    %if functionName == runnableSymbol
+      %return TLC_TRUE
+    %endif
+  %endforeach
+  %return TLC_FALSE
+%endfunction
+
+
+%function MainAutosarInterfaceName() void
+  %assign autosarSpec = FcnGetAutosarRecord()
+  %return "Rte_" + autosarSpec.MainInterfaceName 
+%endfunction
+
+
+%function SLibAutosarIsPassByPtr2BaseType()
+  %% Determine if array reference is by pointer to array base type
+  %if SLibAutosarIsAR4()
+    %return TLC_TRUE
+  %endif
+  %return TLC_FALSE
+%endfunction
+
+
+%function SLibAutosarGetPtrConstPrefix()
+  %% Determine if array reference is by pointer to array base type
+  %if SLibAutosarIsAR4()
+    %return "const "
+  %endif
+  %return ""
+%endfunction
+
+%% Function: FcnAddRunnableAccessInfoViaSystem===============
+%% Abstract: 
+%%   Recursively records parent runnable(s) name of system 
+%%
+%function SLibAutosarFcnAddRunnableAccessInfoViaSystem(system, RunnableAccessInfo, infoType) void
+  %assign runnableIdx = system.RunnableIdx 
+  %assign resetRunnable = FcnGetAutosarResetRunnable(system.CurrentTID)
+  %if !ISEMPTY(resetRunnable)
+    %<SLibAutosarFcnAddRunnableAccessInfo(resetRunnable, RunnableAccessInfo, infoType)>
+  %elseif runnableIdx >= 0
+    %if ::CompiledModel.SolverType == "FixedStep" && ...
+      ::CompiledModel.FixedStepOpts.SolverMode == "MultiTasking" && ...
+      !SLibIsExportFcnDiagram()
+      %if (TYPE(system.CurrentTID) == "Vector")
+        %foreach idx = SIZE(system.CurrentTID, 1)
+          %assign runnable = ::CompiledModel.RTWAutosar.AutosarRunnables.Runnable[system.CurrentTID[idx]]
+          %<SLibAutosarFcnAddRunnableAccessInfo(runnable, RunnableAccessInfo, infoType)>
+        %endforeach
+      %elseif (system.CurrentTID >=0)
+        %assign runnable = ::CompiledModel.RTWAutosar.AutosarRunnables.Runnable[system.CurrentTID]
+        %<SLibAutosarFcnAddRunnableAccessInfo(runnable, RunnableAccessInfo, infoType)>
+      %else
+        %<LibReportFatalError("Could not find runnable in AutosarRunnables")>
+      %endif
+    %else
+      %assign runnable = ::CompiledModel.RTWAutosar.AutosarRunnables.Runnable[runnableIdx]
+      %<SLibAutosarFcnAddRunnableAccessInfo(runnable, RunnableAccessInfo, infoType)>
+    %endif    
+  %else
+    %% Below code added for test/toolbox/rtw/targets/AUTOSAR/ClientServer/ModelingPatternsBuild/tBuildDataTypes lvlTwo_BuildServerModel
+    %% Since async export fcn models are going through the rate grouping path,
+    %% ::BlockFcn will be "Output" rather than the export fcn name. We should add runnable 
+    %% access info by fcn name rather than the system.
+    %if SLibIsExplicitTaskingExportFcnRateGrouping(::BlockFcn, system.CurrentTID)
+        %<SLibAutosarFcnAddRunnableAccessInfoViaFcnName(SampleTime[system.CurrentTID].EntryFcnName, RunnableAccessInfo, infoType)>
+    %else    
+      %assign callSites = system.CallSites
+      %assign numCallers = SIZE(callSites, 0)
+      %foreach idx = numCallers
+        %assign calleeSystem = ::CompiledModel.System[callSites[idx][0]]
+        %assign calleSystemPrevTID = calleeSystem.CurrentTID
+        %if (ISEMPTY(calleeSystem.CurrentTID) || ...
+          ISEQUAL(calleeSystem.CurrentTID, -1) ) && ...
+          ::CompiledModel.SolverType == "FixedStep" && ...
+          ::CompiledModel.FixedStepOpts.SolverMode == "MultiTasking"
+          %assign calleeGraph  = ::CompiledModel.System[callSites[idx][2]]
+          %assign calleeBlock  = calleeGraph.Block[callSites[idx][3]]
+          %% set the calleSystem's currentTID
+          %assign calleeSystem.CurrentTID = LibGetSubsystemBlkTIDForTask(calleeBlock, TLC_FALSE)
+        %endif
+        %<SLibAutosarFcnAddRunnableAccessInfoViaSystem(...
+          calleeSystem, RunnableAccessInfo, infoType)>
+        %if !ISEQUAL(calleSystemPrevTID, calleeSystem.CurrentTID)
+          %assign calleeSystem.CurrentTID = calleSystemPrevTID
+        %endif
+      %endforeach
+    %endif
+  %endif
+%endfunction
+
+
+%% Function: FcnAddAccessInfoForAutosarCalibrationHelper ===============
+%% Abstract: 
+%%   Records accessing runnable name - needed for xml export
+%%
+%function FcnAddAccessInfoForAutosarCalibrationHelper(record) void
+  %assign isMdlRef = IsModelReferenceTarget()
+  %if !ISFIELD(record, "RunnableAccessInfo")
+    %addtorecord record RunnableAccessInfo {}
+  %endif
+
+  %with record
+    %if EXISTS("BlockFcn")
+      %if ::BlockFcn == "Initialize" || ::BlockFcn == "Start" || ...
+        ::BlockFcn == "SystemInitialize" || ...
+        ::BlockFcn == "Registration" || ::BlockFcn == "ModelInitialize"
+        %if isMdlRef
+          %addtorecord RunnableAccessInfo MdlRefInitializeFcn 1
+        %else
+          %assign InitRunnableName = ::CompiledModel.RTWAutosar.InitRunnables.Runnable[0].Symbol
+          %if !ISFIELD(RunnableAccessInfo, InitRunnableName)
+            %addtorecord RunnableAccessInfo %<InitRunnableName> 1
+          %endif
+        %endif
+      %elseif ::BlockFcn == "Terminate"
+        %if isMdlRef
+          %addtorecord RunnableAccessInfo MdlRefTerminateFcn 1
+        %else
+          %assign TerminateRunnableName = ::CompiledModel.RTWAutosar.TerminateRunnables.Runnable[0].Symbol
+          %if !ISFIELD(RunnableAccessInfo, TerminateRunnableName)
+            %addtorecord RunnableAccessInfo %<TerminateRunnableName> 1
+          %endif
+        %endif
+      %elseif ::BlockFcn == "Output" || ::BlockFcn == "OutputUpdate"
+        %if isMdlRef
+          %addtorecord RunnableAccessInfo MdlRefOutputFcn 1
+        %else
+          %assign activeSys = ::CompiledModel.System[::activeSysIdx]
+          %<SLibAutosarFcnAddRunnableAccessInfoViaSystem(activeSys, RunnableAccessInfo, "CalPrm")>
+        %endif
+      %elseif ::GlobalGeneratingSubFunctions
+        %if isMdlRef
+          %addtorecord RunnableAccessInfo MdlRefOutputFcn 1
+        %else
+          %<SLibAutosarFcnAddRunnableAccessInfoViaFcnName(::BlockFcn, RunnableAccessInfo, "CalPrm")>
+        %endif
+      %elseif ::BlockFcn == "GlobalMap"
+        %% Okay
+      %elseif ::BlockFcn == "Unknown"
+        %% Okay assume not a runnable
+      %else %% BlockFcn unaccounted for e.g. Enable or Terminate
+        %assert TLC_FALSE 
+      %endif
+    %else %% BlockFcn does not exist
+      %assert TLC_FALSE
+    %endif
+  %endwith
+%endfunction
+
+%% Function: SLibAutosarFcnAddRunnableAccessInfoViaFcnName ===============
+%% Abstract: 
+%%   Add RunnableAccessInfo to Runnable with a given "fcnName" 
+%%   For either PIM or CalPrm
+%%
+%function SLibAutosarFcnAddRunnableAccessInfoViaFcnName(fcnName, RunnableAccessInfo, infoType) void
+  %if infoType != "PIM" && infoType != "CalPrm"
+    %assert 0
+  %endif
+  
+  %assign autosarRunnables = ::CompiledModel.RTWAutosar.AutosarRunnables
+  %if !ISFIELD(autosarRunnables, "NameToRecordMap")
+    %addtorecord autosarRunnables NameToRecordMap { }
+    %assign numAutosarRunnables = SIZE(autosarRunnables.Runnable, 1)
+    %foreach rIdx = numAutosarRunnables      
+      %assign runnable = autosarRunnables.Runnable[rIdx]
+      %addtorecord autosarRunnables.NameToRecordMap %<runnable.Symbol> runnable
+    %endforeach
+  %endif
+  %assign runnableMap = autosarRunnables.NameToRecordMap
+  %if ISFIELD(runnableMap, fcnName)
+    %assign runnable = GETFIELD(runnableMap, fcnName)
+    %<SLibAutosarFcnAddRunnableAccessInfo(runnable, RunnableAccessInfo, infoType)>
+  %else
+    %% If CalPrm is used in a stateflow chart then fcnName is one of function
+    %% name in the chart. In this case we get the block name that is the name
+    %% of the stateflow chart.
+    %assign currFcn = ::CompiledModel.RTWCGModules.RTWCGModule[::CurrentModuleIdx].Function[::CurrentFunctionIdx]
+    %assert(currFcn.Name == fcnName)
+    %assign blkName = currFcn.BlockName
+    
+    %% One of the systems should have blkName as its name.
+    %assign isFoundRunnable = TLC_FALSE
+    %foreach currSysIdx = ::CompiledModel.NumSystems
+      %if ::CompiledModel.System[currSysIdx].Name == blkName
+        %assign isFoundRunnable = TLC_TRUE
+        %assign chartSys = ::CompiledModel.System[currSysIdx]
+        %<SLibAutosarFcnAddRunnableAccessInfoViaSystem(chartSys, RunnableAccessInfo, infoType)>
+      %endif
+    %endforeach
+    
+    %if !isFoundRunnable
+      %<LibReportFatalError("Could not find runnable in AutosarRunnables")>
+    %endif
+  %endif
+%endfunction
+
+
+%function SLibGetTypeNameForMultiInstanceAUTOSAR(cgTypeIdx) void
+  %assign cgType = ::CompiledModel.CGTypes.CGType[cgTypeIdx]
+  %assert (SLibAutosarActive() && MultiInstanceERTCode)
+  %%
+  %%
+  %if (LibCGTypeIsStruct(cgTypeIdx))
+    %% Structure type
+    %%
+    %%
+    %if ISFIELD(cgType,"SLTypeIdx") && (cgType.SLTypeIdx != -1)
+      %% Error out if bus object whose header file is Rte_Type.h
+      %assign slIdx = cgType.SLTypeIdx
+      %if (LibHeaderFromOPForDataTypeIdx(slIdx) == "Rte_Type.h")
+        %<SLibReportErrorWithIdAndArgs("RTW:autosar:invalidMultiInstanceType", cgType.Name)>
+      %endif
+    %endif
+    %%
+    %return SLibGetTypeNameFromCGType(cgTypeIdx)
+    %% 
+  %elseif (LibCGTypeIsMatrix(cgTypeIdx))
+    %% Matrix type
+    %%
+    %%
+    %return SLibGetTypeNameForMultiInstanceAUTOSAR(LibCGTypeBaseIndex(cgTypeIdx))
+    %%
+  %elseif (LibCGTypeIsRenamed(cgTypeIdx)) 
+    %% Alias type
+    %%
+    %%
+    %assign dTypeIdx = cgType.SLTypeIdx
+    %if dTypeIdx < 0
+      %return SLibGetTypeNameForMultiInstanceAUTOSAR(LibCGTypeBaseIndex(cgTypeIdx))
+    %else
+      %assign aliasThruIdx= LibGetDataTypeIdAliasedThruToFromId(dTypeIdx)
+      %assign aliasedCGTypeIdx = SLibGetCGTypeFromSLTypeId(aliasThruIdx)
+      %return SLibGetTypeNameForMultiInstanceAUTOSAR(aliasedCGTypeIdx)
+      %%
+    %endif
+    %%
+  %elseif (LibCGTypeIsEnum(cgTypeIdx))
+    %% Enumerated Type
+    %%
+    %% Return storage type for enum type whose header file is Rte_Type.h
+    %if (LibHeaderFromOPForDataTypeIdx(cgType.SLTypeIdx) == "Rte_Type.h")
+      %if LibIsEnumTypeStoredAsInt(cgType.SLTypeIdx) 
+        %% Storage type is int32
+        %return SLibGetTypeNameFromCGType(tSS_INT32)
+      %else
+        %assign storageDTId = LibGetEnumTypeStorageType(cgType.SLTypeIdx)
+        %return SLibGetTypeNameFromCGType(storageDTId)
+      %endif
+    %else
+      %return SLibGetTypeNameFromCGType(cgTypeIdx)
+    %endif
+    %%
+  %elseif (LibCGTypeIsFixed(cgTypeIdx))
+    %return SLibGetTypeNameForMultiInstanceAUTOSAR(LibCGTypeBaseIndex(cgTypeIdx))
+  %else
+    %%
+    %%
+    %return SLibGetTypeNameFromCGType(cgTypeIdx)
+  %endif
+  %%
+%endfunction
+
+
+%% Function: SLibAutosarFcnAddRunnableAccessInfo ===============
+%% Abstract: 
+%%   Calls either FcnAddRunnableAccessInfoCalPrm or
+%%   FcnAddRunnableAccessInfoPIM to add RunnableAccessInfo
+%%
+%function SLibAutosarFcnAddRunnableAccessInfo(runnable, RunnableAccessInfo, infoType) void
+  %if infoType == "CalPrm"
+    %<FcnAddRunnableAccessInfoCalPrm(runnable, RunnableAccessInfo)>
+  %elseif infoType == "PIM"
+    %<FcnAddRunnableAccessInfoPIM(runnable, RunnableAccessInfo)>
+  %else
+    %assert 0
+  %endif
+%endfunction
+
+%% Function: FcnAddRunnableAccessInfoCalPrm ===============
+%% Abstract: 
+%%   Add runnable information to RunnableAccessInfo
+%%
+%function FcnAddRunnableAccessInfoCalPrm(runnable, RunnableAccessInfo) void
+  %assign RunnableSymbol = runnable.Symbol
+  %if !ISFIELD(RunnableAccessInfo, RunnableSymbol)
+    %addtorecord RunnableAccessInfo %<RunnableSymbol> 1
+  %endif
+%endfunction
+
+%% Function: FcnAddRunnableAccessInfoPIM ===============
+%% Abstract: 
+%%   Add runnable information to RunnableAccessInfo
+%%
+%function FcnAddRunnableAccessInfoPIM(runnable, RunnableAccessInfo) void
+  %if !ISFIELD(runnable, "HasPerInstanceMemoryDSM")
+    %addtorecord runnable HasPerInstanceMemoryDSM 1
+  %endif
+  %assign RunnableSymbol = runnable.Symbol
+  %if !ISFIELD(RunnableAccessInfo, RunnableSymbol)
+    %addtorecord RunnableAccessInfo %<RunnableSymbol> 1
+  %endif
+%endfunction
+
+%% Function: FcnGetMultiInstanceRunnableArgs ==================================
+%% Abstract: 
+%%   Get argument(s) to multi-instantiable runnable functions
+%%
+%function FcnGetMultiInstanceRunnableArgs(isCallSite) void
+  %assert MultiInstanceERTCode
+  %assign argName = FcnGetInstanceHandleName()
+  %assign argType = "Rte_Instance"
+  %if isCallSite
+    %return argName
+  %else
+    %if SLibAutosarCompilerAbstractionRequired()   
+      %return SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, ...
+        "%<argType>", TLC_FALSE, TLC_FALSE, "%<argName>", "DataAutomatic" )
+    %else
+      %return "%<argType> %<argName>"
+    %endif
+  %endif  
+%endfunction
+
+%% Function: FcnGetInstanceHandleName =========================================
+%% Abstract: 
+%%   Get name of instance handle
+%%
+%function FcnGetInstanceHandleName() void
+  %assert MultiInstanceERTCode
+  %return RTWAutosar.InstanceHandleName
+%endfunction
+
+%% Function: FcnGetAutosarResetRunnable ===================================
+%% Abstract: 
+%%   Get AUTOSAR reset runnable by TID.
+%%
+%function FcnGetAutosarResetRunnable(tid) void
+  %assign autosar = ::CompiledModel.RTWAutosar
+  %if ISFIELD(autosar.AutosarRunnables, "Runnable")
+    %assign numRunnables = SIZE(autosar.AutosarRunnables.Runnable, 1)
+    %foreach rIdx = numRunnables
+      %% If this is a reset runnable, then another name is used.
+      %assign runnable = autosar.AutosarRunnables.Runnable[rIdx]
+      %if ISEQUAL(runnable.TID, tid) && runnable.IsReset == "yes"
+        %return runnable
+      %endif
+    %endforeach
+  %endif
+  %return []
+%endfunction
+
+%% [EOF] autosarsup.tlc

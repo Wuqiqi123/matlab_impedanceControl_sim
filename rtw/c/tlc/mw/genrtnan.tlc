@@ -1,0 +1,227 @@
+%%
+%%  
+%%
+%% Abstract:
+%%      TLC file for generating NaN via Target Function Library (TFL).
+%%
+%% Copyright 2003-2014 The MathWorks, Inc.
+
+%implements "genrtnan" "C"
+
+%% Function: FcnLittleEndian ===================================================
+%% Abstract:
+%%      Setup code for nonfinte values on little-endian processors
+%% 
+%function FcnLittleEndian() Output
+  union {
+    LittleEndianIEEEDouble bitVal;
+    real_T fltVal;
+  } tmpVal;
+  
+  %% Using MATLAB values for NaN rather than IEEE
+  tmpVal.bitVal.words.wordH = 0xFFF80000U;
+  tmpVal.bitVal.words.wordL = 0x00000000U;
+  nan = tmpVal.fltVal;
+%endfunction
+
+%% Function: FcnBigEndian ======================================================
+%% Abstract:
+%%      Setup code for nonfinte values on big-endian processors
+%% 
+%function FcnBigEndian() Output
+  union {
+    BigEndianIEEEDouble bitVal;
+    real_T fltVal;
+  } tmpVal;
+  
+  tmpVal.bitVal.words.wordH = 0x7FFFFFFFU;
+  tmpVal.bitVal.words.wordL = 0xFFFFFFFFU;
+  nan = tmpVal.fltVal;
+%endfunction
+
+%% Function: rtGetNaNF ==================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header and source file contents for rt_getNaNF.
+%%
+%function rtGetNaNF(fctInfo,fileH,fileC) void
+  %<rtGetNaN(fctInfo,fileH,fileC)>
+%endfunction
+
+%% Function: rtGetNaN ==================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header and source file contents for rt_getNaN.
+%%
+%function rtGetNaN(fctInfo,fileH,fileC) void
+  
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+
+  %% For size_t.
+  %<SLibCacheUtilCodeToFile("util_hdr_reqed_incl", fileH, "<stddef.h>")>
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  #include "rt_nonfinite.h"
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetNaN", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real_T rtGetNaN(void);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetNaN", msFcn, "Post")>\
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetNaNF", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real32_T rtGetNaNF(void);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetNaNF", msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+  
+  %% Create source file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  /*
+  * Abstract:
+  *      Function to initialize non-finite, NaN
+  */
+  #include "rtGetNaN.h"
+  
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>
+  
+  %openfile buf
+  #define NumBitsPerChar  %<::CompiledModel.ConfigSet.ProdBitPerChar>U
+  %closefile buf  
+  %<SLibCacheMacroToUtilityFile("NumBitsPerChar", buf, "util_src_defines", fileC)>
+
+  %openfile buf
+  %if GenCPP
+  extern "C" {
+  %endif
+  %assign fcnName = "rtGetNaN"
+  %assign fcnReturns = "real_T"
+  %assign fcnParams = "void"
+  %openfile fcnAbstract
+Initialize rtNaN needed by the generated code. 
+NaN is initialized as non-signaling. Assumes IEEE.
+  %closefile fcnAbstract
+  
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtnan.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    size_t bitsPerReal = sizeof(real_T) * (NumBitsPerChar);
+    real_T nan = 0.0;
+
+    if (bitsPerReal == 32U) {
+      nan = rtGetNaNF();
+    } else {
+    %if !SLibIsERTTarget() || ConfigSet.TargetEndianess == "Unspecified" || ConfigSet.PortableWordSizes == 1
+      uint16_T one = 1U;
+
+      enum {
+          LittleEndian,
+          BigEndian
+      } machByteOrder = (*((uint8_T *) &one) == 1U) ? LittleEndian : BigEndian;
+
+      switch (machByteOrder) {
+        case LittleEndian: {
+            %<FcnLittleEndian()>
+            break;
+        }
+        case BigEndian: {
+            %<FcnBigEndian()>
+            break;
+        }
+      }
+    %elseif ConfigSet.TargetEndianess == "LittleEndian"
+      %<FcnLittleEndian()>
+    %elseif ConfigSet.TargetEndianess == "BigEndian"
+      %<FcnBigEndian()>
+    %else
+      %openfile errTxt
+      Unsupported Target Endianess: %<ConfigSet.TargetEndianess>
+      %closefile errTxt
+      %<LibReportFatalError(errTxt)>
+    %endif
+    }
+    return nan;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtGetNaNF"
+  %assign fcnReturns = "real32_T"
+  %assign fcnParams = "void"
+  %openfile fcnAbstract
+Initialize rtNaNF needed by the generated code. 
+NaN is initialized as non-signaling. Assumes IEEE.
+  %closefile fcnAbstract
+  
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "utility"; GeneratedBy "genrtnan.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    IEEESingle nanF = { {0} };
+    %if !SLibIsERTTarget() || ConfigSet.TargetEndianess == "Unspecified" || ConfigSet.PortableWordSizes == 1
+    uint16_T one = 1U;
+
+    enum {
+        LittleEndian,
+        BigEndian
+    } machByteOrder = (*((uint8_T *) &one) == 1U) ? LittleEndian : BigEndian;
+
+    switch (machByteOrder) {
+      case LittleEndian: {
+        %% Using MATLAB values for NaN rather than IEEE
+        nanF.wordL.wordLuint = 0xFFC00000U;
+        break;
+      }
+      case BigEndian: {
+        nanF.wordL.wordLuint = 0x7FFFFFFFU;
+        break;
+      }
+    }
+    %elseif ConfigSet.TargetEndianess == "LittleEndian"
+    nanF.wordL.wordLuint = 0xFFC00000U;
+    %elseif ConfigSet.TargetEndianess == "BigEndian"
+    nanF.wordL.wordLuint = 0x7FFFFFFFU;
+    %else
+      %openfile errTxt
+      Unsupported Target Endianess: %<ConfigSet.TargetEndianess>
+      %closefile errTxt
+      %<LibReportFatalError(errTxt)>
+    %endif
+    return nanF.wordL.wordLreal;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %if GenCPP
+  }
+  %endif
+
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+  
+%endfunction

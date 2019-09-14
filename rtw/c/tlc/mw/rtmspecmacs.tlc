@@ -1,0 +1,1199 @@
+%%
+%% 
+%%
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   Library for generating special rtModel macros
+%% 
+
+%if EXISTS("_RTMSPECMACS_") == 0
+%assign _RTMSPECMACS_ = 1
+
+%% Function: FcnGetTimingBridge ================================================
+%% Abstract:
+%%   Returns the timing bridge from global declaration or rtModel 
+%%
+%function FcnGetTimingBridge(rtmName)
+  %if RTMTimingBridgeIsReqFcn() 
+    %assign accStr = RTMDispatchToAccessFcn("timingBridge", "get", ...
+      "", "", rtmName)
+    %return accStr
+  %else
+    %return SLibGetGlobalTimingBridge()
+  %endif
+%endfunction
+
+%% Function: RTMSpecAccsGetT ===================================================
+%% Abstract:
+%%   Generate a special access for getting "T"
+%%
+%function RTMSpecAccsGetT(accRec, rtmName) void
+  %if IsModelReferenceTarget()
+    %if IsModelReferenceForASimstructBasedTarget()
+      %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+      %return "(ssGetT(%<simS>))"
+    %elseif ::tMdlRefTimingBridgeAccessed
+      %assign base = "%<FcnGetTimingBridge(rtmName)>->taskTime"
+      %return "(*(%<base>[0]))"
+    %else
+      %return ""
+    %endif
+  %endif
+
+  %if SLibIsERTCodeFormat()
+    %if RTMTaskTimeIsReqFcnForTID(0)
+        %assign accStr = RTMDispatchToAccessFcn("TaskTime0", "get", "", "", rtmName)
+        %assign accStr = "(%<accStr>)"
+    %elseif RTMTimePtrIsReqFcn()
+      %assign accStr = RTMDispatchToAccessFcn("TPtr", "get", "", "", rtmName)
+      %assign accStr = "(%<accStr>[0])"
+    %else
+      %assign accStr = "" %% Undefined
+    %endif
+  %else
+    %assign accStr = RTMDispatchToAccessFcn("TPtr", "get", "", "", rtmName)
+    %assign accStr = "(%<accStr>[0])"
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsT
+
+
+%% Function: RTMSpecAccsSetT ===================================================
+%% Abstract:
+%%   Generate a special access for setting "T"
+%%
+%function RTMSpecAccsSetT(accRec, rtmName, val) void
+  %if IsModelReferenceTarget()
+    %assign accStr = ""
+  %elseif GenerateGRTWrapper 
+    %assign accStr = "/* Do Nothing */"
+  %else
+    %assign accStr = RTMDispatchToAccessFcn("TPtr", "get", "", "", rtmName)
+    %assign accStr = "(%<accStr>[0] = (%<val>))"
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsT
+
+
+%% Function: RTMSpecAccsGetTimeOfLastOutput ====================================
+%% Abstract:
+%%   Generate a special access for getting "TimeOfLastOutput"
+%%
+%function RTMSpecAccsGetTimeOfLastOutput(accRec, rtmName) void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %return "(ssGetTimeOfLastOutput(%<simS>))"
+  %endif
+  %if RTMChildSfunctionIsReqFcn()
+    %assign simS = RTMDispatchToAccessFcn("_TimeOfLastOutput", "get", "", "", rtmName)
+    %return "(%<simS>)"
+  %else
+    %return ""
+  %endif
+
+%endfunction %% RTMSpecAccsGetTimeOfLastOutput
+
+
+%% Function: RTMSpecAccsSetTimeOfLastOutput ====================================
+%% Abstract:
+%%   Generate a special access for setting "TimeOfLastOutput"
+%%
+%function RTMSpecAccsSetTimeOfLastOutput(accRec, rtmName, val) void
+  %if SLibIsERTCodeFormat()
+    %assign accStr = "" %% Undefined
+  %else
+    %assign accStr = RTMDispatchToAccessFcn("_TimeOfLastOutput", "get", "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %endif
+  %return accStr
+%endfunction %% RTMSpecAccsSetTimeOfLastOutput
+
+
+%% Function: RTMSpecAccsGetTStart ==============================================
+%% Abstract:
+%%   Generate a special access for getting "TStart"
+%%
+%function RTMSpecAccsGetTStart(accRec, rtmName) void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %return "(ssGetTStart(%<simS>))"
+  %endif
+  %if RTMChildSfunctionIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("StartTime", "get", "", "", rtmName)
+    %assign accStr = "(%<accStr>)"
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsGetTStart
+
+
+%% Function: RTMSpecAccsSetTStart ==============================================
+%% Abstract:
+%%   Generate a special access for setting "TStart"
+%%
+%function RTMSpecAccsSetTStart(accRec, rtmName, val) void
+  %if RTMChildSfunctionIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("StartTime", "get", "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %else
+    %assign accStr = "" %% Undefined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetTStart
+
+
+%% Function: RTMSpecAccsGetTFinal ==============================================
+%% Abstract:
+%%   Generate a special access for getting "TFinal"
+%%
+%function RTMSpecAccsGetTFinal(accRec, rtmName) void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %return "(ssGetTFinal(%<simS>))"
+  %elseif IsModelReferenceRTWTarget()
+    %return ""
+  %endif
+  %if RTMTFinalIsReqFcn()
+    %assign simS =  RTMDispatchToAccessFcn("FinalTime", "get", "", "", rtmName)
+    %return "(%<simS>)"
+  %else
+    %return ""
+  %endif
+%endfunction %% RTMSpecAccsGetTFinal
+
+%% Function: RTMSpecAccsSetTFinal ==============================================
+%% Abstract:
+%%   Generate a special access for setting "TFinal"
+%%
+%function RTMSpecAccsSetTFinal(accRec, rtmName, val) void
+  %if RTMTFinalIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("FinalTime", "get", "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetTFinal
+
+
+%% Function: RTMSpecAccsGetStopRequested =======================================
+%% Abstract:
+%%   Generate a special access for getting "StopRequested"
+%%
+%function RTMSpecAccsGetStopRequested(accRec, rtmName) void
+  %if RTMMdlStopReqIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("StopRequestedFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(%<accStr>)"
+  %else
+    %assign accStr = "" %% not defined    
+  %endif
+  
+  %return accStr
+%endfunction %% RTMSpecAccsGetStopRequested
+
+
+%% Function: RTMSpecAccsSetStopRequested =======================================
+%% Abstract:
+%%   Generate a special access for setting "StopRequested"
+%%
+%function RTMSpecAccsSetStopRequested(accRec, rtmName, val) void
+  %if RTMMdlStopReqIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("StopRequestedFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %else
+    %assign accStr = "" %% not defined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetStopRequested
+
+
+%% Function: RTMSpecAccsGetStopRequestedPtr ====================================
+%% Abstract:
+%%   Generate a special access for getting "StopRequested"
+%%
+%function RTMSpecAccsGetStopRequestedPtr(accRec, rtmName) void
+  %if RTMMdlStopReqIsReqFcn() 
+    %assign accStr = RTMDispatchToAccessFcn("StopRequestedFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(&(%<accStr>))"
+  %else
+    %assign accStr = ""
+  %endif
+  
+  %return accStr
+%endfunction %% RTMSpecAccsGetStopRequestedPtr
+
+
+%% Function: RTMSpecAccsGetStopRequestedValStoredAsPtr =========================
+%% Abstract:
+%%   Generate a special access for getting "StopRequested"
+%%   Get StopRequestedFlag when it is a pointer
+%%
+%function RTMSpecAccsGetStopRequestedValStoredAsPtr(accRec, rtmName) void
+  %assert IsModelReferenceTarget()
+  %if RTMMdlStopReqIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("StopRequestedFlag", "get", ...
+      "", "", rtmName)
+    
+    %assign accStr = "(*(%<accStr>))"
+  %else
+    %assign accStr = ""
+  %endif
+  
+  %return accStr
+%endfunction %% RTMSpecAccsGetStopRequestedValStoredAsPtr
+
+
+%% Function:  RTMSpecAccsSetStopRequestedValStoredAsPtr  =======================
+%% Abstract:
+%%   Generate a special access for setting "StopRequested"
+%%   Set StopRequestedFlag when it is a pointer
+%%
+%function RTMSpecAccsSetStopRequestedValStoredAsPtr(accRec, rtmName, val) void
+  %assert IsModelReferenceTarget()
+  %if RTMMdlStopReqIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("StopRequestedFlag", "get", ...
+      "", "", rtmName)
+    
+    %assign accStr = "(*(%<accStr>) = (%<val>))"
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetStopRequestedValStoredAsPtr
+
+
+%% Function: RTMSpecAccsGetStopRequestedPtrStoredAsPtr  ========================
+%% Abstract:
+%%   Generate a special access for getting "StopRequested"
+%%   Get Addr of StopRequestedFlag when it is a pointer
+%%
+%function RTMSpecAccsGetStopRequestedPtrStoredAsPtr(accRec, rtmName) void
+  %assert IsModelReferenceTarget()
+  %if RTMMdlStopReqIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("StopRequestedFlag", "get", ...
+      "", "", rtmName)
+    
+    %assign accStr = "(%<accStr>)"
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsGetStopRequestedPtrStoredAsPtr
+
+
+%% Function: RTMSpecAccsSetStopRequestedPtrStoredAsPtr  ========================
+%% Abstract:
+%%   Generate a special access for setting "StopRequested"
+%%   Set StopRequestedFlag when it is a pointer.
+%%
+%function RTMSpecAccsSetStopRequestedPtrStoredAsPtr(accRec, rtmName, val) void
+  %assert IsModelReferenceTarget()
+  %if RTMMdlStopReqIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("StopRequestedFlag", "get", ...
+      "", "", rtmName)
+    
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %else
+    %return ""
+  %endif
+    
+  %return accStr
+%endfunction %% RTMSpecAccsSetStopRequestedPtrStoredAsPtr
+
+
+%% Function: RTMSpecAccsGetErrorStatus =========================================
+%% Abstract:
+%%   Generate a special access for getting "ErrorStatus"
+%%
+%function RTMSpecAccsGetErrorStatus(accRec, rtmName) void
+  %if !SuppressErrorStatus
+    %assign accStr = RTMDispatchToAccessFcn("ErrorStatusFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(%<accStr>)"
+  %else
+    %assign accStr = "" %% Undefined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsGetErrorStatus
+
+
+%% Function: RTMSpecAccsSetErrorStatus =========================================
+%% Abstract:
+%%   Generate a special access for setting "ErrorStatus"
+%%
+%function RTMSpecAccsSetErrorStatus(accRec, rtmName, val) void
+  %if !SuppressErrorStatus
+    %assign accStr = RTMDispatchToAccessFcn("ErrorStatusFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetErrorStatus
+
+
+%% Function: RTMSpecAccsGetErrorStatusPointer ==================================
+%% Abstract:
+%%   Generate a special access for getting "ErrorStatus"
+%%
+%function RTMSpecAccsGetErrorStatusPointer(accRec, rtmName) void
+  %assert IsModelReferenceTarget()
+  %if !SuppressErrorStatus
+    %assign accStr = RTMDispatchToAccessFcn("ErrorStatusFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(*(%<accStr>))"
+  %else
+    %assign accStr = "" %% Undefined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsGetErrorStatusPointer
+
+
+%% Function: RTMSpecAccsSetErrorStatusPointer ==================================
+%% Abstract:
+%%   Generate a special access for setting "ErrorStatus"
+%%
+%function RTMSpecAccsSetErrorStatusPointer(accRec, rtmName, val) void
+  %assert IsModelReferenceTarget()
+  %if !SuppressErrorStatus
+    %assign accStr = RTMDispatchToAccessFcn("ErrorStatusFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(*(%<accStr>) = (%<val>))"
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetErrorStatusPointer
+
+%% Function: RTMSpecAccsGetErrorStatusPointerPointer ===========================
+%% Abstract:
+%%   Generate a special access for getting "ErrorStatusPointer"
+%%
+%function RTMSpecAccsGetErrorStatusPointerPointer(accRec, rtmName) void
+  %if HasModelReferenceBlocks() || IsModelReferenceTarget()
+    %if !SuppressErrorStatus
+      %assign accStr = RTMDispatchToAccessFcn("ErrorStatusFlag", "get", ...
+	"", "", rtmName)
+      %if !IsModelReferenceTarget()
+	%assign accStr = "(&(%<accStr>))"
+        %% Reference model does not have volatile 
+        %% error status, need explicity cast to
+        %% avoid compiler warning.
+        %assign accStr = "((const char_T **)%<accStr>)"
+      %endif
+    %else
+      %assign accStr = ""
+    %endif
+  %else
+    %assign accStr = "" %% Undefined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsGetErrorStatusPointerPointer
+
+
+%% Function: RTMSpecAccsSetErrorStatusPointerPointer ===========================
+%% Abstract:
+%%   Generate a special access for setting "ErrorStatusPointer"
+%%
+%function RTMSpecAccsSetErrorStatusPointerPointer(accRec, rtmName, val) void
+  %assert IsModelReferenceTarget()
+  %if !SuppressErrorStatus
+    %assign accStr = RTMDispatchToAccessFcn("ErrorStatusFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetErrorStatusPointerPointer
+
+%% Function: RTMSpecAccsGetSimTimeStepPointer ==================================
+%% Abstract:
+%%   Generate a special access for getting "SimTimeStep"
+%%
+%function RTMSpecAccsGetSimTimeStepPointer(accRec, rtmName) void
+  %assert IsModelReferenceTarget()
+  %if LibIsContinuous(0)
+    %assign accStr = RTMDispatchToAccessFcn("SimTimeStepPtr", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(*(%<accStr>))"
+  %else
+    %assign accStr = "" %% Undefined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsGetSimTimeStepPointer
+
+
+%% Function: RTMSpecAccsGetSimTimeStepPointerPointer ===========================
+%% Abstract:
+%%   Generate a special access for getting "SimTimeStepPointer"
+%%
+%function RTMSpecAccsGetSimTimeStepPointerPointer(accRec, rtmName) void
+  %assert IsModelReferenceTarget()
+  %if LibIsContinuous(0)
+    %assign accStr = RTMDispatchToAccessFcn("SimTimeStepPtr", "get", ...
+      "", "", rtmName)
+  %else
+    %assign accStr = "" %% Undefined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsGetSimTimeStepPointerPointer
+
+
+%% Function: RTMSpecAccsSetSimTimeStepPointerPointer ===========================
+%% Abstract:
+%%   Generate a special access for setting "SimTimeStepPointer"
+%%
+%function RTMSpecAccsSetSimTimeStepPointerPointer(accRec, rtmName, val) void
+  %assert IsModelReferenceTarget()
+  %if LibIsContinuous(0)
+    %assign accStr = RTMDispatchToAccessFcn("SimTimeStepPtr", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetSimTimeStepPointerPointer
+
+%% Function: RTMSpecAccsGetTPtr ================================================
+%% Abstract:
+%%   Generate a special access for getting "TPtr"
+%%
+%function RTMSpecAccsGetTPtr(accRec, rtmName) void
+  %if IsModelReferenceTarget()
+    %% Referenced models should not directly access the TPtr
+    %return ""
+  %endif
+  %assign accStr = "" %% assume
+  %if (!SLibIsERTCodeFormat()) || LibIsContinuous(0) || ...
+    SLibModelHierarchyContainsNoninlinedSfcn() || GenerateGRTWrapper
+    %assign accStr = RTMDispatchToAccessFcn("TimePtr", "get", "", "", rtmName)
+    %assign accStr = "(%<accStr>)"
+  %else
+    %if(MatFileLogging || ExtMode)
+      %assign accStr = RTMDispatchToAccessFcn("TaskTime0", "get", "", "", rtmName)
+      %assign accStr = "&"+accStr
+      %assign accStr = "(%<accStr>)"
+    %endif
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsGetTPtr
+
+
+%% Function: RTMSpecAccsSetTPtr ================================================
+%% Abstract:
+%%   Generate a special access for setting "TPtr"
+%%
+%function RTMSpecAccsSetTPtr(accRec, rtmName, val) void
+  %if IsModelReferenceTarget()
+    %assign accStr = ""
+  %elseif (!SLibIsERTCodeFormat()) || LibIsContinuous(0) || ...
+    SLibModelHierarchyContainsNoninlinedSfcn() || GenerateGRTWrapper
+    %assign accStr = RTMDispatchToAccessFcn("TimePtr","get", "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %else
+    %assign accStr = "" %% Undefined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetTPtr
+
+
+%% Function: RTMSpecAccsIsMajorTimeStep ========================================
+%% Abstract:
+%%   Generate a special access for checking "MajorTimeStep"
+%%
+%function RTMSpecAccsIsMajorTimeStep(accRec, rtmName) void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %assign accStr =  "ssIsMajorTimeStep(%<simS>)"
+  %else
+    %if (SLibIsERTCodeFormat()) && !LibIsContinuous(0)
+      %assign accStr = ""
+    %else
+      %assign accStr = RTMDispatchToAccessFcn("SimTimeStep","get","","", rtmName)
+      
+      %assign accStr = "((%<accStr>) == MAJOR_TIME_STEP)"
+    %endif
+  %endif
+  %return accStr
+%endfunction %% RTMSpecAccsIsMajorTimeStep
+
+
+%% Function: RTMSpecAccsIsMinorTimeStep ========================================
+%% Abstract:
+%%   Generate a special access for checking "MinorTimeStep"
+%%
+%function RTMSpecAccsIsMinorTimeStep(accRec, rtmName) void
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %assign accStr = "ssIsMinorTimeStep(%<simS>)"
+  %else
+    %if (SLibIsERTCodeFormat()) && !LibIsContinuous(0)
+      %assign accStr = ""
+    %else
+      %assign accStr = RTMDispatchToAccessFcn("SimTimeStep","get","","", rtmName)
+
+      %assign accStr = "((%<accStr>) == MINOR_TIME_STEP)"
+    %endif
+  %endif
+  %return accStr
+%endfunction %% RTMSpecAccsIsMinorTimeStep
+
+
+%% Function: RTMSpecAccsIsFirstInitCond ========================================
+%% Abstract:
+%%   Generate a special access for checking "FirstInitCond"
+%%
+%function RTMSpecAccsIsFirstInitCond(accRec, rtmName) void
+
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %return "ssIsFirstInitCond(%<simS>)"
+  %endif
+
+  %assign accStr = "" %% assume
+  %if SLibIsERTCodeFormat() && !(UsingMalloc && GenerateGRTWrapper)
+    %if SLibGetIsFirstInitCondAccessed()
+      %% All non-simstruct based model reference targets, that use the
+      %% global timing engine, get the firstInitCond from that structure.
+      %if IsModelReferenceTarget()
+        %assert !IsModelReferenceForASimstructBasedTarget()
+        %if ::tMdlRefTimingBridgeAccessed
+          %return "( *(%<FcnGetTimingBridge(rtmName)>->firstInitCond) )" 
+        %else
+          %return ""
+        %endif
+      %endif    
+      %assign accStr = RTMDispatchToAccessFcn("FirstInitCondFlag", "get", ...
+        "", "", rtmName)
+      %assign accStr = "(%<accStr>)"
+    %endif
+  %else
+    %%
+    %% non-ERT format or UsingMalloc, Cannot use FirstInitCondFlag
+    %%
+    %assign accStr = RTMDispatchToAccessFcn("TStart","get","","", rtmName)
+
+    %assign accStr = "rtmGetT(%<rtmName>) == (%<accStr>)"
+    %assign accStr = "(%<accStr>)"
+  %endif
+  %return accStr
+%endfunction %% RTMSpecAccsIsFirstInitCond
+
+
+%% Function: RTMSpecAccsSetFirstInitCond ========================================
+%% Abstract:
+%%   Generate a special access for setting "FirstInitCond"
+%%
+%function RTMSpecAccsSetFirstInitCond(accRec, rtmName, val) void
+  %assign accStr = "" %% assume
+  %if RTMFirstInitCondFlagIsReqFcn()
+    %assign accStr = RTMDispatchToAccessFcn("FirstInitCondFlag", "get", ...
+      "", "", rtmName)
+    %assign accStr = "(%<accStr> = (%<val>))"
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetFirstInitCond
+
+
+%% Function: RTMSpecAccsSetSampleHitInTask =====================================
+%% Abstract:
+%%   Generate a special access for setting "SampleHitInTask"
+%%
+%function RTMSpecAccsSetSampleHitInTask(accRec, rtmName, val) void
+  %assign accStr = "" %% assume
+  %if !SLibIsERTCodeFormat() && ...
+    ::CompiledModel.FixedStepOpts.SolverMode == "MultiTasking"
+    %assign ptshp   = RTMDispatchToAccessFcn("PerTaskSampleHitsPtr", ...
+      "get", "", "", rtmName)
+    %assign nst     = RTMDispatchToAccessFcn("NumSampleTimes", ...
+      "get", "", "", rtmName)
+
+    %assign tj      = accRec.Args[0]
+    %assign ti      = accRec.Args[1]
+
+    %assign accStr  = "((%<ptshp>)[(%<tj>)+((%<ti>) * (%<nst>))]=(%<val>))"
+  %else
+    %assign accStr = "" %% Undefined
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsSetSampleHitInTask
+
+
+%% Function: RTMSpecAccsIsContinuousTask =======================================
+%% Abstract:
+%%   Generate a special access for checking "ContinuousTask"
+%%
+%function RTMSpecAccsIsContinuousTask(accRec, rtmName) void
+  %assign accStr = "" %% assume
+  %assign tid    = accRec.Args[0]
+
+  %if !SLibIsERTCodeFormat() || GenerateGRTWrapper 
+    %if LibIsContinuous(0)
+      %if ::CompiledModel.FixedStepOpts.SolverMode == "MultiTasking" && ...
+	::CompiledModel.FixedStepOpts.TID01EQ
+	%assign accStr = "((%<tid>) <= 1)"
+      %else
+	%assign accStr = "((%<tid>) == 0)"
+      %endif
+    %else
+      %assign accStr = "0"
+    %endif
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsIsContinuousTask
+
+
+%% Function: FcnSpecAccsNonERTGetTaskTime ======================================
+%% Abstract:
+%%   Generate a special access for getting "TaskTime"
+%%
+%function FcnSpecAccsNonERTGetTaskTime(accRec, rtmName, forSfcn) void
+  %assign arg1   = accRec.Args[0]
+
+  %assign tp     = RTMDispatchToAccessFcn("TPtr", "get", "", "", rtmName)
+  %if forSfcn
+    %assign sstid  = "(ssGetSampleTimeTaskIDPtr(S))[%<arg1>]"
+  %else
+    %assign sstid  = RTMDispatchToAccessFcn("SampleTimeTaskID", "get", ...
+      "%<arg1>", "", rtmName)
+  %endif
+
+  %return "(%<tp>[%<sstid>])"
+%endfunction %% FcnSpecAccsTaskTime
+
+
+%% Function: RTMSpecAccsGetTaskTime ============================================
+%% Abstract:
+%%   Generate a special access for getting "TaskTime",
+%%  for Embedded-C, this is inlined, return empty macro
+%%
+%function RTMSpecAccsGetTaskTime(accRec, rtmName) void
+
+  %% Simstruct-based modelref will need to get the tPtr
+  %% from the Simstruct to figure out the time for a TID.
+  %if IsModelReferenceForASimstructBasedTarget()
+    %if RTMMdlRefTriggerTIDMayBeRequired()
+      %assign indx = FcnGetMdlRefTriggerTIDMap(rtmName)
+    %else 
+      %assign tid  = accRec.Args[0]
+      %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+      %assign indx = "%<tidMap>[%<tid>]"
+    %endif
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %assign accStr = "ssGetTaskTime( ssGetRootSS(%<simS>), %<indx>)"
+    %return accStr
+  %endif
+
+  %if !SLibIsERTCodeFormat() || GenerateGRTWrapper
+    %assign accStr = FcnSpecAccsNonERTGetTaskTime(accRec, rtmName, TLC_FALSE)
+  %else
+    %assign accStr = ""
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsTaskTime
+
+
+%% Function: RTMSpecAccsSetTaskTime ============================================
+%% Abstract:
+%%   Generate a special access for setting "TaskTime"
+%%
+%function RTMSpecAccsSetTaskTime(accRec, rtmName, val) void
+  
+  %% Simstruct-based modelref will need to get the tPtr
+  %% from the Simstruct to set the time for a variable sample time.
+  
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign tid  = accRec.Args[0]
+    %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+    %assign indx = "%<tidMap>[%<tid>]"    
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %assign accStr = "_ssSetTaskTime(ssGetRootSS(%<simS>), %<indx>, %<val>)"
+    %return accStr
+  %endif
+  
+  %if SLibIsERTCodeFormat() && !GenerateGRTWrapper    
+    %assign accStr = "" %% Undefined
+  %else
+    %assign arg1   = accRec.Args[0]
+    %assign tp     = RTMDispatchToAccessFcn("TPtr", "get", "", "", rtmName)
+    %assign accStr = "(%<tp>[%<arg1>] = (%<val>))"
+  %endif
+  %return accStr
+%endfunction %% RTMSpecAccsTaskTime
+
+
+%% Function: FcnSpecAccsNonERTIsSampleHit ======================================
+%% Abstract:
+%%   Generate a special access for checking "IsSampleHit" for non-ERT format
+%%
+%function FcnSpecAccsNonERTIsSampleHit(args, rtmName, forSfcn) void
+  %assign accStr = "" %% assume
+  %assign sti    = args[0]
+  %assign tid    = args[1]
+
+  %if forSfcn
+    %assign sstid  = "(ssGetSampleTimeTaskIDPtr(S))[%<sti>]"
+  %else
+    %assign sstid  = RTMDispatchToAccessFcn("SampleTimeTaskID", "get", ...
+      "%<sti>", "", rtmName)
+  %endif
+
+  %if ::CompiledModel.SolverType != "FixedStep" || ...
+      ::CompiledModel.FixedStepOpts.SolverMode != "MultiTasking"
+    %assign shp = RTMDispatchToAccessFcn("SampleHitPtr", "get", ...
+      "", "", rtmName)
+    %assign accStr = "%<shp>[%<sstid>]"
+    %if LibIsContinuous(0)
+      %assign accStr = "(rtmIsMajorTimeStep(%<rtmName>) " + ...
+	"&& %<accStr>)"
+    %endif
+  %else
+    %assign accStr = "(%<sstid> == (%<tid>))"
+  %endif
+
+  %return accStr
+%endfunction %% FcnSpecAccsNonERTIsSampleHit
+
+
+%% Function: RTMSpecAccsIsSampleHit ============================================
+%% Abstract:
+%%   Generate a special access for checking "IsSampleHit"
+%%
+%function RTMSpecAccsIsSampleHit(accRec, rtmName) void
+  %assign accStr = "" %% assume
+  %if SLibIsERTCodeFormat()
+    %% For ERT-based targets, we only need this macro if we are
+    %% generating GRT wrapper with ext mode or we are generating
+    %% modelref which uses the global timing engine.
+    %if IsModelReferenceTarget()
+      %if IsModelReferenceForASimstructBasedTarget()
+        %assign sti = accRec.Args[0]
+        %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+        %assign indx = "%<tidMap>[%<sti>]"
+        %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","",rtmName)
+        %return "ssIsSampleHit( ssGetRootSS(%<simS>), %<indx>, tid)"
+      %elseif ::tMdlRefTimingBridgeAccessed && ::tMdlRefGlobalTIDMapAccessed
+        %assign base = "%<FcnGetTimingBridge(rtmName)>->taskCounter"
+        %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+        %assign sti = accRec.Args[0]
+        %assign indx = "%<tidMap>[%<sti>]"
+        %return "(%<base>[%<indx>] == 0)"
+      %endif
+    %elseif GenerateGRTWrapper
+      %assign accStr = FcnSpecAccsNonERTIsSampleHit(accRec.Args, rtmName, ...
+        TLC_FALSE)
+      %assign accStr = "(%<accStr>)"
+    %endif
+  %else
+    %assign accStr = FcnSpecAccsNonERTIsSampleHit(accRec.Args, rtmName, TLC_FALSE)
+    %assign accStr = "(%<accStr>)"
+  %endif
+
+  %return accStr
+%endfunction %% RTMSpecAccsIsSampleHit
+
+
+%% Function: FcnSpecAccsNonERTIsSpecialSampleHit ===============================
+%% Abstract:
+%%   Generate a special access for checking "IsSpecialSampleHit"
+%%
+%function FcnSpecAccsNonERTIsSpecialSampleHit(accRec, rtmName, forSfcn) void
+  %assign accStr = "" %% assume
+  %assign sti    = accRec.Args[0]
+  %assign tid    = accRec.Args[2]
+
+  %if ::CompiledModel.SolverType == "FixedStep" && ...
+      ::CompiledModel.FixedStepOpts.SolverMode == "MultiTasking"
+    %if forSfcn
+      %assign sstid  = "(ssGetSampleTimeTaskIDPtr(S))[%<sti>]"
+    %else
+      %assign sstid  = RTMDispatchToAccessFcn("SampleTimeTaskID", "get", ...
+	"%<sti>", "", rtmName)
+    %endif
+
+    %assign ptshp = RTMDispatchToAccessFcn("PerTaskSampleHitsPtr", ...
+      "get", "", "", rtmName)
+    %assign nst   = RTMDispatchToAccessFcn("NumSampleTimes", ...
+      "get", "", "", rtmName)
+
+    %assign accStr = "%<ptshp>[%<sstid>+((%<tid>) * (%<nst>))]"
+
+    %if LibIsContinuous(0)
+      %assign accStr = "(rtmIsMajorTimeStep(%<rtmName>) && %<accStr>)"
+    %endif
+  %else
+    %assign argArr = ["%<accRec.Args[0]>", "%<accRec.Args[2]>"]
+    %assign accStr = FcnSpecAccsNonERTIsSampleHit(argArr, rtmName, forSfcn)
+  %endif
+
+  %return accStr
+%endfunction %% FcnSpecAccsNonERTIsSpecialSampleHit
+
+
+%% Function: RTMSpecAccsIsSpecialSampleHit =====================================
+%% Abstract:
+%%   Generate a special access for checking "IsSpecialSampleHit"
+%%
+%function RTMSpecAccsIsSpecialSampleHit(accRec, rtmName) void
+  %assign accStr = "" %% assume
+  %if SLibIsERTCodeFormat()
+    %% For ERT-based targets, we only need this macro if we are
+    %% generating a model reference target that uses the global
+    %% timing engine.
+    %if ::CompiledModel.NumRuntimeExportedRates > 1 && ...
+      IsModelReferenceTarget()
+      %if !SLibSingleTasking()
+	%assign sti       = accRec.Args[0]
+        %assign promo_sti = accRec.Args[1]
+	%if IsModelReferenceForASimstructBasedTarget()
+          %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+	  %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","",rtmName)
+          %assign g_sti = "%<tidMap>[%<sti>]"
+          %assign g_promo_sti = "%<tidMap>[%<promo_sti>]"
+          %return "ssIsSpecialSampleHit( ssGetRootSS(%<simS>), %<g_sti>, %<g_promo_sti>, tid)"
+	%elseif ::tMdlRefTimingBridgeAccessed && ::tMdlRefGlobalTIDMapAccessed
+          %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+	  %assign base  = "(%<FcnGetTimingBridge(rtmName)>->rateTransition)"
+	  %assign nTs   = "%<FcnGetTimingBridge(rtmName)>->nTasks"
+          %assign indx  = "%<tidMap>[%<sti>] + " ...
+	    "%<nTs>*%<tidMap>[%<promo_sti>]"
+	  %return "( *(%<base>[%<indx>]) )"
+        %else
+          %return ""
+	%endif
+      %endif
+    %endif
+  %else
+    %assign accStr = FcnSpecAccsNonERTIsSpecialSampleHit(accRec, rtmName, TLC_FALSE)
+  %endif
+  %return accStr
+%endfunction %% RTMSpecAccsIsSpecialSampleHit
+
+
+%% Function: RTMSpecAccsTaskRunsThisBaseStep ====================================
+%% Abstract:
+%%   Generate the ERT macro body for getting access to clock tick counters
+%%
+%function RTMSpecAccsTaskRunsThisBaseStep(accRec, rtmName) void
+  %assign accStr = "" %% assume
+    
+  %if (RTMTaskCountersIsReqFcn() && !SLibSingleTasking())
+    %assign idx = accRec.Args[0]
+    %assign accStr = "((rtm)->Timing.TaskCounters.TID[(%<idx>)] == 0)"
+  %endif
+  %return accStr
+%endfunction
+
+
+%function RTMSpecAccsTaskCounter(accRec, rtmName) void
+  %assign accStr = "" %% assume
+  %if RTMTaskCountersIsReqFcn() && !SLibSingleTasking()
+    %assign idx = accRec.Args[0]
+    %assign accStr = "((rtm)->Timing.TaskCounters.TID[(%<idx>)])"
+  %endif
+  %return accStr
+%endfunction
+
+%function RTMSpecAccsCounterLimit(accRec, rtmName) void
+  %assign accStr = "" %% assume
+  %if RTMTaskCountersIsReqFcn() && !SLibSingleTasking()
+    %assign idx = accRec.Args[0]
+    %assign accStr = "((rtm)->Timing.TaskCounters.cLimit[(%<idx>)])"
+  %endif
+  %return accStr
+%endfunction
+
+%% Function: RTMSpecAccsUpdateSubrateTaskTime ==================================
+%% Abstract:
+%%   Generate the ERT macro body for rtmUpdateSubrateTaskTime
+%% We inlined rtmUpdateSubrateTaskTime, don't need this macro.
+%%
+%function RTMSpecAccsUpdateSubrateTaskTime(accRec, rtmName) void
+  %return ""
+%endfunction
+
+
+%% Function: RTMSpecAccsUpdateRealAbsoluteTime ==================================
+%% Abstract:
+%%   Generate the ERT macro body for rtmUpdateRealAbsoluteTime
+%%
+%%   Since each task, including tid0, has its own timer and update absolute time
+%%   by calling rtmUpdateRealAbsoluteTimeForTID. we don't need treat timer
+%%   for tid0 sperately. This macro should be obsolete
+%function RTMSpecAccsUpdateRealAbsoluteTime(accRec, rtmName) void
+  %return ""
+%endfunction
+
+
+%% Function: RTMSpecAccsUpdateIntegerAbsoluteTime ==============================
+%% Abstract:
+%%   Generate the ERT macro body for rtmUpdateIntegerAbsoluteTime
+%%
+%%   This should be obselete. Since each task has its own timer, we don't need treat timer
+%%   for tid0 sperately. However, if SLibNeedObsAbsoluteTime("") return truce, old Macro will
+%%   be generated.
+%function RTMSpecAccsUpdateIntegerAbsoluteTime(accRec, rtmName) void
+  %return ""
+%endfunction
+
+%% Function: GetIndexForTimingBridgeClockTick ===================================
+%% A helper for RTMSpecAccsGetClockTick and RTMSpecAccsGetClockTickH
+%% that returns the index for the clock tick vectors
+%function GetIndexForTimingBridgeClockTick(rtmName, sti) void
+  %if RTMMdlRefTriggerTIDMayBeRequired()
+    %assign stindex = FcnGetMdlRefTriggerTIDMap(rtmName)
+  %else 
+    %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+    %assign stindex = "%<tidMap>[%<sti>]"
+  %endif
+
+  %return stindex
+%endfunction 
+
+
+%% Function: RTMSpecAccsGetClockTick ===========================================
+%% Abstract:
+%%  For targets, we only generate this if someone has accessed both the
+%% timingBridge and the globalTID during code generation.  Otherwise, this
+%% macro can not be used.
+%function RTMSpecAccsGetClockTick(accRec, rtmName) void
+  %assert IsModelReferenceTarget()
+  %assign args = IDNUM(accRec.Name)
+  %assert ISEQUAL(args[0],"ClockTick")
+  %assign sti  = args[1]
+  %% Go through the simstruc for all simstruct based targets (RSIM and SIM)
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %assign indx = GetIndexForTimingBridgeClockTick(rtmName, sti)
+    %return "ssGetClockTick( ssGetRootSS(%<simS>), %<indx>)"
+  %elseif ::tMdlRefTimingBridgeAccessed && ::tMdlRefGlobalTIDMapAccessed
+    %assign base = "%<FcnGetTimingBridge(rtmName)>->clockTick"
+    %assign indx = GetIndexForTimingBridgeClockTick(rtmName, sti)
+    %return "( *((%<base>[%<indx>])) )"  
+  %else
+    %return ""
+  %endif
+%endfunction
+
+
+%% Function: RTMSpecAccsGetClockTickH ===========================================
+%% Abstract:
+%%  For targets, we only generate this if someone has accessed both the
+%% timingBridge and the globalTID during code generation.  Otherwise, this
+%% macro can not be used.
+%function RTMSpecAccsGetClockTickH(accRec, rtmName) void
+  %assert IsModelReferenceTarget()
+  %assign args = IDNUM(accRec.Name)
+  %assert ISEQUAL(args[0],"ClockTickH")
+  %assign sti  = args[1]
+  %% Go through the simstruc for all simstruct based targets (RSIM and SIM)
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+    %assign indx = GetIndexForTimingBridgeClockTick(rtmName, sti)
+    %return "ssGetClockTickH( ssGetRootSS(%<simS>), %<indx>)"
+  %elseif ::tMdlRefTimingBridgeAccessed && ::tMdlRefGlobalTIDMapAccessed
+    %assign base = "%<FcnGetTimingBridge(rtmName)>->clockTickH"
+    %assign indx = GetIndexForTimingBridgeClockTick(rtmName, sti)
+    %return "( *(%<base>[%<indx>]) )"
+  %else
+    %return ""
+  %endif
+%endfunction
+
+
+%% Function: RTMSpecAccsGetTimeOfLastOutput ====================================
+%% Abstract:
+%%   Generate a special access for getting "TimeOfLastOutput"
+%%
+%function RTMSpecAccsGetLogOutput(accRec, rtmName) void
+  %assert IsModelReferenceForASimstructBasedTarget()
+  %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","", rtmName)
+  %return "ssGetLogOutput(%<simS>)"
+%endfunction %% RTMSpecAccsGetLogOutput
+
+%% Function: FcnGetArgStrForRec ================================================
+%% Abstract:
+%%   Get the string of additional args for a record.
+%%
+%function FcnGetArgStrForRec(theRec) void
+  %assign retStr = ""
+  %assign args   = theRec.Args
+  %foreach argIdx = theRec.NumArgs
+    %assign retStr = retStr + ", "
+    %assign thisarg = args[argIdx]
+    %assign retStr = retStr + thisarg
+  %endforeach
+  %return retStr
+%endfunction %% FcnGetArgStrForRec
+
+%% Function: FcnGetMdlRefGlobalTIDMap ==========================================
+%% Abstract:
+%%   Get the name of the global TID map for model reference, this may be in 
+%% rtModel if the model has an inherited sample time.
+%function FcnGetMdlRefGlobalTIDMap(rtmName) void
+  %assert IsModelReferenceTarget()
+
+  %assign ::tMdlRefGlobalTIDMapAccessed = TLC_TRUE
+  %assign ::tMdlRefNeedTIDArgs = TLC_TRUE
+
+  %if RTMMdlRefGlobalTIDIsInstanceBased()
+    %if ISEMPTY(rtmName)
+      %assign retStr = RTMGet("MdlRefGlobalTID")
+    %else
+      %assign retStr = RTMDispatchToAccessFcn("MdlRefGlobalTID","get","","", rtmName)
+    %endif
+  %else
+    %assign retStr = "%<::tMdlRefGlobalTID>"
+  %endif
+
+  %return retStr
+%endfunction %% FcnGetMdlRefGlobalTIDMap
+
+%% Function: FcnGetMdlRefTriggerTIDMap ========================================
+%% Abstract: 
+%%   Get the name of the TID map for model reference. This only applies
+%%   for a function-call model which is sample time dependent.
+%function FcnGetMdlRefTriggerTIDMap(rtmName) void
+  %assert IsModelReferenceTarget()
+  %assert RTMMdlRefTriggerTIDMayBeRequired()
+  
+  %assign ::tMdlRefGlobalTIDMapAccessed = TLC_TRUE
+  %assign ::tMdlRefNeedTIDArgs = TLC_TRUE
+  
+  %if ISEMPTY(rtmName)
+    %return RTMGet("MdlRefTriggerTID")
+  %else
+    %return RTMDispatchToAccessFcn("MdlRefTriggerTID","get","","", rtmName)
+  %endif
+  
+%endfunction %% FcnGetMdlRefTriggerTIDMap
+
+%% Function: RTMSetNonContDerivSignal ========================================
+%% Abstract: 
+%%   Set the specified nonContDerivSig to the currVal
+%function RTMSetNonContDerivSignal(index, size, currVal)
+  %assign sig = RTMGetIdxed("NonContDerivSignal", index)
+  %assign memstruct = RTMGet("NonContDerivMemory")
+  %assign memstructidx = "%<memstruct>.mr_nonContSig%<index>"
+  %assign accStr = "%<sig>.pPrevVal = (char_T *) %<memstructidx>;\n"
+  %assign accStr = accStr + "%<sig>.sizeInBytes = (%<size>);\n"
+  %assign accStr = accStr + "%<sig>.pCurrVal = (char_T *)(%<currVal>);"
+  %return accStr
+%endfunction
+    
+%% Function: RTMSpecAccsSetSampleHit ========================================
+%% Abstract: 
+%%   Set the sample hit of sti to the val
+%function RTMSpecAccsSetSampleHit(accRec, rtmName, val)
+  %assert IsModelReferenceForASimstructBasedTarget()
+  %assign sti = accRec.Args[0]
+  %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+  %assign indx = "%<tidMap>[%<sti>]"
+  %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","",rtmName)
+  %return "_ssSetSampleHit(ssGetRootSS(%<simS>), %<indx>, %<val>)"  
+%endfunction
+
+%% Function: RTMSpecAccsSetVarNextHitTime ========================================
+%% Abstract: 
+%%   Set the next hit time of variable sample time sti to the val
+%function RTMSpecAccsSetVarNextHitTime(accRec, rtmName, val)
+  %assert IsModelReferenceForASimstructBasedTarget()
+  %assign sti = accRec.Args[0]  
+  %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+  %assign indx = "%<tidMap>[%<sti>]"
+  %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","",rtmName)
+  %return "ssSetTimeOfNextVarHit(%<simS>,  %<indx>, %<val>)"  
+%endfunction
+
+%% Function: RTMSpecAccsGetVarNextHitTime ========================================
+%% Abstract: 
+%%   Get the next hit time of variable sample time sti
+%function RTMSpecAccsGetVarNextHitTime(accRec, rtmName)
+  %assert IsModelReferenceForASimstructBasedTarget()
+  %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","",rtmName)
+  %assign sti = accRec.Args[0]  
+  %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+  %assign indx = "%<tidMap>[%<sti>+%<NumSynchronousSampleTimes-NumVariableSampleTimes>]"  
+  %assign rootVarIndx = "(int)(ssGetOffsetTime(ssGetRootSS(%<simS>), %<indx>))"
+  %return "(_ssGetVarNextHitTime(%<simS>,  %<rootVarIndx>))"
+%endfunction
+
+%% Function: RTMSpecAccsGetTNextWasAdjusted ========================================
+%% Abstract: 
+%%   Get the flag if the next hit time of variable sample time is adjusted
+%function RTMSpecAccsGetTNextWasAdjusted(accRec, rtmName)
+  %assert IsModelReferenceForASimstructBasedTarget()
+  %assign sti = accRec.Args[0]  
+  %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+  %assign indx = "%<tidMap>[%<sti>]"
+  %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","",rtmName)
+  %return "(ssGetTNextWasAdjusted(%<simS>,  %<indx>))"  
+%endfunction
+
+%% Function: RTMSpecAccsSetVarNextHitTime ========================================
+%% Abstract: 
+%%   Set the number of tick to next hit of variable discrete rate sti to the val
+%function RTMSpecAccsSetNumTicksToNextHit(accRec, rtmName, val)
+  %assign sti = accRec.Args[0]   
+  %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+  %assign indx = "%<tidMap>[%<sti>]"
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","",rtmName)
+    %return "ssSetNumTicksToNextHitForControllableSampleTime(ssGetRootSS(%<simS>), %<indx>, %<val>)"    
+  %else
+    %assign ctrlRateTiming = RTMDispatchToAccessFcn("CtrlRateMdlRefTimingPtr", "get", "", "", rtmName)
+    %return "(%<ctrlRateTiming>->numTicksToNextHitForCtrlRate[%<indx>-%<ctrlRateTiming>->firstCtrlRateTID] = (uint32_T)(%<val>))"
+  %endif
+%endfunction
+
+%% Function: RTMSpecAccsGetVarNextHitTime ========================================
+%% Abstract: 
+%%   Get the next hit time of variable sample time sti
+%function RTMSpecAccsGetNumTicksToNextHit(accRec, rtmName)
+  %assign sti = accRec.Args[0] 
+  %assign tidMap = FcnGetMdlRefGlobalTIDMap(rtmName)
+  %assign indx = "%<tidMap>[%<sti>]"
+  %if IsModelReferenceForASimstructBasedTarget()
+    %assign simS = RTMDispatchToAccessFcn("MdlRefSfcnS","get","","",rtmName)    
+    %return "(ssGetNumTicksToNextHitForControllableSampleTime(ssGetRootSS(%<simS>), %<indx>))"
+  %else
+    %assign ctrlRateTiming = RTMDispatchToAccessFcn("CtrlRateMdlRefTimingPtr", "get", "", "", rtmName)    
+    %return "(%<ctrlRateTiming>->numTicksToNextHitForCtrlRate[%<indx>-%<ctrlRateTiming>->firstCtrlRateTID])"
+  %endif
+%endfunction
+
+%endif %% _RTMSPECMACS_
+
+%% [EOF] rtmspecmacs.ttlc

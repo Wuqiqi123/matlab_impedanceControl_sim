@@ -1,0 +1,919 @@
+%% ==============================================================================
+%% 
+%% 
+%%
+%% Abstract:
+%%    Generation of threaded ERT main.c file with Windows threads
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%include "commonthreadlib.tlc"
+
+%function FcnDeclareProfileDataStruct()
+  %openfile retBuf
+  typedef struct {
+    int numSamples;  
+    int maxNumSamples;
+    double startTime[%<::CompiledModel.ConcurrentExecutionProfileNumSamples>];
+    double endTime[%<::CompiledModel.ConcurrentExecutionProfileNumSamples>];
+    int coreID[%<::CompiledModel.ConcurrentExecutionProfileNumSamples>];
+  } profileDataT;
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%function FcnDeclareProfileDataVar(numPeriodicMappedEntities, numPeriodicTriggers) 
+  %openfile retBuf
+  profileDataT profileData[%<numPeriodicMappedEntities>]; 
+  int counterSamples[%<numPeriodicTriggers>]; 
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%function FcnGenerateProfilingFunctions(numPeriodicMappedEntities)
+  %openfile retBuf
+  double profileReadTimer(void) {
+    LARGE_INTEGER readTime;
+    CHECK_STATUS(QueryPerformanceCounter(&readTime) == %<GET_TYPE_ID_REPLACEMENT("false")>, "QueryPerformanceCounter"); 
+    return (double)(readTime.QuadPart);
+  }
+  
+  void initializeNumSamplesForProfiling(void) {
+    int idx;
+    %<SLibDeploymentDeclareSampleTimeHitIndexArrayForProfiling()>
+    for (idx = 0; idx < %<numPeriodicMappedEntities>; idx++) {
+        profileData[idx].numSamples = 0;
+        profileData[idx].maxNumSamples = (%<::CompiledModel.ConcurrentExecutionProfileNumSamples> -1) / sthId[idx] + 1;
+    }
+  }
+  
+  void profile_task_start(int taskId) {
+    if (profileData[taskId].numSamples < profileData[taskId].maxNumSamples) {
+      profileData[taskId].coreID[profileData[taskId].numSamples] = GetCurrentProcessorNumber();
+      profileData[taskId].startTime[profileData[taskId].numSamples] = profileReadTimer(); 
+    }
+  } 
+  
+  void profile_task_end(int taskId) {  
+    if (profileData[taskId].numSamples < profileData[taskId].maxNumSamples) {
+      profileData[taskId].endTime[profileData[taskId].numSamples] = profileReadTimer();  
+      profileData[taskId].numSamples++;
+    }
+  } 
+   
+  %<SLibDeploymentWriteProfilingDataToHtml(numPeriodicMappedEntities, TLC_TRUE)>
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%%==============================================================================
+%function FcnGenerateUtilFunctionsAndGlobalVariables(numPeriodicTasks, ...
+  numAperiodicTasks, numPeriodicTriggers) void 
+  %assign numPeriodicMappedEntities = SLibGetNumPeriodicMappedEntities()
+  %openfile tmpFcnBuf
+  #define CHECK_STATUS(status,fcn) if (status != 0) {fprintf(stderr, "Call to %s returned error status (%d).\n", (fcn),(status)); perror((fcn)); fflush(stderr); exit(EXIT_FAILURE);}
+
+  typedef struct {
+    HANDLE threadHandle;
+    unsigned threadID;
+    int_T index;
+    HANDLE startEvent;
+    HANDLE stopEvent;
+    LONG exitFlag;
+  } ThreadInfo;
+  
+  %if SLibIsTaskProfilingOn()
+    %<FcnDeclareProfileDataStruct()>
+  %endif
+  %if (numPeriodicTasks > 0)
+  ThreadInfo periodicThread[%<numPeriodicTasks>]; 
+  %endif
+  ThreadInfo periodicTriggerThread[%<numPeriodicTriggers>];
+  %if (numAperiodicTasks > 0)
+  ThreadInfo aperiodicThread[%<numAperiodicTasks>];
+  %endif
+  int threadPriority[4] = { THREAD_PRIORITY_ABOVE_NORMAL, 
+                            THREAD_PRIORITY_NORMAL,
+                            THREAD_PRIORITY_BELOW_NORMAL, 
+                            THREAD_PRIORITY_LOWEST };
+  
+  HANDLE rtClock[%<numPeriodicTriggers>];
+  HANDLE quitEvent = NULL; 
+    
+  %if SLibIsTaskProfilingOn()
+    %<FcnDeclareProfileDataVar(numPeriodicMappedEntities, numPeriodicTriggers)>
+  %endif
+  
+  BOOL OnCtrlHandler(DWORD ctrl)
+  {  
+    SetEvent(quitEvent);
+    return %<GET_TYPE_ID_REPLACEMENT("true")>;
+  }
+  
+  %if SLibIsTaskProfilingOn()
+    %<FcnGenerateProfilingFunctions(numPeriodicMappedEntities)>
+  %endif
+  
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_data_defn", tmpFcnBuf)>
+%endfunction
+
+%%==============================================================================
+%function FcnGeneratePeriodicTaskSchedulerFunction(ehIdx, nTasks, stopCheck) void 
+  %openfile tmpFcnBuf
+  unsigned __stdcall %<LibGetTriggerName(ehIdx)>TaskScheduler(void *arg)
+  {
+    volatile boolean_T noErr;
+    DWORD waitResult;    
+    HANDLE orTimer;
+    LARGE_INTEGER orDueTime;
+    HANDLE eventArray[2];
+    %assign numTasks = LibGetNumTriggerTasks(ehIdx)
+    %if (numTasks > 1)
+       %assign indexVar = "i" 
+      int_T %<indexVar>;
+    %endif
+
+    %if ::MultiInstanceERTCode && !::UsingMalloc  && !::GenerateClassInterface
+      %<::tSimStructType> *const %<::tSimStruct> = %<::tSimStructPtr>; 
+    %endif
+      
+    %% Declare list of task indexes and task counters for tasks belonging to this
+    %% trigger
+    %assign initStr  = ""
+    %assign initStr2 = ""  
+    %assign initStr3 = ""
+    %assign comma    = "" 
+    %assign triggerBaseRate = LibGetTriggerBaseRate(ehIdx)
+    %foreach taskIdx = numTasks
+      %assign initStr  = initStr +"%<comma>0"
+      %assign initStr2 = initStr2 +"%<comma>%<nTasks>"
+      %if (numTasks > 1) && (!RootSystemIsSingleRate)
+        %assign stIdx          = LibGetTriggerTaskSampleTimeIndex(ehIdx, taskIdx)
+        %assign taskSampleTime = LibGetSampleTimePeriodAndOffset(stIdx, 0)
+        %assign nTaskTicks     = SLibComputeNumTaskTicks(taskSampleTime, ...
+          triggerBaseRate)
+        %assign initStr3 = initStr3 + "%<comma>%<nTaskTicks>"
+      %endif  
+      %assign nTasks   = nTasks + 1
+      %assign comma = ","
+    %endforeach
+    %if (numTasks > 1) && (!RootSystemIsSingleRate)
+      int_T taskCounters[%<numTasks>] = {%<initStr>};    
+      int_T taskTicks[%<numTasks>] = {%<initStr3>};  
+    %endif
+    int_T taskId[%<numTasks>] = {%<initStr2>};
+    noErr              = %<stopCheck>;
+    eventArray[0]      = quitEvent;
+    eventArray[1]      = rtClock[%<ehIdx>];
+    orTimer            = CreateWaitableTimer(NULL, %<GET_TYPE_ID_REPLACEMENT("false")>, NULL);
+    orDueTime.QuadPart = (LONGLONG)(%<LibGetTriggerBaseRate(ehIdx)> * 1e7 * -1);
+    while (noErr)  
+    {
+      /* Wait for the next event from the timer */
+      waitResult = WaitForMultipleObjects(2, eventArray, %<GET_TYPE_ID_REPLACEMENT("false")>, INFINITE);
+      if ((waitResult == WAIT_OBJECT_0) || (waitResult == WAIT_FAILED))
+      {
+         /* The quitEvent is set or the wait failed */
+          noErr = %<GET_TYPE_ID_REPLACEMENT("false")>;
+          continue;
+      }  
+      CHECK_STATUS(SetWaitableTimer(orTimer, &orDueTime, 0, NULL, NULL, %<GET_TYPE_ID_REPLACEMENT("false")>) == %<GET_TYPE_ID_REPLACEMENT("false")>, "SetWaitableTimer");
+   
+      %if (numTasks > 1) 
+      for (i = 0; i < %<numTasks>; i++)     
+      { 
+        %if !RootSystemIsSingleRate
+        if (taskCounters[i] == 0)
+        {  
+        %endif
+          waitResult = WaitForSingleObject(periodicThread[taskId[i]].stopEvent, 0);
+          if (waitResult == WAIT_TIMEOUT)  
+          {   
+            %assign msg = "Overrun - rate for periodic task %d too fast."
+            printf("%<msg>\n", taskId[i]); 
+            WaitForSingleObject(periodicThread[taskId[i]].stopEvent, INFINITE);
+          } 
+        %if !RootSystemIsSingleRate
+        }
+        %endif
+      }
+      %else
+        waitResult = WaitForSingleObject(periodicThread[taskId[0]].stopEvent, 0);
+        if (waitResult == WAIT_TIMEOUT)
+        {     
+          %assign msg = "Overrun - rate for periodic task %d too fast."
+          printf("%<msg>\n", taskId[0]);
+          WaitForSingleObject(periodicThread[taskId[0]].stopEvent,INFINITE);
+        }
+      %endif
+      
+      noErr = %<stopCheck>; 
+      if (noErr) 
+      {
+        %if SLibIsTaskProfilingOn()      
+          counterSamples[%<ehIdx>]+=%<SLibGetNumClockTicksForTrigger(ehIdx)>;
+        %endif
+   
+        %if (numTasks > 1)  
+          for (i = 0; i <%<numTasks>; i++)     
+          {   
+            %if !RootSystemIsSingleRate
+            if (taskCounters[i] == 0)
+            {
+            %endif
+            SetEvent(periodicThread[taskId[i]].startEvent); 
+            %if !RootSystemIsSingleRate
+            }
+            %endif
+          }
+        %else
+          SetEvent(periodicThread[taskId[0]].startEvent);
+        %endif
+        %% Advance task counters
+        %if (numTasks > 1) && (!RootSystemIsSingleRate)
+          for (i = 0; i <%<numTasks>; i++) {     
+              taskCounters[i]++;
+              if (taskCounters[i] > (taskTicks[i]-1)) {
+                taskCounters[i] = 0;
+              }
+          }
+        %endif
+      }
+      %if (numTasks > 1) && (!RootSystemIsSingleRate)
+      else  
+      {
+        for (i = 0; i < %<numTasks>; i++)     
+        {
+          if (taskCounters[i] != 0)
+          { 
+            WaitForSingleObject(periodicThread[taskId[i]].stopEvent,INFINITE);
+          }
+        }
+      }
+      %endif  
+      
+      if (WaitForSingleObject(orTimer, 0) == WAIT_OBJECT_0)
+      {
+        %assign msg = "Overrun - periodic trigger %<ehIdx> base rate too fast."
+        printf("%<msg>\n");
+      }
+    } /* while */
+    
+    %if (numTasks > 1)
+    for (i = 0; i < %<numTasks>; i++) 
+    {
+      InterlockedIncrement(&periodicThread[taskId[i]].exitFlag);
+      SetEvent(periodicThread[taskId[i]].startEvent);
+    }
+    %else
+    InterlockedIncrement(&periodicThread[taskId[0]].exitFlag);
+    SetEvent(periodicThread[taskId[0]].startEvent);
+    %endif
+    
+    _endthreadex(0);
+    return 0;
+  }
+
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_fcn_defn",tmpFcnBuf)>
+%endfunction
+
+%%==============================================================================
+%function FcnGeneratePeriodicTriggerFunction(ehIdx, stopCheck)   
+  %openfile retBuf
+  unsigned __stdcall %<LibGetTriggerName(ehIdx)>(void *arg)
+  {
+    volatile boolean_T noErr;
+    DWORD waitResult;    
+    HANDLE orTimer;
+    LARGE_INTEGER orDueTime;
+    HANDLE eventArray[2]; 
+    %if SLibIsTaskProfilingOn()
+      ThreadInfo* info   = (ThreadInfo*)arg;   
+    %else
+      /* Unused arguments */
+      (void)(arg);
+    %endif
+    
+    noErr              = %<stopCheck>;
+    eventArray[0]      = quitEvent;
+    eventArray[1]      = rtClock[%<ehIdx>];
+    orTimer            = CreateWaitableTimer(NULL, %<GET_TYPE_ID_REPLACEMENT("false")>, NULL);
+    orDueTime.QuadPart = (LONGLONG)(%<LibGetTriggerBaseRate(ehIdx)> * 1e7 * -1);
+    while (noErr)  
+    {
+      /* Wait for the next event from the timer */
+      waitResult = WaitForMultipleObjects(2, eventArray, %<GET_TYPE_ID_REPLACEMENT("false")>, INFINITE);
+      if ((waitResult == WAIT_OBJECT_0) || (waitResult == WAIT_FAILED))
+      {
+         /* The quitEvent is set or the wait failed */
+          noErr = %<GET_TYPE_ID_REPLACEMENT("false")>;
+          continue;
+      }  
+      
+      CHECK_STATUS(SetWaitableTimer(orTimer, &orDueTime, 0, NULL, NULL, %<GET_TYPE_ID_REPLACEMENT("false")>) == %<GET_TYPE_ID_REPLACEMENT("false")>, "SetWaitableTimer");
+      
+      noErr = %<stopCheck>;
+      if (noErr) 
+      {
+      %if SLibIsTaskProfilingOn()     
+        counterSamples[%<ehIdx>]+=%<SLibGetNumClockTicksForTrigger(ehIdx)>;
+      %endif
+  
+      %if SLibIsTaskProfilingOn()
+        profile_task_start(info->index);
+      %endif
+      %<LibCallTriggerISR(ehIdx)>    
+      %if SLibIsTaskProfilingOn()
+        profile_task_end(info->index);
+      %endif 
+      }
+    } /* while */
+    _endthreadex(0);
+    return 0;  
+  }  
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%%==============================================================================
+%function FcnGeneratePeriodicTaskWrapperFunctions(numPeriodicTasks, numPeriodicTriggers) void
+  %assign stopCheck = "(%<RTMGetErrStat()> == %<SLibGetNullDefinitionFromTfl()>)" 
+  %if RTMStopReqAccessed()
+    %assign stopCheck = stopCheck + " && !%<RTMGetStopRequested()>"
+  %endif
+ 
+  %openfile tmpFcnBuf 
+  %if (numPeriodicTasks > 0)
+  unsigned __stdcall periodicTask(void *arg)
+  {
+    DWORD waitResult;  
+    ThreadInfo* info         = (ThreadInfo*)arg;   
+    volatile boolean_T noErr = %<GET_TYPE_ID_REPLACEMENT("true")>;
+
+    %if ::MultiInstanceERTCode && !::UsingMalloc  && !::GenerateClassInterface
+      %<::tSimStructType> *const %<::tSimStruct> = %<::tSimStructPtr>; 
+    %endif
+    
+    while (noErr) 
+    {         
+      waitResult = WaitForSingleObject(info->startEvent,INFINITE);  
+      if ((waitResult != WAIT_OBJECT_0) || info->exitFlag)
+      { 
+        /* Wait failed or exitFlag is set */
+        noErr = %<GET_TYPE_ID_REPLACEMENT("false")>;   
+        continue;
+      } 
+      %if SLibIsTaskProfilingOn()
+        profile_task_start(info->index);
+      %endif  
+
+      %if ::GenerateClassInterface
+        %if SLibNeedWrapperStepFcn()!=0
+          %if ISEMPTY(::NamespaceName)
+            %<SLibModelStepFcnName("")>(%<::CPPObjectName>, info->index);
+          %else
+            %<::NamespaceName>::%<SLibModelStepFcnName("")>(%<::CPPObjectName>, info->index);
+          %endif      
+        %else
+          %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+          %assert ISFIELD(classConfObj,"FunctionName")
+          %<::CPPObjectName>.%<classConfObj.FunctionName>();
+        %endif
+      %else   
+        %<LibCallModelStep("info->index")>
+      %endif
+
+      %if SLibIsTaskProfilingOn()
+        profile_task_end(info->index);
+      %endif
+      SetEvent(info->stopEvent);
+    }  
+    _endthreadex(0);
+    return 0;  
+  }
+  %endif
+  
+  %assign taskCounter = 0
+  %% Generate task schedulers per periodic group
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)
+    %if ISEQUAL(evType, "AperiodicTrigger") 
+      %continue
+    %endif  
+    %if SLibIsTaskProfilingOn()   
+      %assign finalStopCheck = stopCheck + " && (counterSamples[%<ehIdx>] < %<::CompiledModel.ConcurrentExecutionProfileNumSamples>)"
+    %else
+      %assign finalStopCheck = stopCheck
+    %endif
+    
+    %if !ISEQUAL(LibGetNumTriggerTasks(ehIdx), 0)
+      %<FcnGeneratePeriodicTaskSchedulerFunction(ehIdx, taskCounter, ...
+        finalStopCheck)>
+      %assign taskCounter = taskCounter + LibGetNumTriggerTasks(ehIdx)
+    %else 
+      %assert ISEQUAL(LibGetTriggerHandlerType(ehIdx), "isr")
+      %<FcnGeneratePeriodicTriggerFunction(ehIdx, finalStopCheck)>
+    %endif
+
+  %endforeach %% end for each periodic trigger
+    
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_fcn_defn",tmpFcnBuf)>
+%endfunction
+
+%%==============================================================================
+%function FcnGenerateAperiodicWrapperFunctions() void
+  %openfile tmpFcnBuf 
+  %foreach aehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(aehIdx)
+    %if ISEQUAL(evType, "PeriodicTrigger")
+      %continue
+    %endif
+    %assign targetObj = LibGetTriggerTargetObject(aehIdx)
+    %assign aehName   = LibGetTriggerName(aehIdx)
+    %assign type      = LibGetTriggerHandlerType(aehIdx)
+    %assert ISEQUAL(type, "task") || ISEQUAL(type, "isr")
+    %if ISEQUAL(type, "task")
+      %foreach taskIdx = LibGetNumTriggerTasks(aehIdx)
+      unsigned __stdcall %<aehName>_%<taskIdx>(void *arg) 
+      {  
+        DWORD waitResult; 
+        HANDLE eventArray[2];
+        ThreadInfo* info         = (ThreadInfo*)arg; 
+        volatile boolean_T noErr = %<GET_TYPE_ID_REPLACEMENT("true")>; 
+        eventArray[0]            = quitEvent;
+        eventArray[1]            = info->startEvent;
+        while (noErr)
+        {
+          waitResult = WaitForMultipleObjects(2, eventArray, %<GET_TYPE_ID_REPLACEMENT("false")>, INFINITE);
+          if ((waitResult == WAIT_FAILED) || (waitResult == WAIT_OBJECT_0)) 
+          {
+            noErr = %<GET_TYPE_ID_REPLACEMENT("false")>;
+            continue;
+          }  
+          %<LibCallTriggerTask(aehIdx, taskIdx)>
+        }
+        _endthreadex(0);
+        return 0;
+      }
+     %endforeach
+    %else
+      %% Generate ISR 
+      %assign isrFuncName = "eventHandler_%<aehName>"
+      /* Software Interrupt */
+      unsigned __stdcall %<isrFuncName>(void *arg)
+      {  
+        DWORD waitResult;
+        HANDLE eventArray[2];
+        ThreadInfo* info         = (ThreadInfo*)arg; 
+        volatile boolean_T noErr = %<GET_TYPE_ID_REPLACEMENT("true")>;
+        eventArray[0]            = quitEvent;
+        eventArray[1]            = info->startEvent;
+        while (noErr) 
+        {
+          waitResult = WaitForMultipleObjects(2, eventArray, %<GET_TYPE_ID_REPLACEMENT("false")>, INFINITE);
+          if ((waitResult == WAIT_FAILED) || (waitResult == WAIT_OBJECT_0))
+          {
+            noErr = %<GET_TYPE_ID_REPLACEMENT("false")>;
+            continue;
+          }  
+          %<LibCallTriggerISR(aehIdx)> 
+        }
+        _endthreadex(0);
+        return 0;
+      } 
+    %endif
+  %endforeach  
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_fcn_defn",tmpFcnBuf)>
+%endfunction
+ 
+%%==============================================================================
+%function FcnDeclareTaskPriorities(numAperiodicTasks, coreAffinityRequired) 
+  %% Declare threads priority based on rate monotonic assignment
+  %assign asyncPr = 0
+  %if (numAperiodicTasks > 0)  %% Reserve highest priority to async
+    %assign asyncPr = 1
+  %endif    
+  %openfile tmpBuf  
+  %assign stIdRMSTaskWithLowPrio = -1 
+  %assign isCorrectRMS           = TLC_TRUE
+  %assign idx = 0
+  %if coreAffinityRequired
+    %assign maxNumberOfCoresPerTask = SLibGetMaxNumberOfCoresPerTask()
+    %assert maxNumberOfCoresPerTask > 0
+  %endif
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)
+    %if ISEQUAL(evType, "AperiodicTrigger")
+      %continue
+    %endif
+    %foreach taskIdx = LibGetNumTriggerTasks(ehIdx)
+      %assign stId = LibGetTriggerTaskSampleTimeIndex(ehIdx, taskIdx) + asyncPr 
+      %assign stId = stId - LibGetTID01EQ()
+      %if (stId < 3)
+        priority[%<idx>] = threadPriority[%<stId>];
+      %else
+        %if SLibIsTaskRateMonotonic(ehIdx, taskIdx)
+          %if ISEQUAL(stIdRMSTaskWithLowPrio, -1)
+            %% First rate monotonic task with lowest priority
+            %assign stIdRMSTaskWithLowPrio = stId
+          %elseif !ISEQUAL(stIdRMSTaskWithLowPrio, stId)
+            %% At least 2 rate motonic tasks with lowest priority and different rates
+            %assign isCorrectRMS = TLC_FALSE
+          %endif
+        %endif
+        priority[%<idx>] = threadPriority[3];
+      %endif   
+      %if coreAffinityRequired
+	%assign affinity = LibGetTaskCoreAffinity(ehIdx, taskIdx)
+        %foreach index = maxNumberOfCoresPerTask
+            %if ISEMPTY(affinity) || SIZE(affinity,1)-1 < index
+              coreAffinity[%<idx>][%<index>] = -1;
+            %else
+              coreAffinity[%<idx>][%<index>] = %<affinity[index]>;
+            %endif
+        %endforeach
+      %endif
+      %assign idx = idx + 1
+    %endforeach      
+  %endforeach
+  %if !isCorrectRMS
+    printf("There is a risk in running the generated code correctly because \n");
+    printf("the number of tasks with different periods that require rate monotonic \n");
+    printf("scheduling is larger than three. Consider reducing the number of rate \n");
+    printf("monotonic tasks in the model.");
+    fflush(stdout);
+  %endif
+  %closefile tmpBuf
+  %return tmpBuf
+%endfunction
+    
+%%==============================================================================
+%function FcnGenerateMainFunction(numPeriodicTasks, numAperiodicTasks, ...
+  numPeriodicTriggers) void
+  %assign coreAffinityRequired = LibIsCoreAffinityRequired()
+  %openfile tmpFcnBuf
+  int main(int argc, char *argv[])
+  {
+    %if coreAffinityRequired
+      int i, j;
+    %else
+      int i;
+    %endif
+    LARGE_INTEGER stNanoSec;
+    LONG stMilliPeriod;  
+    %if (numPeriodicTasks > 0)
+    %if coreAffinityRequired
+      SYSTEM_INFO sysinfo;  
+      DWORD_PTR processMask;
+      DWORD_PTR systemMask;
+      DWORD_PTR threadMask;
+	  %assign maxNumberOfCoresPerTask = SLibGetMaxNumberOfCoresPerTask()
+      %assert maxNumberOfCoresPerTask > 0
+      int coreAffinity[%<numPeriodicTasks>][%<maxNumberOfCoresPerTask>];
+      int numCores;
+    %endif
+    int priority[%<numPeriodicTasks>];   
+    %endif
+    
+    %if ::MultiInstanceERTCode && !::UsingMalloc  && !::GenerateClassInterface
+      %<::tSimStructType> *const %<::tSimStruct> = %<::tSimStructPtr>; 
+    %endif
+
+    /* Unused arguments */
+    (void)(argc);
+    (void)(argv);
+    
+    %% Declare threads priority based on rate monotonic assignment
+    %<FcnDeclareTaskPriorities(numAperiodicTasks, coreAffinityRequired)>
+    
+    CHECK_STATUS(SetConsoleCtrlHandler((PHANDLER_ROUTINE)OnCtrlHandler, %<GET_TYPE_ID_REPLACEMENT("true")>) == %<GET_TYPE_ID_REPLACEMENT("false")>, "SetConsoleCtrlHandler");
+    
+    %% Initialize timers 
+    for (i = 0; i < %<numPeriodicTriggers>; i++) {
+      rtClock[i] = NULL;
+    }
+     
+    %if SLibIsTaskProfilingOn()
+      for (i = 0 ; i < %<numPeriodicTriggers>; i++) {
+        counterSamples[i] = 0;
+      }
+      initializeNumSamplesForProfiling();
+    %endif
+    
+    printf("**starting the model**\n");	   
+    fflush(stdout);
+
+    %if ::UsingMalloc
+      %<FcnGenerateModelRegistration()>
+   
+      if (%<::tSimStruct> == NULL) {
+        (void)fprintf(stderr,"Memory allocation error during model "
+        "registration");
+        return(EXIT_FAILURE);
+      }
+    %endif
+
+    %if ::MultiInstanceERTCode && !::UsingMalloc  && !::GenerateClassInterface
+      %% Pack model data into RTM
+      %<FcnPackModelDataIntoRTM()>
+    %endif
+
+    %<FcnGenerateModelInitialize()> 
+    %if !SuppressErrorStatus
+    %<RTMSetErrStat(0)>;
+    %endif
+    
+    /* Set the priority of the main thread */
+    CHECK_STATUS(SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_TIME_CRITICAL) == %<GET_TYPE_ID_REPLACEMENT("false")>, "SetThreadPriority");
+          
+    /* Create & initialize events used for thread synchronization */
+    quitEvent = CreateEvent(NULL, %<GET_TYPE_ID_REPLACEMENT("true")>, %<GET_TYPE_ID_REPLACEMENT("false")>, NULL);
+    CHECK_STATUS(quitEvent == NULL,"CreateEvent");
+    
+    for (i = 0; i < %<numPeriodicTriggers>; i++) {
+      rtClock[i] = CreateWaitableTimer(NULL, %<GET_TYPE_ID_REPLACEMENT("false")>, NULL);
+      CHECK_STATUS(rtClock[i] == NULL,"CreateWaitableTimer");
+    }
+          
+    
+    %if (numPeriodicTasks > 0)
+    %if coreAffinityRequired
+      GetSystemInfo(&sysinfo);
+      numCores = sysinfo.dwNumberOfProcessors;  
+      CHECK_STATUS(GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask) == %<GET_TYPE_ID_REPLACEMENT("false")>, "GetProcessAffinityMask");
+    %endif
+    
+    /* Create periodic threads */
+    for (i = 0; i < %<numPeriodicTasks>; i++)
+    { 
+      periodicThread[i].index = (int_T) i;
+      periodicThread[i].exitFlag = 0;
+       
+      /* Create the events that will be used by the thread */
+      periodicThread[i].startEvent = CreateEvent(NULL, %<GET_TYPE_ID_REPLACEMENT("false")>, %<GET_TYPE_ID_REPLACEMENT("false")>, NULL);
+      CHECK_STATUS(periodicThread[i].startEvent == NULL, "CreateEvent");
+      periodicThread[i].stopEvent = CreateEvent(NULL, %<GET_TYPE_ID_REPLACEMENT("false")>, %<GET_TYPE_ID_REPLACEMENT("true")>, NULL);
+      CHECK_STATUS(periodicThread[i].stopEvent == NULL, "CreateStopEventEvent");
+        
+      /* Create the thread in suspended mode */
+      periodicThread[i].threadHandle = (HANDLE)_beginthreadex(NULL, 0, &periodicTask, &periodicThread[i], CREATE_SUSPENDED, &periodicThread[i].threadID);
+      CHECK_STATUS(periodicThread[i].threadID == 0,"_beginthreadex");
+      
+      /* Set the thread priority */
+      CHECK_STATUS(SetThreadPriority(periodicThread[i].threadHandle, priority[i]) == %<GET_TYPE_ID_REPLACEMENT("false")>, "SetThreadPriority");
+      
+      %if coreAffinityRequired
+      /* Create the thread mask */
+      threadMask = 0;
+      for(j = 0; j < %<maxNumberOfCoresPerTask>; j++) {
+        if ((coreAffinity[i][j] >= 0) && (coreAffinity[i][j] < numCores))
+        {
+          /* Set the (coreAffinity[i][j]+1)th rightmost bit in threadMask */
+          threadMask |= (1 << coreAffinity[i][j]);
+        }
+      }
+      /* Set the core affinity */
+      if (threadMask != 0)
+      {
+        CHECK_STATUS(SetThreadAffinityMask(periodicThread[i].threadHandle, threadMask) == 0, "SetThreadAffinityMask");
+      }
+      %endif
+      
+      /* Start the thread */
+      CHECK_STATUS(ResumeThread(periodicThread[i].threadHandle) == -1,"ResumeThread");
+    }
+    %endif %% if (numPeriodicTasks > 0)    
+    
+    /* Create periodic trigger threads */    
+    %assign periodicThreadIDCounter = 0
+    %foreach ehIdx = LibGetNumTriggers()
+      %assign evType = LibGetTriggerType(ehIdx)
+      %if ISEQUAL(evType, "AperiodicTrigger") 
+        %continue
+      %endif  
+      %if ISEQUAL(LibGetNumTriggerTasks(ehIdx), 0)
+        %assign threadFcnName           = "%<LibGetTriggerName(ehIdx)>"
+        %assign argStr                  = "&periodicTriggerThread[%<ehIdx>]"
+        %assign index                   = numPeriodicTasks + periodicThreadIDCounter
+        %assign periodicThreadIDCounter = periodicThreadIDCounter + 1
+      %else
+        %assign threadFcnName = "%<LibGetTriggerName(ehIdx)>TaskScheduler"  
+        %assign argStr        = "NULL"
+        %assign index         = "0"
+      %endif
+      {
+        periodicTriggerThread[%<ehIdx>].index = %<index>;
+        periodicTriggerThread[%<ehIdx>].exitFlag = 0;
+        periodicTriggerThread[%<ehIdx>].startEvent = NULL;
+        periodicTriggerThread[%<ehIdx>].stopEvent = NULL;
+       
+        /* Create the thread in suspended mode */
+        periodicTriggerThread[%<ehIdx>].threadHandle = (HANDLE)_beginthreadex(NULL, 0, &%<threadFcnName>, %<argStr>, CREATE_SUSPENDED, &periodicTriggerThread[%<ehIdx>].threadID);
+        CHECK_STATUS(periodicTriggerThread[%<ehIdx>].threadHandle == 0,"_beginthreadex");
+        
+        /* Set the periodic trigger thread priority */
+        CHECK_STATUS(SetThreadPriority(periodicTriggerThread[%<ehIdx>].threadHandle,THREAD_PRIORITY_HIGHEST) == %<GET_TYPE_ID_REPLACEMENT("false")>, "SetThreadPriority");
+        
+        /* Start the periodic trigger thread */
+        CHECK_STATUS(ResumeThread(periodicTriggerThread[%<ehIdx>].threadHandle) == -1,"ResumeThread");
+      }
+    %endforeach
+    
+    %if (numAperiodicTasks > 0)  
+      %assign idx = 0
+      %foreach aehIdx = LibGetNumTriggers()
+        %assign evType = LibGetTriggerType(aehIdx)
+        %if ISEQUAL(evType, "PeriodicTrigger")
+          %continue
+        %endif
+        %assign type      = LibGetTriggerHandlerType(aehIdx) 
+        %assign targetObj = LibGetTriggerTargetObject(aehIdx)
+        %if !ISFIELD(targetObj, "EventName")
+          %assign errTxt = "Unsupported aperiodic event for native threads."
+          %<LibReportFatalError(errTxt)>
+        %endif
+        %assign eventName = targetObj.EventName
+        %assign aehName   = LibGetTriggerName(aehIdx)
+        %if ISEQUAL(type, "task")    
+          %assert ISEQUAL(LibGetNumTriggerTasks(aehIdx), 1)
+          %assign taskIdx = 0
+          %assign isrFcnName = "%<aehName>_%<taskIdx>"
+          /* Create aperiodic thread */ 
+        %else
+          /* Create thread for aperiodic trigger */ 
+          %assign isrFcnName = "eventHandler_%<aehName>"
+        %endif
+        aperiodicThread[%<idx>].index = %<idx>;
+        aperiodicThread[%<idx>].exitFlag = 0;
+        aperiodicThread[%<idx>].stopEvent = NULL;
+      
+        /* Create the event that will trigger the execution of the thread */
+        aperiodicThread[%<idx>].startEvent = CreateEvent(NULL, %<GET_TYPE_ID_REPLACEMENT("false")>, %<GET_TYPE_ID_REPLACEMENT("false")>, "%<eventName>");
+        CHECK_STATUS(aperiodicThread[%<idx>].startEvent == NULL, "CreateEvent%<eventName>");           
+            
+        /* Create the thread in suspended mode */
+        aperiodicThread[%<idx>].threadHandle = (HANDLE)_beginthreadex(NULL, 0, &%<isrFcnName>, &aperiodicThread[%<idx>], CREATE_SUSPENDED, &aperiodicThread[%<idx>].threadID);
+        CHECK_STATUS(aperiodicThread[%<idx>].threadID == 0,"_beginthreadex");
+            
+        /* Set the thread priority */
+        CHECK_STATUS(SetThreadPriority(aperiodicThread[%<idx>].threadHandle, priority[0]) == %<GET_TYPE_ID_REPLACEMENT("false")>, "SetThreadPriority");
+        /* Start the thread */
+        CHECK_STATUS(ResumeThread(aperiodicThread[%<idx>].threadHandle) == -1,"ResumeThread");
+        %assign idx = idx + 1
+      %endforeach
+    %endif
+    
+    /* Real-time scheduling timer */ 
+    %foreach ehIdx = LibGetNumTriggers() 
+      %assign evType = LibGetTriggerType(ehIdx)
+      %if ISEQUAL(evType, "AperiodicTrigger") 
+        %continue
+      %endif  
+      %assign period = %<LibGetTriggerBaseRate(ehIdx)> 
+      %if ((period * 1000) < 1)
+        %assign errormsg = "The periodic trigger %<LibGetTriggerName(ehIdx)> of model %<::CompiledModel.Name> has a base rate smaller than 1 ms. The current base rate is %<period> seconds. Increase the base rate of the periodic trigger by increasing the rate in the model."
+        %exit %<errormsg>
+      %endif
+      stNanoSec.QuadPart = (LONGLONG)(%<period> * 1e7 * -1);
+      stMilliPeriod      = (LONG)(%<period> * 1e3);
+      CHECK_STATUS(SetWaitableTimer(rtClock[%<ehIdx>], &stNanoSec, stMilliPeriod, NULL, NULL, %<GET_TYPE_ID_REPLACEMENT("false")>) == %<GET_TYPE_ID_REPLACEMENT("false")>, "SetWaitableTimer");
+    %endforeach
+    
+    /* Wait for a stopping condition. */
+    for (i = 0; i < %<numPeriodicTriggers>; i++) {
+      WaitForSingleObject(periodicTriggerThread[i].threadHandle, INFINITE);
+    }
+    
+    /* Clean up */
+    for (i = 0; i< %<numPeriodicTriggers>; i++)
+    {
+       if (rtClock[i] != NULL) 
+       {
+         CloseHandle(rtClock[i]);
+       }
+       if (periodicTriggerThread[i].threadHandle != NULL) 
+       {
+         CloseHandle(periodicTriggerThread[i].threadHandle);
+       }
+    }
+    if (quitEvent != NULL) 
+    {
+      CloseHandle(quitEvent);
+    }
+    
+    %if (numPeriodicTasks > 0)
+    for (i = 0; i < %<numPeriodicTasks>; i++)
+    {
+      if (periodicThread[i].startEvent != NULL) 
+      {
+        CloseHandle(periodicThread[i].startEvent);
+      }
+      if (periodicThread[i].stopEvent != NULL) 
+      {
+        CloseHandle(periodicThread[i].stopEvent);
+      }
+      if (periodicThread[i].threadHandle != NULL) 
+      {
+        CloseHandle(periodicThread[i].threadHandle);
+      }
+    }
+    %endif
+    
+    %if (numAperiodicTasks > 0)  
+    for (i = 0; i < %<numAperiodicTasks>; i++)
+    {
+      if (aperiodicThread[i].startEvent != NULL) 
+      {
+        CloseHandle(aperiodicThread[i].startEvent);
+      }
+      if (aperiodicThread[i].threadHandle != NULL) 
+      {
+        CloseHandle(aperiodicThread[i].threadHandle);
+      }
+    }
+    %endif
+      
+    printf("**stopping the model**\n");
+    fflush(stdout);
+    %if !SuppressErrorStatus
+    if (%<RTMGetErrStat()> != NULL)
+    {
+      fprintf(stderr, "\n**%s**\n", %<RTMGetErrStat()>);
+    }
+    %endif
+    
+    %<FcnGenerateModelTerminate()> 
+    
+    %if SLibIsTaskProfilingOn()
+      writeProfileDataToHTMLFile();
+    %endif
+
+    return 0;
+  }
+  
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_fcn_defn", tmpFcnBuf)>
+%endfunction
+
+%%
+%%**********************************************************************
+%%   This is the entry point for generating main.c 
+%%**********************************************************************
+%function SLibGenerateThreadedMain() void
+  %assign numPeriodicTasks  = SLibGetNumPeriodicTasks()
+  %assign numAperiodicTasks = SLibGetNumAperiodicTasks()   
+  %% Event handler mapping on Windows uses threads waiting for the event
+  %foreach aehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(aehIdx)
+    %if ISEQUAL(evType, "PeriodicTrigger")
+      %continue
+    %endif
+    %assign type = LibGetTriggerHandlerType(aehIdx) 
+    %if ISEQUAL(type, "isr")
+      %assign numAperiodicTasks = numAperiodicTasks + 1
+    %endif
+  %endforeach
+  %assign numPeriodicTriggers = SLibGetNumPeriodicTriggers()
+
+  %openfile tmpFcnBuf
+  #ifndef _WIN32
+  #define _WIN32
+  #endif
+  #ifndef _WIN32_WINNT
+  #define _WIN32_WINNT 0x0500
+  #endif
+  #include <windows.h>
+  #include <process.h>  
+  %if SLibIsTaskProfilingOn() 
+    #include <float.h> %% required for DBL_EPSILON
+    #include <time.h>
+  %endif
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_incl", tmpFcnBuf)>
+  
+  %openfile tmpFcnBuf
+  %%SLibDeclareModelFcnArgs is already called in ertmain_grtinterface.tlc
+  %%Check for reusable code to avoid duplicate definition
+  %if !(::MultiInstanceERTCode && !::UsingMalloc && !::GenerateClassInterface)
+    %<SLibDeclareModelFcnArgs(TLC_TRUE)>\
+  %endif
+  %<SLibDeclareFcnProtoCtlGlobalVariables()>
+  %if ::UsingMalloc
+    %<::tSimStructType> *%<::tSimStruct>;
+    const char *RT_MEMORY_ALLOCATION_ERROR = "memory allocation error"; 
+  %endif
+  %closefile tmpFcnBuf
+  %<SLibCacheCodeToFile("mainSrc_data_defn", tmpFcnBuf)>
+ 
+  %<FcnGenerateUtilFunctionsAndGlobalVariables(numPeriodicTasks, numAperiodicTasks, ...
+    numPeriodicTriggers)>
+  %<FcnGeneratePeriodicTaskWrapperFunctions(numPeriodicTasks, numPeriodicTriggers)>
+  %<FcnGenerateAperiodicWrapperFunctions()>
+  %<FcnGenerateMainFunction(numPeriodicTasks, numAperiodicTasks, numPeriodicTriggers)> 
+%endfunction

@@ -1,0 +1,388 @@
+%%
+%% Copyright 2016-2017 The MathWorks, Inc.
+%%
+%% Abstract: Library of functions for generating a MDX file.
+%%
+%selectfile NULL_FILE
+
+%if EXISTS("_MDXLIB_") == 0
+%assign _MDXLIB_ = 1
+
+%%
+%% Common entry function for the MDX file generation
+%%
+%function SLibMDXCommonEntry() void
+  %if EXISTS(::GenerateMDXInterface) && 1 == ::GenerateMDXInterface
+    %<SLibMDXDumpXMLFile()>
+  %endif
+  %if EXISTS(::CustomMDXEntryFcnDefined) && 1 == ::CustomMDXEntryFcnDefined
+    %<CustomMDXEntryFcn()>
+  %endif
+%endfunction %% SLibMDXCommonEntry
+
+%%
+%% Dump an example MDX TLC MATLAB fike for testing
+%%
+%function SLibMDXDumpXMLFile() void
+  %if !IsModelReferenceTarget() || !SLibMDXIsClass()
+    %return
+  %endif
+  %selectfile STDOUT
+### Generating example MDX MATLAB file: %<LibGetModelName()>_mdx.m  
+  %selectfile NULL_FILE
+  %openfile mdxFile = LibGetModelName() + "_mdx.m"
+function retVal = %<LibGetModelName()>_mdx()
+  retVal = %<SLibMDXTraverseSelfStructure()>;
+end
+  %closefile mdxFile
+%endfunction %% SLibMDXDumpXMLFile
+
+%%
+%% Return true if a the current model C code is generated as MDX class
+%%
+%function SLibMDXIsClass() void
+  %return ISFIELD(::CompiledModel.ConfigSet, "MDXIsClass") ...
+    && 1 == ::CompiledModel.ConfigSet.MDXIsClass && IsModelReferenceTarget()
+%endfunction %% SLibMDXIsClass
+
+%%
+%% Return true if a the current model C code is generated as public MDX class
+%%
+%function SLibMDXIsPublicClass() void
+  %return ISFIELD(::CompiledModel.ConfigSet, "MDXIsPrivate") ...
+    && 0 == ::CompiledModel.ConfigSet.MDXIsPrivate
+%endfunction %% SLibMDXIsPublicClass
+
+%%
+%% Return true if a the current model C code is generated as multi instance
+%% MDX class
+%%
+%function SLibMDXIsMultiInstanceClass() void
+  %return ISFIELD(::CompiledModel, "OkToMultiInstanceModelref") ...
+    && 1 == ::CompiledModel.OkToMultiInstanceModelref
+%endfunction %% SLibMDXIsMultiInstanceClass
+
+
+%%
+%% Returns the implementation name of a model
+%%
+%function SLibMDXImplementationName() void
+  %return ::CompiledModel.ConfigSet.CustomUserTokenString
+%endfunction
+
+%function SLibMDXIsCoderGroupElement(id)  void
+  %return "PCDG" == id || "RCDG" == id
+%endfunction %% SLibMDXIsCoderGroupElement
+
+%function SLibMDXIsCoderGroupReference(id)  void
+  %return "RCDG" == id
+%endfunction
+
+%function SLibMDXGetCoderGroup(aGroupIdx) void
+  %assert aGroupIdx < ::CompiledModel.NumCoderDataGroups
+  %return ::CompiledModel.CoderDataGroup[aGroupIdx]
+%endfunction
+
+%function SLibMDXGetCoderGroupName(aGroupIdx) void
+  %return SLibMDXGetCoderGroup(aGroupIdx).Name
+%endfunction
+
+%function SLibMDXGetVarGroup(aVarGroupIdx) void
+  %assert aVarGroupIdx < ::CompiledModel.VarGroups.NumVarGroups
+  %return ::CompiledModel.VarGroups.VarGroup[aVarGroupIdx]
+%endfunction
+
+%function SLibMDXGetVarGroupCoderGroupIdx(aVarGroupIdx) void
+  %assign varGroup = SLibMDXGetVarGroup(aVarGroupIdx)
+  %if ISFIELD(varGroup, "CoderDataGroupIndex")
+    %return varGroup.CoderDataGroupIndex
+  %endif
+  %return -1
+%endfunction
+
+%function SLibMDXGetVarGroupNumElements(aVarGroupIdx) void
+  %return SLibVarGroupNumElements(aVarGroupIdx)
+%endfunction
+
+%function SLibMDXGetVarGroupElement(aVarGroupIdx, aElementIdx) void
+  %return SLibVarGroupElementSource(aVarGroupIdx, aElementIdx)
+%endfunction
+
+%function SLibMDXGetVarGroupCGType(aVarGroupIdx) void
+  %return SLibMDXGetVarGroup(aVarGroupIdx).CGTypeIdx
+%endfunction
+
+%function SLibMDXGetVarGroupElementCGType(aVarGroupIdx, aElementIdx)
+  %return SLibVarGroupElementType(aVarGroupIdx, aElementIdx)
+%endfunction %% SLibMDXGetVarGroupElementCGType
+
+%function SLibMDXGetVarGroupElementName(aVarGroupIdx, aElementIdx)
+  %return SLibVarGroupElementName(aVarGroupIdx, aElementIdx)
+%endfunction %% SLibMDXGetVarGroupElementName
+
+
+%function SLibMDXIsOMLClass() void
+  %if !SLibMDXIsClass()
+    %return TLC_FALSE
+  %endif
+  %assign selfVarGroupIdx = SLibGetSelfCoderDataGroupVarGroupIndex()
+  %if 0 > selfVarGroupIdx
+    %return TLC_FALSE
+  %endif
+  %assign selfGroupIdx = SLibMDXGetVarGroupCoderGroupIdx(selfVarGroupIdx)
+  %assign groupName    = SLibMDXGetCoderGroupName(selfGroupIdx)
+  %assign numElements  = SLibMDXGetVarGroupNumElements(selfVarGroupIdx)
+  %foreach mIdx = numElements
+    %assign idnum = IDNUM(SLibMDXGetVarGroupElement(selfVarGroupIdx, mIdx))
+    %assign id = idnum[0]
+    %if SLibMDXIsCoderGroupReference(idnum[0])
+      %return TLC_FALSE
+    %endif
+  %endforeach
+  %return TLC_TRUE
+%endfunction %% SLibMDXIsOMLClass
+
+%%
+%% returns the vargroup index of a child vargoup or -1
+%%
+%function SLibMDXGetChildVarGroupIdx(aVarGroupIdx, aMemberIdx) void
+  %assign idnum = IDNUM(SLibMDXGetVarGroupElement(aVarGroupIdx, aMemberIdx))
+  %if "VG" == idnum[0] || "RVG" == idnum[0]
+    %return idnum[1]
+  %elseif SLibMDXIsCoderGroupElement(idnum[0])
+    %assign childGroup = SLibMDXGetCoderGroup(idnum[1])
+    %assign memberType = LibCGTypeScalarBaseType(...
+      SLibMDXGetVarGroupElementCGType(aVarGroupIdx, aMemberIdx))
+    %assign numVarGroups = ::CompiledModel.VarGroups.NumVarGroups
+    %foreach vgIdx = numVarGroups
+      %assign varGroup = ::CompiledModel.VarGroups.VarGroup[vgIdx]
+      %if SLibMDXGetVarGroupCGType(vgIdx) == memberType ...
+        && childGroup.GroupIndex == varGroup.CoderDataGroupIndex
+        %return vgIdx
+      %endif
+    %endforeach
+  %elseif !ISEMPTY(FEVAL("strfind",idnum[0],"SLF"))
+    %assign errTxt = "Ungrouped data structures are not suppoted as part" ...
+       + " of a MDX class code generation. Please assign a" ...
+       + " Simulink.CoderGroup to the 'Group internal:' parameter in the" ...
+       + " MDX code generation dialog."
+      %<LibReportFatalError(errTxt)>
+  %endif
+  %return -1
+%endfunction
+
+%function SLibMDXBaseTypeName(aCGTypeIdx, aObjectType) void
+  %assign baseType = LibCGTypeScalarBaseType(aCGTypeIdx)
+  %assign slType   = LibCGTypeToSLType(baseType)
+  %switch slType
+    %case tSS_DOUBLE
+      %return "A_FLOAT64"
+    %case tSS_SINGLE
+      %return "A_FLOAT32"
+    %case tSS_UINT8
+      %return "A_UINT8"
+    %case tSS_UINT16
+      %return "A_UINT16"
+    %case tSS_UINT32
+      %return "A_UINT32"
+    %case tSS_BOOLEAN
+        %if aObjectType == 1
+            %% case Variable / Signal
+            %return "A_BIT"
+        %else
+            %% case Calprm / Parameter
+            %return "A_UINT8"
+        %endif
+    %case tSS_INT8
+      %return "A_INT8"
+    %case tSS_INT16
+      %return "A_INT16"
+    %case tSS_INT32
+      %return "A_INT32"
+    %default
+      %if LibCGTypeIsStruct(baseType)
+        %return LibCGTypeName(baseType)
+      %else
+        %return "NoBaseTypeFound" 
+      %endif
+  %endswitch
+%endfunction
+  
+%function SLibMDXEmitSignalsForVarGroup(aVarGroupIdx) Output
+  %assign coderGroupIdx = SLibMDXGetVarGroupCoderGroupIdx(aVarGroupIdx)
+  %if 0 > coderGroupIdx
+    %return
+  %endif
+  %assign memLocation = SLibMDXGetCoderGroupName(coderGroupIdx)
+  %assign numMembers  = SLibMDXGetVarGroupNumElements(aVarGroupIdx)
+  %assign modelName   = LibGetModelName()
+  %foreach mIdx = numMembers
+    %assign vgIdx = SLibMDXGetChildVarGroupIdx(aVarGroupIdx, mIdx)
+    %if vgIdx > -1
+      %<SLibMDXEmitSignalsForVarGroup(vgIdx)>\
+    %elseif SLibDefineVarGroupElement(aVarGroupIdx, mIdx)
+      %assign idnum = IDNUM(SLibMDXGetVarGroupElement(aVarGroupIdx, mIdx))
+      %if "P" == idnum[0] || "RTM" == idnum[0] || SLibMDXIsCoderGroupElement(idnum[0])
+        %continue
+      %endif      
+      %assign memberType = SLibMDXGetVarGroupElementCGType(aVarGroupIdx, mIdx)
+      %assign    mdxType = SLibMDXBaseTypeName(memberType, 1)
+      %assign memberName = SLibMDXGetVarGroupElementName(aVarGroupIdx, mIdx)
+      %assign variableRef = modelName + "/" + memberName
+        struct( %<"...">
+          'SWVariablePrototypeRef', '%<variableRef>', %<"...">
+          'SWDataDefProps', struct( %<"...">
+            'SWAddrMehodRef', '%<memLocation>', %<"...">
+            'BaseTypeRef', '%<mdxType>' %<"...">
+          ) %<"...">
+        ) %<"...">
+    %endif
+  %endforeach
+%endfunction %% SLibMDXEmitSignalsForVarGroup
+
+%function SLibMDXIsLookupTableObj(aParamRec) void
+  %return 1 == aParamRec.IsLUTObject
+%endfunction
+
+%function SLibMDXLookupTableObjMapType(aTypeIdx) void
+  %if LibCGTypeIsStruct(aTypeIdx)
+    %assign numMembers = LibCGTypeNumMembers(aTypeIdx)
+    %return SLibMDXBaseTypeName(LibCGTypeMemberCGTypeIdx(aTypeIdx, numMembers-1), 0)
+  %endif
+  %return SLibMDXBaseTypeName(aTypeIdx, 0)
+%endfunction
+
+%function SLibMDXIsLookupTableObjNumAxis(aTypeIdx) void
+  %assign numAxis = 0
+  %if LibCGTypeIsStruct(aTypeIdx)
+    %foreach memberIdx = LibCGTypeNumMembers(aTypeIdx) - 1 %% exclude last
+      %if "1" != LibCGTypeSymbolicWidth(LibCGTypeMemberCGTypeIdx(aTypeIdx, memberIdx))
+        %assign numAxis = numAxis + 1
+      %endif
+    %endforeach
+  %endif
+  %return numAxis
+%endfunction
+
+%function SLibMDXLookupTableObjAxisType(aTypeIdx, aAxisIdx) void
+  %assert LibCGTypeIsStruct(aTypeIdx)
+  %assign axisIdx = 0
+  %foreach memberIdx = LibCGTypeNumMembers(aTypeIdx) - 1 %% exclude last
+    %assign memberType = LibCGTypeMemberCGTypeIdx(aTypeIdx, memberIdx)
+    %if "1" != LibCGTypeSymbolicWidth(memberType)
+      %if aAxisIdx == axisIdx
+        %return SLibMDXBaseTypeName(memberType, 0)
+      %endif
+      %assign axisIdx = axisIdx + 1      
+    %endif
+  %endforeach  
+  %<LibReportFatalError("Invalid Axis data type")>
+  %return -1
+%endfunction
+
+
+%function SLibMDXEmitParametersForVarGroup(aVarGroupIdx) Output
+  %assign coderGroupIdx = SLibMDXGetVarGroupCoderGroupIdx(aVarGroupIdx)
+  %if 0 > coderGroupIdx
+    %return
+  %endif  
+  %assign memLocation = SLibMDXGetCoderGroupName(coderGroupIdx)
+  %assign numMembers  = SLibMDXGetVarGroupNumElements(aVarGroupIdx)
+  %assign modelName   = LibGetModelName()
+  %foreach mIdx = numMembers
+    %assign vgIdx = SLibMDXGetChildVarGroupIdx(aVarGroupIdx, mIdx)
+    %if vgIdx > -1
+%<SLibMDXEmitParametersForVarGroup(vgIdx)>\
+    %else
+      %assign idnum = IDNUM(SLibMDXGetVarGroupElement(aVarGroupIdx, mIdx))
+      %if "P" != idnum[0]
+        %continue
+      %endif
+      %assign     dataRec = SLibGetDataRecForVarGroupMember(idnum[0], idnum[1])
+      %assign  memberType = SLibMDXGetVarGroupElementCGType(aVarGroupIdx, mIdx)
+      %assign    baseType = LibCGTypeScalarBaseType(memberType)
+      %assign  memberName = SLibMDXGetVarGroupElementName(aVarGroupIdx, mIdx)
+      %assign variableRef = modelName + "/" + memberName
+      %if SLibMDXIsLookupTableObj(dataRec)
+        %assign mapType = SLibMDXLookupTableObjMapType(baseType)
+        %assign numAxis = SLibMDXIsLookupTableObjNumAxis(baseType)            
+        struct( %<"...">
+          'Category', '%<numAxis == 1 ? "CURVE" : "MAP">', %<"...">
+          'SWCalprmPrototypeRef', '%<variableRef>', %<"...">
+          'SWDataDefProps', struct( %<"...">
+            'SWAddrMehodRef', '%<memLocation>', %<"...">
+            'BaseTypeRef', '%<mapType>', %<"...">
+            'SWCalprmAxisSet', struct( 'SWCalprmAxis', [ %<"...">
+            %foreach axisIdx = numAxis
+              %assign axisType = SLibMDXLookupTableObjAxisType(baseType, axisIdx)
+              struct( %<"...">
+                'SWAxisIndex', %<axisIdx+1>, %<"...">
+                'BaseTypeRef', '%<axisType>' %<"...">
+              ) %<"...">
+            %endforeach
+            ]) %<"...">
+          ) %<"...">
+        ) %<"...">
+      %else
+        %assign mdxType = SLibMDXBaseTypeName(memberType, 0)
+        struct( %<"...">
+          'Category', 'VALUE', %<"...">
+          'SWCalprmPrototypeRef', '%<variableRef>', %<"...">
+          'SWDataDefProps', struct( %<"...">
+            'SWAddrMehodRef', '%<memLocation>', %<"...">
+            'BaseTypeRef', '%<mdxType>' %<"...">
+          ) %<"...">
+        ) %<"...">
+      %endif
+    %endif
+  %endforeach
+%endfunction
+
+%function SLibMDXTraverseSelfStructure() Output
+  %assign coderGroupIdx   = SLibGetSelfCoderDataGroupIndex()
+  %assign selfVarGroupIdx = SLibGetSelfCoderDataGroupVarGroupIndex()
+  %if 0 > selfVarGroupIdx
+    %return
+  %endif
+  struct( %<"...">
+    'SWClassAttrImpls', struct( %<"...">
+      'ShortName', '%<SLibMDXImplementationName()>', %<"...">
+      'SWDataDefProps', struct( %<"...">
+        'SWAddrMethodRef', '%<SLibMDXGetCoderGroupName(coderGroupIdx)>', %<"...">
+        'IsOMLClass',  %<SLibMDXIsOMLClass() ? "true" : "false">,        %<"...">
+        'IsPublicClass', %<SLibMDXIsPublicClass() ? "true" : "false">,   %<"...">
+        'IsNClass', %<SLibMDXIsMultiInstanceClass() ? "true" : "false">) %<"...">
+      ), %<"...">
+    'SWVariableImpls', struct('SWVariableImpl', [ %<"...">
+    %<SLibMDXEmitSignalsForVarGroup(selfVarGroupIdx)> ]), %<"..."> 
+    'SWCalprmImpls', struct('SWCalprmImpl', [ %<"...">
+    %<SLibMDXEmitParametersForVarGroup(selfVarGroupIdx)> ]))\
+%endfunction %% SLibMDXTraverseSelfStructure
+
+%function SLibAddDamosHeaderModelTypes() void
+    %% Adds DAMOS-generated <FC name>_dat.h file to model_types.h buffer, since 
+    %% enabling preprocessor variants trigger generation of this file (g1755246)
+    %if ::CompiledModel.HasCodeVariants
+        %openfile buff
+        %if ISEMPTY(::CompiledModel.ConfigSet.MDXOwner) && !%<::CompiledModel.ConfigSet.MDXIsClass>
+            %%The FC name is the compiled model name
+            #include "%<::CompiledModel.Name>_dat.h"
+        %elseif !ISEMPTY(::CompiledModel.ConfigSet.MDXOwner) && %<::CompiledModel.ConfigSet.MDXIsClass>
+            %%The FC name is the MDX owner
+            #include "%<::CompiledModel.ConfigSet.MDXOwner>_dat.h"
+        %elseif %<::CompiledModel.ConfigSet.MDXIsClass>
+            %assign errstr = "Class model '%<::CompiledModel.Name>' must specify an owning FC via the 'MDXOwner' model configuration parameter."
+            %<LibReportFatalError(errstr)>
+        %else
+            %assign errstr = "Model configuraiton parameter 'MDXOwner' must be empty for FC model '%<::CompiledModel.Name>'."
+            %<LibReportFatalError(errstr)>
+        %endif
+        %closefile buff
+        %<SLibCacheCodeToFile("data_typedef_incl",buff)>
+    %endif
+%endfunction %% SLibAddDamosHeaderModelTypes
+
+%endif %% _MDXLIB_
+%% [EOF] mdxlib.tlc
+
+

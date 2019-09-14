@@ -1,0 +1,335 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% Abstract:
+%%   This system TLC library file contains functions that are common
+%%   between the different code generators for producing the the model's
+%%   dwork structure definition.
+
+%if EXISTS("_COMMONHDR_DWORKLIB_") == 0
+%assign _COMMONHDR_DWORKLIB_ = 1
+
+%% ============================================================================
+%% Create global cache variables to hold each structure definition
+%% ============================================================================
+
+%<LibAddToCompiledModel("DWorkStructDefn", 0)>
+
+%% Function: SLibOmitRecord ====================================================
+%% Abstract:
+%%    Returns true if variable associated with a dwork record in the RTW file
+%%    has been eliminated from the generated code, and can therefor be omitted
+%%    in the initialization and interface API code generation.
+%%
+%function SLibOmitDWorkRecord(aDWorkRecord) void
+  %return SLibOmitRecord(aDWorkRecord) || 1 == aDWorkRecord.OptimizedAwayInTLC
+%endfunction
+
+
+%% Function: FcnDefineDWorkElement =============================================
+%% Abstract:
+%%   This function defines a element in the DWork structure.
+%%
+%function FcnDefineDWorkElement(id, dataType, width) void
+  %openfile buffer
+  %assign optWidth = LibOptionalVectorWidth(width)
+  %<dataType>%<id>%<optWidth>;\
+  %closefile buffer
+  %return buffer
+%endfunction
+
+%% Function: FcnReportDWorkError ===============================================
+%% Abstact:
+%%   Shared error message.
+%%
+%function FcnReportDWorkError(block, dwType, count, width) void
+  %assign errTxt = "%<dwType> size mismatch detected.\n" + \
+      "  Block requires    : %<width> elements\n" + \
+      "  Actually generated: %<count> elements\n\n" + \
+      "This can occur when an inlined s-function defines more/less work \n" + \
+      "vector elements in TLC than it did in the C-MEX version of the block.\n"
+      %<LibBlockReportError(block,errTxt)>
+%endfunction
+
+%% Function: FcnDefineDWorkRecord ==============================================
+%% Abstract:
+%%   Returns a DWork substructure or element for a block depending on the number
+%%   of declared work vector elements.
+%%
+%function FcnDefineDWorkRecord(dwRec, dwType, dataType) Output
+  %assign referencedBy = SLibReferencedBy(dwRec)
+  %assign traceMarker = SLibAddTrace("BlockName", "%<referencedBy>")
+  %<SLibTraceBegin(traceMarker)>
+  %if dwRec.SigSrc[0] < 0 || dwRec.SigSrc[2] < 0
+    %createrecord block { Type "InputPort" ; Num%<dwType>Defines 0 }
+  %else
+    %assign block = System[dwRec.SigSrc[0]].Block[dwRec.SigSrc[2]]
+  %endif
+  %assign dwId  = LibGetRecordIdentifier(dwRec)
+  %if GETFIELD(block, "Num%<dwType>Defines") > 0
+    %assign count = 0
+    struct {
+    %foreach i = GETFIELD(block, "Num%<dwType>Defines")
+      %assign def = GETFIELD(block, "%<dwType>Define")
+      %<FcnDefineDWorkElement(def[i].Name, dataType, def[i].Width)>
+      %assign count = count + def[i].Width
+    %endforeach
+    } %<dwId>; /* %<SLibReferencedBy(dwRec)> */
+    %%
+    %if count != SLibDWorkWidth(dwRec)
+      %<FcnReportDWorkError(block, dwType, count, SLibDWorkWidth(dwRec))>
+    %endif
+  %else
+    %<FcnDefineDWorkElement(dwId, dataType, SLibDWorkWidth(dwRec))>\
+    /* %<referencedBy> */
+  %endif
+  %<SLibTraceEnd(traceMarker)>
+%endfunction
+
+%% Function: FcnIsDWorkFromMdlBlockInCppClassGenMode ============================
+%%   Abstract:
+%%     Returns true/false, depending on if the DWork is from a ModelRef
+%%     block whose referenced model's target language is 'C++ (Encapsulated)'.
+%%
+%function FcnIsDWorkFromMdlBlockInCppClassGenMode(dwRec) void
+  %if dwRec.SigSrc[0] >= 0 && dwRec.SigSrc[2] >= 0
+    %assign blk = System[dwRec.SigSrc[0]].Block[dwRec.SigSrc[2]]
+    %assign recIDNum = IDNUM(dwRec.Name)
+    %if blk.Type != "ModelReference"
+      %return TLC_FALSE
+    %elseif !ISFIELD(blk,"MdlRefIsCPPClassGenMode")
+      %return TLC_FALSE
+    %else
+      %return blk.MdlRefIsCPPClassGenMode && recIDNum[0] == "InstanceData"
+    %endif
+  %endif
+%endfunction %% FcnIsDWorkFromMdlBlockInCppClassGenMode
+
+%function FcnGenDWorkDefNotHandledInVarGroup(dwRec)
+ 
+  %assert dwRec.StorageClass == "Auto" && ...
+    !dwRec.OptimizedAwayInTLC && ...
+    !FcnIsDWorkFromMdlBlockInCppClassGenMode(dwRec)
+  %if dwRec.SigSrc[0] < 0 || dwRec.SigSrc[2] < 0
+    %createrecord ownerBlk { Type "InputPort" }
+  %else
+    %assign ownerBlk = System[dwRec.SigSrc[0]].Block[dwRec.SigSrc[2]] 
+  %endif
+  %assign dataTypeId = SLibGetRecordDataTypeId(dwRec)
+
+  %openfile retBuf
+  %assign dwId = LibGetRecordIdentifier(dwRec)
+  %if dwRec.BitFieldWidth > 0
+    %assign referencedBy = SLibReferencedBy(dwRec)
+    %assign traceMarker = SLibAddTrace("BlockName", "%<referencedBy>")
+    %<SLibTraceBegin(traceMarker)>
+    %assign bitfldtype = SLibGetTypeForBitfield(dwRec.BitFieldWidth)
+    %<bitfldtype> %<dwId>:%<dwRec.BitFieldWidth>; /* %<referencedBy> */
+    %<SLibTraceEnd(traceMarker)>
+  %elseif (dwRec.Origin == "RWORK" || dwRec.Origin == "IWORK" ...
+    || dwRec.Origin == "PWORK") 
+    %switch dwRec.Origin
+      %case "RWORK"
+        %<FcnDefineDWorkRecord(dwRec, "RWork", "real_T ")>\
+        %break
+      %case "IWORK"
+        %<FcnDefineDWorkRecord(dwRec, "IWork", "int_T ")>\
+        %break
+      %case "PWORK"
+        %<FcnDefineDWorkRecord(dwRec, "PWork", "void *")>\
+        %break
+    %endswitch
+  %elseif Accelerator && ownerBlk.Type == "S-Function" && ...
+    ownerBlk.ParamSettings.Inlined == "no" && ...
+    !LibIsFundamentalBuiltInDataType(dataTypeId) && ...
+    !dwRec.DWorkForDimSize
+    %assign dataType = "char"
+    %assign optWidth = SLibDWorkWidth(dwRec) * ...
+      LibGetDataTypeSLSizeFromId(dataTypeId)
+    %if SLibDWorkIsComplex(dwRec)
+      %assign optWidth = optWidth * 2
+    %endif  
+    %assign optWidth = "[%<optWidth>]"
+    %% block traceability
+    %assign referencedBy = SLibReferencedBy(dwRec)
+    %assign traceMarker = SLibAddTrace("BlockName", "%<referencedBy>")
+    %<SLibTraceBegin(traceMarker)>
+    %<dataType> %<dwId>%<optWidth>; /* %<referencedBy> */
+    %<SLibTraceEnd(traceMarker)>
+  %endif
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%% Function: LibCacheSystemDWorkStructDef ======================================
+%% Abstract:
+%%   Caches the definition of the system DWork structure.
+%%
+%function LibCacheSystemDWorkStructDef(sysIdx) void
+  %if !SLibSystemHasOwnDataScope(System[sysIdx])
+    %return
+  %endif
+  %assign dWorkBuff = SLibGetSystemDataDefUsingVarGroup(sysIdx,"DWork")
+  %assign dWorkDef = ""
+  %assign identifierTag = ""
+  %assign sysInfo = GetSystemNameForComments(System[sysIdx])
+  %openfile comment
+  %if ::CompiledModel.DWorkAndBlockIOCombined
+    /* Block signals and states (%<::AutoOrDefaultStorageClass> storage) for %<sysInfo> */
+  %else
+    /* Block states (%<::AutoOrDefaultStorageClass> storage) for %<sysInfo> */
+  %endif
+  %closefile comment
+  %if (sysIdx < (NumSystems-1))
+    %if !GenerateClassInterface || !IsModelReferenceBaseSys(System[sysIdx])
+      %assign identifier = FcnSysVarGroupType(System[sysIdx],"DWork")    
+    %else
+      %assign identifier = ::tDWorkType
+    %endif
+  %else
+    %assign ::CompiledModel.DWorkStructDefn = ...
+      WHITE_SPACE(dWorkBuff[0])?"":"Nonempty"
+    %assign identifier = ::tDWorkType
+    %if SLibAutosarActive()
+      %assign identifierTag = ::CompiledModel.GlobalScope.tDWorkTypeTag
+    %endif
+  %endif
+  %%
+  
+  %openfile dWorkDef
+  %if dWorkBuff[1] > 0 %% number of elements
+    
+      %<comment>\
+      %assign nonInlSysIdx = System[sysIdx].NonInlinedParentSystemIdx
+      %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+        %<GetHideChildDefineSymbol("ifndef")>\
+      %endif
+      %<SLibIfSystemPreprocessorCondition(System[sysIdx])>
+      %%<SLibIfSystemVariantCondition16b(System[sysIdx])>
+      %<SLibDumpStructDefWithAlignment(identifierTag, identifier, dWorkBuff[2], dWorkBuff[0])>
+      %%<SLibEndIfSystemVariantCondition16b(System[sysIdx])>
+      %<SLibEndIfSystemPreprocessorCondition(System[sysIdx])>
+      %if !LibSystemIsReusedLibraryFcn(System[nonInlSysIdx])
+        %<GetHideChildDefineSymbol("endif")>\
+      %endif
+  %endif
+
+  %closefile dWorkDef
+  %%
+  %<SLibCacheSystemCodeToFile("sys_data_DWork_typedef", System[sysIdx], dWorkDef)>
+%endfunction %% LibCacheSystemDWorkStructDef
+
+%% Function: LibCacheNonAutoStorageClassDWorkDefinition ========================
+%% Abstract:
+%%   Cache the DWorks that have non-default storage class.
+%%
+%function LibCacheNonAutoStorageClassDWorkDefinition() void
+
+  %assign numDWorks = ::CompiledModel.DWorks.NumDWorks
+
+  %if numDWorks == 0
+    %assign ::CompiledModel.ExportedGlobalDWorkDefn = ""
+    %assign ::CompiledModel.ImportedExternDWorkDefn = ""
+    %assign ::CompiledModel.ImportedExternPointerDWorkDefn = ""
+    %return ""
+  %endif
+
+  %openfile exportedGlobalsBuffer
+  %openfile importedExternBuffer
+  %openfile importedExternPointerBuffer
+  %foreach dwIdx = numDWorks
+
+    %assign dwRec = ::CompiledModel.DWorks.DWork[dwIdx]
+
+    %if  dwRec.StorageClass == "Auto" 
+      %continue
+    %endif
+    
+    %switch dwRec.StorageClass
+      %case "ExportedGlobal"
+	%selectfile exportedGlobalsBuffer
+	%break
+      %case "ImportedExtern"
+	%selectfile importedExternBuffer
+	%break
+      %case "ImportedExternPointer"
+	%selectfile importedExternPointerBuffer
+	%break
+      %case "Custom"
+	%break
+      %default
+	%assign errTxt = "Should not get here"
+	%<LibReportFatalError(errTxt)>
+    %endswitch
+    
+     %<FcnGenerateBlockDWorkExternalDefinition(dwRec)>
+     
+    %if dwRec.Padding != 0
+      %assign optPadWidth = LibOptionalVectorWidth(dwRec.Padding)
+      %assign dwId = LibGetRecordIdentifier(dwRec)
+      char pad_%<dwId>%<optPadWidth>;
+    %endif
+  %endforeach
+  %closefile exportedGlobalsBuffer
+  %closefile importedExternBuffer
+  %closefile importedExternPointerBuffer
+  
+  %assign ::CompiledModel.ExportedGlobalDWorkDefn = exportedGlobalsBuffer
+  %assign ::CompiledModel.ImportedExternDWorkDefn = importedExternBuffer
+  %assign ::CompiledModel.ImportedExternPointerDWorkDefn = importedExternPointerBuffer
+  
+%endfunction %% LibCacheNonAutoStorageClassDWorkDefinition
+
+
+%% Function: LibDWorkStructIsEmpty ============================================
+%% Abstract:
+%%   Does the root system have any DWorks?
+%%
+%function LibDWorkStructIsEmpty() void
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %assert (LibGetFieldSet(System[baseSysIdx], "HasDWorkArg") == 1)
+  %return (System[baseSysIdx].HasDWorkArg == 0)
+%endfunction
+
+%% Function: SLibDModelWorkStructIsEmpty =======================================
+%% Abstract:
+%%   Does the model have any DWorks?
+%%
+%function SLibModelDWorkStructIsEmpty() void
+  %if IsModelReferenceTarget()
+    %return LibDWorkStructIsEmpty()
+  %else
+    %return (::CompiledModel.HasDWorkArg == 0)
+  %endif
+%endfunction
+
+%% Function: SLibGetDataStoreForHasBeenInitIdentifier ===================================
+%% Abstract:
+%%   Return name of shared local data store for preventing re-initialization
+%%   of shared data.
+%%
+%function SLibGetDataStoreForHasBeenInitIdentifier() void
+  %if !ISFIELD(::CompiledModel.DWorks, "SharedLocalDSMForHasBeenInit_Identifier")
+    %addtorecord ::CompiledModel.DWorks SharedLocalDSMForHasBeenInit_Identifier ""
+    
+    %foreach dwIdx = ::CompiledModel.DWorks.NumDWorks
+      %assign dwRec = ::CompiledModel.DWorks.DWork[dwIdx]
+      %if (dwRec.SharedLocalDSMForHasBeenInit)
+        %assign id = LibGetRecordIdentifier(dwRec)
+        %if (ISFIELD(dwRec, "VarGroupIdx"))
+          %assign baseSysIdx = GetBaseSystemIdx()
+          %assign path = SLibCGIRVarGroupPath(dwRec.VarGroupIdx[0], baseSysIdx, TLC_FALSE)
+          %assign id = path + id
+        %endif
+        %assign ::CompiledModel.DWorks.SharedLocalDSMForHasBeenInit_Identifier = id
+        %break
+      %endif
+    %endforeach
+  %endif
+  %return ::CompiledModel.DWorks.SharedLocalDSMForHasBeenInit_Identifier
+%endfunction
+
+%endif %%  _COMMONHDR_DWORKLIB_

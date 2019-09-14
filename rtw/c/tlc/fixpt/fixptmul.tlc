@@ -1,0 +1,51 @@
+%%
+%% This file contains tlc code for generation of fixed point multiplication
+%%
+%% Copyright 1994-2011 The MathWorks, Inc.
+%%
+
+%% Function: FixPt_Multiply ==========================================
+%%
+%% Abstract:
+%%  Radix Only Multiplication (Single Chunk Only)
+%%
+%%  Vc = Va * Vb
+%%
+%%  Note the Stored Integers are denoted by A, B, and C
+%%
+%%  C = 2^(Ea+Eb-Ec) * A * B
+%%
+%%  The records C, A, and B must contain
+%%  all the fixed point data type and scaling fields.
+%%  They must also contain a field called "Label"
+%%  In C_Language terms cLabel must be an l-value.
+%%  aLabel and bLabel are treated as read only and
+%%  they must provide the values (stored integers) for
+%%  A and B.  Please note none of the Labels can be addresses.
+%%
+%% Synopsis:
+%%      FixPt_Multiply(C,A,B,roundMode,satMode)
+%%
+%%      C = record describing output
+%%      A = record describing input 1
+%%      B = record describing input 2
+%%      roundMode  = string specifying round to "Zero", "Nearest", etc.
+%%      satMode    = string specifying "Wrap" or "Saturate" on overflow
+%%
+%function FixPt_Multiply(cLabel,cDT,aLabel,aDT,bLabel,bDT,roundMode,satMode) Output
+  %%
+  %<FixPt_WordLengthLimitationCheck(aDT)>\
+  %<FixPt_WordLengthLimitationCheck(bDT)>\
+  %<FixPt_WordLengthLimitationCheck(cDT)>\
+  %%
+  %assign vec = FixPt_BinaryOp("FixPtMul", cLabel, cDT, aLabel, aDT, ...
+    bLabel, bDT, roundMode, satMode)
+  %%
+  %<vec[2]>\
+  %return
+  %%
+%endfunction  %% FixPt_Multiply
+
+
+
+%% [EOF] fixptmul.tlc

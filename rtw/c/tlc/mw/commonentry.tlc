@@ -1,0 +1,130 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%
+%%   This system file starts the CodeFormat specific code generation process.
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%if EXISTS("_COMMONENTRY_") == 0
+%assign _COMMONENTRY_ = 1
+
+%% Functions for creating the external mode data type transition tables
+%% from the global memory map.
+%include "extmodemaplib.tlc"
+
+%% Functions for creating the external mode task info
+%include "extmodetasklib.tlc"
+
+%% Functions for creating the external mode data types
+%include "extmodetypeslib.tlc"
+
+
+%% ============================================================================
+%% Start code generation process based on code format.
+%%
+
+%with ::CompiledModel
+  %switch CodeFormat
+    %case "RealTime"
+    %case "Embedded-C"
+      %include "formatwide.tlc"
+      %if UsingMalloc
+        %assign mapfile = "mrtmap"
+      %else
+        %assign mapfile = "formatmap"
+      %endif
+      %break
+    %case "S-Function"
+      %include "formatwide.tlc"
+      %break
+    %default
+      %assign errTxt = "Unknown CodeFormat: %<CodeFormat>"
+      %<LibReportFatalError(errTxt)>
+  %endswitch
+  %%
+  %% Generate the interface API if the data type transition table is needed.
+  %%
+  %if CreateTransitionTable == 1
+    %assign ::CompiledModel.GenerateInterfaceAPI = 1
+  %endif
+  %%
+  %% code generation is complete.  optionally generate interface API for
+  %% data not of custom storage class
+  %%
+  %if GenerateInterfaceAPI
+    %<SLibMapData()>
+  %endif
+  %%
+  %% If custom and/or noncustom part of map was created, do things with the 
+  %% created map
+  %%
+  %if InterfaceAPIGenerated || CustomInterfaceAPIGenerated
+    
+    %%
+    %% Optionally create data type transition information to map signals
+    %% and parameters
+    %%
+    %if  CreateTransitionTable == 1
+      %% Write map MATLAB code for Simulink in External Mode or RSIM
+      %<SLibWriteExtModeHostMapFile()>
+      %include "%<mapfile>.tlc"
+    %endif
+    %<SLibPostMapData()>
+    
+  %endif
+
+  %%
+  %% Optionally create extmode_task_info.m file used to extract
+  %% information on the tasks in the External Mode target executable
+  %%
+  %if CreateExtModeTaskInfo == 1
+      %<SLibWriteExtModeTaskInfoFile()>
+  %endif
+
+  %%
+  %% Optionally create ext_mode_types.h file containing the definition
+  %% of data types (such as extmodeSimulationTime_T) that are model specific
+  %%
+  %if CreateExtModeTypes == 1
+      %<SLibWriteExtModeTypesFile()>
+  %endif
+
+  %% ==========================================================================
+  %% Optionally create MDX interface file
+  %%
+  %if 1 == ::GenerateMDX
+    %include "mdxlib.tlc"
+    %<SLibMDXCommonEntry()>
+  %endif
+  %% ==========================================================================
+  %% Optionally create ASAP2 file
+  %%
+  %if ::GenerateASAP2 == 1
+    %include "asap2main.tlc"
+  %endif
+  %%
+  %% Store system map to rtwattic
+  %%
+  %<SLibSetSystemMap()>
+  %% ==========================================================================
+  %% Optionally create HTML report
+  %%
+  %include "report.tlc"
+  
+  %% ==========================================================================
+  %% Assert that things are in an expected state
+  %%
+  %assert ISEMPTY(GetCurrentUtilsIncludesIdx())
+  %assert SIZE(::GlobalSharedUtilsIncludes,1) == 0
+  
+%endwith
+
+%endif  %% _COMMONENTRY_
+
+%% [EOF] commonentry.tlc

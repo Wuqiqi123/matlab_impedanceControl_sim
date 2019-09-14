@@ -1,0 +1,204 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%%
+%% Abstract:
+%%      Support functions for the accelerator.  Includes the caching function
+%%      and special functions required only for the accelerator.
+%%
+%selectfile NULL_FILE
+
+%if EXISTS("_ACCELLIB_") == 0
+%assign _ACCELLIB_ = 1
+
+%% ============================================================================
+%% Protect against block I/O vector changes during code generation
+%%
+%if (MaxStackSize != rtInf) || (MaxStackVariableSize != rtInf)
+  %assign errTxt = "Simulink Accelerator Error: MaxStackSize and/or " ...
+    "MaxStackVariableSize TLC variables cannot be used."
+  %exit %<errTxt>
+%endif
+
+%% Function: SLibSetupFCSubsystemPtrs ==========================================
+%% Abstract:
+%%      Used to setup fcn pointers to the generated version of the f-c subsystems
+%%      for each noninlined s-function in the Accelerated model. Simulink has
+%%      allocated twice the width of the output port for the callsysfcns array
+%%      but has only setup the first half to point to SubsystemBlockOutput in 
+%%      subsystm.c. This code will setup the second half of the array. This 
+%%      allows the accelerator to use the generated version of a f-c subsystem even
+%%      though the caller is a mexed s-function. Instead of going through 
+%%      rt_callsys, the mex s-function will call SubsystemBlockOutput which then
+%%      calls the generated version of the f-c subsystem.
+%%
+%function SLibSetupFCSubsystemPtrs() void
+  %openfile fcnbuffer
+  %foreach childIdx = NumChildSFunctions
+    %assign thisBlock = ChildSFunctionList[childIdx]
+    %with thisBlock
+      %if NumSFcnSysOutputCalls > 0
+	%assign sfuncName = ParamSettings.FunctionName
+	/* %<TypeLevel> Block: '%<Name>' (%<sfuncName>) */
+	childS      = %<RTMGetIdxed("SFunction", childIdx)>;
+	callSysFcns = ssGetCallSystemOutputFcnList(childS);
+	%assign pZeroWidth = LibBlockOutputSignalWidth(0)
+        %assign portEl = -1
+        %foreach fcnCallIdx = NumSFcnSysOutputCallDsts
+          %if portEl == SFcnSystemOutputCall[fcnCallIdx].OutputElement
+            %continue
+          %else
+            %assign portEl = SFcnSystemOutputCall[fcnCallIdx].OutputElement
+          %endif  
+          %with SFcnSystemOutputCall[fcnCallIdx]
+	    %if STRING(BlockToCall) != "unconnected"
+	      %assign sysIdx = BlockToCall[0]
+	      %assign blkIdx = BlockToCall[1]
+	      %assign ssBlock = ::CompiledModel.System[sysIdx].Block[blkIdx]
+	      %assign  tidVal = ParamSettings.SampleTimesToSet[0][1]
+	      %assign fcnCallFNI = LibGetFcnCallFNI(ssBlock, FcnPortElement, tidVal)
+	      %if fcnCallFNI != ""
+		callSysFcns[%<3*pZeroWidth> + %<OutputElement>] = (SysOutputFcn) ...
+		  %<fcnCallFNI>;
+	      %else
+		callSysFcns[%<3*pZeroWidth> + %<OutputElement>] = ...
+		  (SysOutputFcn) %<SLibGetNullDefinitionFromTfl()>;
+	      %endif
+	    %else
+	      /* Unconnected function-call */
+	      callSysFcns[%<3*pZeroWidth> + %<OutputElement>] = ...
+		(SysOutputFcn) %<SLibGetNullDefinitionFromTfl()>;
+	    %endif
+	  %endwith
+	%endforeach
+	%undef sysIdx, blkIdx, ssIdx
+	
+      %endif  %% NumSFcnSysOutputCalls > 0
+    %endwith   %% thisBlock
+  %endforeach  %% NumChildSFunctions
+  %closefile fcnbuffer
+  
+  %if !WHITE_SPACE(fcnbuffer)
+    %openfile rtnbuffer
+    /* register function-calls */
+    {
+      SimStruct *childS;
+      SysOutputFcn *callSysFcns;
+    
+      %<fcnbuffer>\
+    }
+    
+    %closefile rtnbuffer
+    %return rtnbuffer
+  %else
+    %return ""
+  %endif
+%endfunction
+
+%% Function: SLibCallBlockInSimulink ===========================================
+%% Abstract:
+%%      Call into Simulink to the specified block's function.
+%%      Get this block's system index and block index, the system index should
+%%      directly map to Simulinks callgraph system vector index in 
+%%      sl_BlockDiagran (or execInfo index in sl_Model) and block index should
+%%      directly map to the simBlockSortedList index in execInfo.
+%%
+%function SLibCallBlockInSimulink(system,block,functionToCall) void
+  %% Root is special
+  %assign slSysIdx = System[block.BlockIdx[0]].SL_SystemIdx
+  %assign slBlkIdx = block.SL_BlockIdx
+  %assign callstr = "ssCallAccelRunBlock(%<RTMGetModelSS()>, %<slSysIdx>, " + \
+    "%<slBlkIdx>, %<functionToCall>);"
+  %return callstr
+%endfunction
+
+%function SLibCallMdlRefSystemInitializeInSimulink(system,block) void
+  %% Root is special
+  %assign slSysIdx = System[block.BlockIdx[0]].SL_SystemIdx
+  %assign slBlkIdx = block.SL_BlockIdx
+  %assign callstr = "slmrAccelRunBlockSystemInitialize(%<RTMGetModelSS()>, %<slSysIdx>, " + \
+    "%<slBlkIdx>);"
+  %return callstr
+%endfunction
+
+%function SLibCallMdlRefSystemResetInSimulink(system,block) void
+  %% Root is special
+  %assign slSysIdx = System[block.BlockIdx[0]].SL_SystemIdx
+  %assign slBlkIdx = block.SL_BlockIdx
+  %assign callstr = "slmrAccelRunBlockSystemReset(%<RTMGetModelSS()>, %<slSysIdx>, " + \
+    "%<slBlkIdx>);"
+  %return callstr
+%endfunction
+
+%function SLibCallSFcnSetDimsInSimulink(system,block,oIdx,rIdx) void
+  %% Root is special
+  %assign slSysIdx = System[block.BlockIdx[0]].SL_SystemIdx
+  %assign slBlkIdx = block.SL_BlockIdx
+  %assign callstr = "ssCallAccelSetDims(%<RTMGetModelSS()>, %<slSysIdx>, " + \
+    "%<slBlkIdx>, %<oIdx>, %<rIdx>);"
+  %return callstr
+%endfunction
+
+%function SLibCopyCacheForIISInSimulink(system,fromCache) void
+  %% Root is special
+%%  %assign slSysIdx = System[block.BlockIdx[0]].SL_SystemIdx
+  %assign callstr = "ssCallAccelCopyCacheForIIS(%<RTMGetModelSS()>, %<system>, " + \
+    "(void *)%<fromCache>);"
+  %return callstr
+%endfunction
+
+%function SLibCallModelBlockFcnCallInputInSimulink(block, portIdx, tid, functionToCall) void
+  %% Root is special
+  %assign slSysIdx = System[block.BlockIdx[0]].SL_SystemIdx
+  %assign slBlkIdx = block.SL_BlockIdx
+  %assign accFunction = GetAcceleratorStringForFunction(functionToCall)
+  %assign callstr = "ssCallAccelModelBlockFcnCallInput(%<RTMGetModelSS()>, %<slSysIdx>, " + \
+    "%<slBlkIdx>, %<portIdx>, %<tid>, %<accFunction>);"
+  %return callstr
+%endfunction
+
+
+%% Function: LibGetAccelDisclaimer =============================================
+%% Abstract:
+%%   Dump the standard Accelerator disclaimer
+%%
+%function LibGetAccelDisclaimer() Output
+  %%
+  %assign rtwLicensed = FEVAL("get_param", 0, "RTWLicensed")
+  %if rtwLicensed == "off"
+    #if 0
+    
+    This file is not available for use in any application other than as a
+    MATLAB(R) MEX file for use with the Simulink(R) product.
+    
+    If you do not have the Simulink Coder licensed, this file contains
+    encrypted block names, etc.  If you purchase the Simulink Coder,
+    this file will contain full block descriptions and improved variable
+    names.
+    
+    #endif
+  %else
+    /*
+     * This file is not available for use in any application other than as a
+     * MATLAB(R) MEX file for use with the Simulink(R) product.
+     */
+  %endif
+  %%
+%endfunction %% LibGetAccelDisclaimer
+
+%% Function: LibReportDiagnosticForAccel ===========================================
+%% Abstract:
+%%  Write rt_ssSet_slErrMsg and rt_ssReportDiagnosticAsWarning
+%%
+%function LibReportDiagnosticForAccel() Output
+  void rt_ssGetBlockPath(SimStruct* S, int_T sysIdx, int_T blkIdx, char_T **path) { _ssGetBlockPath(S, sysIdx, blkIdx, path); }
+  void rt_ssSet_slErrMsg(SimStruct* S, void* diag) { if(!_ssIsErrorStatusAslErrMsg(S)) {_ssSet_slErrMsg(S, diag);} else {_ssDiscardDiagnostic(S, diag);}}
+  void rt_ssReportDiagnosticAsWarning(SimStruct* S, void* diag) { _ssReportDiagnosticAsWarning(S, diag); }
+%endfunction %% LibReportDiagnosticForAccel
+
+
+%endif %% _ACCELLIB_
+
+%% [EOF] accellib.tlc

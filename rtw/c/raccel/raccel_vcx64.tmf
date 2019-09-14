@@ -1,0 +1,319 @@
+# Copyright 1994-2018 The MathWorks, Inc.
+#
+# File    : raccel_vcx64.tmf   
+#
+# Abstract:
+#       Template makefile for building a PC-based "rapid acceleration" 
+#       executable from the generated C code for a Simulink model using
+#       generated C code and the
+#               Microsoft Visual C/C++ compiler version 8.0 for x64
+#
+#       Note that this template is automatically customized by the build 
+#       procedure to create "<model>.mk"
+#
+#       The following defines can be used to modify the behavior of the
+#       build:
+#
+#         OPT_OPTS       - Optimization option. See DEFAULT_OPT_OPTS in
+#                          vctools.mak for default.
+#         OPTS           - User specific options.
+#         CPP_OPTS       - C++ compiler options.
+#         USER_SRCS      - Additional user sources, such as files needed by
+#                          S-functions.
+#         USER_INCLUDES  - Additional include paths
+#                          (i.e. USER_INCLUDES="-Iwhere-ever -Iwhere-ever2")
+#
+#       To enable debugging:
+#         set DEBUG_BUILD = 1, which will trigger OPTS=-Zi (may vary with
+#                               compiler version, see compiler doc) 
+#
+#       This template makefile is designed to be used with a system target
+#       file that contains 'rtwgensettings.BuildDirSuffix' see raccel.tlc
+
+#------------------------ Macros read by make_rtw -----------------------------
+#
+# The following macros are read by the build procedure:
+#
+#  MAKECMD         - This is the command used to invoke the make utility
+#  HOST            - What platform this template makefile is targeted for
+#                    (i.e. PC or UNIX)
+#  BUILD           - Invoke make from the build procedure (yes/no)?
+#  SYS_TARGET_FILE - Name of system target file.
+
+MAKECMD         = nmake
+HOST            = PC
+BUILD           = yes
+SYS_TARGET_FILE = raccel.tlc
+BUILD_SUCCESS	= *** Created
+COMPILER_TOOL_CHAIN = vcx64
+
+# Opt in to simplified format by specifying compatible Toolchain
+TOOLCHAIN_NAME = [\
+    "Microsoft Visual C++ 2017 v15.0 | nmake (64-bit Windows)", \
+    "Microsoft Visual C++ 2015 v14.0 | nmake (64-bit Windows)", \
+    "Microsoft Visual C++ 2013 v12.0 | nmake (64-bit Windows)"]
+
+#---------------------- Tokens expanded by make_rtw ---------------------------
+#
+# The following tokens, when wrapped with "|>" and "<|" are expanded by the
+# build procedure.
+#
+#  MODEL_NAME          - Name of the Simulink block diagram
+#  MODEL_MODULES       - Any additional generated source modules
+#  MAKEFILE_NAME       - Name of makefile created from template makefile <model>.mk
+#  MATLAB_ROOT         - Path to where MATLAB is installed.
+#  MATLAB_BIN          - Path to MATLAB executable.
+#  S_FUNCTIONS         - List of S-functions.
+#  S_FUNCTIONS_LIB     - List of S-functions libraries to link.
+#  BUILDARGS           - Options passed in at the command line.
+
+MODEL                  = |>MODEL_NAME<|
+MODULES                = |>MODEL_MODULES<|
+MAKEFILE               = |>MAKEFILE_NAME<|
+MATLAB_ROOT            = |>MATLAB_ROOT<|
+ALT_MATLAB_ROOT        = |>ALT_MATLAB_ROOT<|
+MATLAB_BIN             = |>MATLAB_BIN<|
+ALT_MATLAB_BIN         = |>ALT_MATLAB_BIN<|
+MASTER_ANCHOR_DIR      = |>MASTER_ANCHOR_DIR<|
+START_DIR              = |>START_DIR<|
+S_FUNCTIONS            = |>S_FUNCTIONS<|
+S_FUNCTIONS_LIB        = |>S_FUNCTIONS_LIB<|
+BUILDARGS              = |>BUILDARGS<|
+RSIM_PARAMETER_LOADING = |>RSIM_PARAMETER_LOADING<|
+ENABLE_SLEXEC_SSBRIDGE = |>ENABLE_SLEXEC_SSBRIDGE<|
+VISUAL_VER             = |>VISUAL_VER<|
+
+SOLVER              = |>SOLVER<|
+SOLVER_TYPE         = |>SOLVER_TYPE<|
+NUMST               = |>NUMST<|
+TID01EQ             = |>TID01EQ<|
+NCSTATES            = |>NCSTATES<|
+MULTITASKING        = |>MULTITASKING<|
+PCMATLABROOT        = |>PCMATLABROOT<|
+
+MODELREFS            = |>MODELREFS<|
+SHARED_SRC           = |>SHARED_SRC<|
+SHARED_SRC_DIR       = |>SHARED_SRC_DIR<|
+SHARED_BIN_DIR       = |>SHARED_BIN_DIR<|
+SHARED_LIB           = |>SHARED_LIB<|
+GEN_SAMPLE_MAIN      = |>GEN_SAMPLE_MAIN<|
+
+OPTIMIZATION_FLAGS   = |>OPTIMIZATION_FLAGS<|
+ADDITIONAL_LDFLAGS   = |>ADDITIONAL_LDFLAGS<|
+DEFINES_CUSTOM       = |>DEFINES_CUSTOM<|
+SYSTEM_LIBS          = |>SYSTEM_LIBS<|
+
+MODEL_HAS_DYNAMICALLY_LOADED_SFCNS = |>MODEL_HAS_DYNAMICALLY_LOADED_SFCNS<|
+# To enable debugging:
+# set DEBUG_BUILD = 1
+DEBUG_BUILD             = 0
+
+#--------------------------- Model and reference models -----------------------
+MODELREF_LINK_LIBS        = |>MODELREF_LINK_LIBS<|
+MODELREF_LINK_RSPFILE     = |>MODELREF_LINK_RSPFILE_NAME<|
+MODELREF_INC_PATH         = |>START_MDLREFINC_EXPAND_INCLUDES<|-I|>MODELREF_INC_PATH<| |>END_MDLREFINC_EXPAND_INCLUDES<|
+COMPILER_COMMAND_FILE     = |>COMPILER_COMMAND_FILE_NAME<|
+RELATIVE_PATH_TO_ANCHOR   = |>RELATIVE_PATH_TO_ANCHOR<|
+GLOBAL_TIMING_ENGINE      = |>GLOBAL_TIMING_ENGINE<|
+
+!if "$(MATLAB_ROOT)" != "$(ALT_MATLAB_ROOT)"
+MATLAB_ROOT = $(ALT_MATLAB_ROOT)
+!endif
+!if "$(MATLAB_BIN)" != "$(ALT_MATLAB_BIN)"
+MATLAB_BIN = $(ALT_MATLAB_BIN)
+!endif
+MATLAB_ARCH_BIN = $(MATLAB_BIN)\win64
+
+#---------------------------Solver---------------------------------------------
+
+RSIM_WITH_SL_SOLVER = 1
+
+#--------------------------- Tool Specifications ------------------------------
+
+CPU = AMD64
+!include $(MATLAB_ROOT)\rtw\c\tools\vctools.mak
+APPVER = 5.02
+
+CMD_FILE             = $(MODEL).rsp
+
+#------------------------------ Include Path ----------------------------------
+
+# Additional includes
+|>START_EXPAND_INCLUDES<|
+BUILDINFO_INCLUDES = $(BUILDINFO_INCLUDES);|>EXPAND_DIR_NAME<|
+|>END_EXPAND_INCLUDES<|
+
+INCLUDE = .;$(RELATIVE_PATH_TO_ANCHOR);$(BUILDINFO_INCLUDES);$(INCLUDE)
+
+!if "$(SHARED_SRC_DIR)" != ""
+INCLUDE = $(INCLUDE);$(SHARED_SRC_DIR)
+!endif
+
+#----------------------------- Parameter Tuning -------------------------------
+PARAM_CC_OPTS = -DRSIM_PARAMETER_LOADING
+
+#----------------- Compiler and Linker Options --------------------------------
+
+# Optimization Options
+OPT_OPTS = $(DEFAULT_OPT_OPTS)
+
+# General User Options
+!if "$(DEBUG_BUILD)" == "0"
+DBG_FLAG =
+!else
+#   Set OPT_OPTS=-Zi and any additional flags for debugging
+DBG_FLAG = -Zi
+!endif
+
+!if "$(OPTIMIZATION_FLAGS)" != ""
+CC_OPTS = $(OPTS)  $(OPTIMIZATION_FLAGS)
+!else
+CC_OPTS = $(OPT_OPTS) $(OPTS) 
+!endif
+
+
+CPP_REQ_DEFINES = -DMODEL=$(MODEL) -DHAVESTDIO
+
+CPP_REQ_DEFINES = $(CPP_REQ_DEFINES) -DMODEL_HAS_DYNAMICALLY_LOADED_SFCNS=$(MODEL_HAS_DYNAMICALLY_LOADED_SFCNS)
+
+CPP_REQ_DEFINES = $(CPP_REQ_DEFINES) \
+                  -DNRT -DRSIM_WITH_SL_SOLVER
+
+!if "$(ENABLE_SLEXEC_SSBRIDGE)" != "0"
+CPP_REQ_DEFINES = $(CPP_REQ_DEFINES) -DENABLE_SLEXEC_SSBRIDGE=$(ENABLE_SLEXEC_SSBRIDGE)
+!endif
+
+!if "$(MULTITASKING)" == "1"
+CPP_REQ_DEFINES = $(CPP_REQ_DEFINES) \
+                  -DRSIM_WITH_SOLVER_MULTITASKING \
+                  -DTID01EQ=$(TID01EQ) \
+                  -DNUMST=$(NUMST)
+!endif
+
+# Uncomment this line to move warning level to W4
+# cflags = $(cflags:W3=W4)
+CFLAGS   = $(cflags) @$(COMPILER_COMMAND_FILE) $(cvarsdll) $(PARAM_CC_OPTS) /wd4996 \
+	   $(DBG_FLAG) $(CC_OPTS) $(DEFINES_CUSTOM) $(CPP_REQ_DEFINES) \
+	   $(USER_INCLUDES)
+CPPFLAGS = $(cflags) @$(COMPILER_COMMAND_FILE) $(cvarsdll) $(PARAM_CC_OPTS) \
+	   /wd4996 /EHsc- $(DBG_FLAG) $(CPP_OPTS) $(CC_OPTS) $(DEFINES_CUSTOM) \
+	   $(CPP_REQ_DEFINES) $(USER_INCLUDES)
+LDFLAGS  = $(ldebug) $(conflags)  $(conlibs) $(ADDITIONAL_LDFLAGS)
+
+#----------------------------- Source Files -----------------------------------
+
+#Standalone executable
+PRODUCT   = $(MODEL).exe	
+BUILD_PRODUCT_TYPE = executable
+REQ_SRCS  = $(MODULES)
+
+USER_SRCS =
+
+SRCS = $(REQ_SRCS) $(USER_SRCS) $(S_FUNCTIONS) 
+
+OBJS_CPP_UPPER = $(SRCS:.CPP=.obj)
+OBJS_CPP_LOWER = $(OBJS_CPP_UPPER:.cpp=.obj)
+OBJS_C_UPPER = $(OBJS_CPP_LOWER:.C=.obj)
+OBJS = $(OBJS_C_UPPER:.c=.obj)
+SHARED_OBJS = $(SHARED_SRC:.c=.obj)
+
+# ------------------------- Additional Libraries ------------------------------
+
+LIBS =
+|>START_PRECOMP_LIBRARIES<|
+!if "$(OPT_OPTS)" == "$(DEFAULT_OPT_OPTS)"
+LIBS = $(LIBS) |>EXPAND_LIBRARY_LOCATION<|\|>EXPAND_LIBRARY_NAME<|_vcx64.lib
+!else
+LIBS = $(LIBS) |>EXPAND_LIBRARY_NAME<|.lib
+!endif
+|>END_PRECOMP_LIBRARIES<|
+|>START_EXPAND_LIBRARIES<|
+LIBS = $(LIBS) |>EXPAND_LIBRARY_NAME<|.lib |>END_EXPAND_LIBRARIES<|
+LIBMWIPP = $(MATLAB_ROOT)\lib\win64\libmwipp.lib
+LIBS = $(LIBS) $(LIBMWIPP)
+
+#--------------------------------- Rules --------------------------------------
+all: set_environment_variables $(PRODUCT)
+
+#--- Stand-alone model ---
+$(PRODUCT) : $(OBJS) $(SHARED_LIB) $(LIBS) $(MODELREF_LINK_LIBS)
+	$(LD) $(LDFLAGS) $(S_FUNCTIONS_LIB) $(SHARED_LIB) $(LIBS) $(SYSTEM_LIBS) \
+		@$(CMD_FILE) @$(MODELREF_LINK_RSPFILE) -out:$@
+	@cmd /C "echo $(BUILD_SUCCESS) $(BUILD_PRODUCT_TYPE): $@"
+
+!if $(GEN_SAMPLE_MAIN) == 0
+{$(MATLAB_ROOT)\rtw\c\raccel}.c.obj :
+	$(CC) $(CFLAGS) $<
+!endif
+
+{$(MATLAB_ROOT)\rtw\c\src}.c.obj :
+	$(CC) $(CFLAGS) $<
+
+{$(MATLAB_ROOT)\rtw\c\src\rapid}.c.obj :
+	$(CC) $(CFLAGS) $<
+
+simulink_solver_api.obj  : $(MATLAB_ROOT)\simulink\include\simulink_solver_api.c
+	$(CC) $(CFLAGS) $(MATLAB_ROOT)\simulink\include\simulink_solver_api.c
+
+# Additional sources
+
+|>START_EXPAND_RULES<|{|>EXPAND_DIR_NAME<|}.c.obj :
+	$(CC) $(CFLAGS) $<
+
+|>END_EXPAND_RULES<|
+
+|>START_EXPAND_RULES<|{|>EXPAND_DIR_NAME<|}.cpp.obj :
+	$(CC) $(CPPFLAGS) $<
+
+|>END_EXPAND_RULES<|
+
+# Put these rule last, otherwise nmake will check toolboxes first
+
+{$(RELATIVE_PATH_TO_ANCHOR)}.cpp.obj :
+	$(CC) $(CPPFLAGS) $<
+
+.cpp.obj :
+	$(CC) $(CPPFLAGS) $<
+
+{$(RELATIVE_PATH_TO_ANCHOR)}.c.obj :
+	$(CC) $(CFLAGS) $<
+
+.c.obj :
+	$(CC) $(CFLAGS) $<
+
+!if "$(SHARED_LIB)" != ""
+$(SHARED_LIB) : $(SHARED_SRC)
+	@$(CC) $(CFLAGS) -Fo$(SHARED_BIN_DIR)\ @<<
+$?
+<<
+	@$(LIBCMD) /nologo /out:$@ $(SHARED_OBJS)
+!endif
+
+set_environment_variables:
+	@set INCLUDE=$(INCLUDE)
+	@set LIB=$(LIB)
+
+
+# Libraries:
+
+|>START_EXPAND_LIBRARIES<|MODULES_|>EXPAND_LIBRARY_NAME<| = \
+|>START_EXPAND_MODULES<|    |>EXPAND_MODULE_NAME<|.obj \
+|>END_EXPAND_MODULES<|
+
+|>EXPAND_LIBRARY_NAME<|.lib : rtw_proj.tmw $(MAKEFILE) $(MODULES_|>EXPAND_LIBRARY_NAME<|)
+	$(LIBCMD) /nologo /out:$@ $(MODULES_|>EXPAND_LIBRARY_NAME<|)
+
+|>END_EXPAND_LIBRARIES<|
+
+|>START_PRECOMP_LIBRARIES<|MODULES_|>EXPAND_LIBRARY_NAME<| = \
+|>START_EXPAND_MODULES<|    |>EXPAND_MODULE_NAME<|.obj \
+|>END_EXPAND_MODULES<|
+
+|>EXPAND_LIBRARY_NAME<|.lib : rtw_proj.tmw $(MAKEFILE) $(MODULES_|>EXPAND_LIBRARY_NAME<|)
+	$(LIBCMD) /nologo /out:$@ $(MODULES_|>EXPAND_LIBRARY_NAME<|)
+
+|>END_PRECOMP_LIBRARIES<|
+
+#----------------------------- Dependencies -----------------------------------
+
+$(OBJS) : $(MAKEFILE) rtw_proj.tmw

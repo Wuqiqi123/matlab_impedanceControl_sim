@@ -1,0 +1,263 @@
+%% ============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   This system file creates model_sf_reg.h for the Accelerator target.
+%%
+%% Copyright 1994-2016 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%if EXISTS("_ACCELREG_") == 0
+%assign _ACCELREG_ = 1
+
+%realformat "CONCISE"
+
+%%
+%% Non-finites
+%%
+%openfile tmpBuffer
+
+%if SLibRealNonFinitesRequired()
+  %<LibGenMathFcnCall("initnonfinite", FcnGetDataTypeIdFromName("double"), ...
+    "sizeof(real_T)", "")>;\
+%endif
+%<LibDumpNonFiniteAssignmentCache()>
+%closefile tmpBuffer
+
+%openfile nonFinitesBuffer
+%if !WHITE_SPACE(tmpBuffer)
+  
+  /* non-finites */
+  %<tmpBuffer>\
+%endif
+%closefile nonFinitesBuffer
+
+
+%% ==========================================================================
+%% Dump buffers to output
+%%
+
+%openfile tmpBuf
+#define CodeFormat S-Function
+#define AccDefine1 Accelerator_S-Function
+%closefile tmpBuf
+%<SLibCacheCodeToFile("mdl_src_define", tmpBuf)>
+
+%if ISFIELD(::CompiledModel, "NumDataTransfers") && ::CompiledModel.NumDataTransfers > 0
+  %openfile tmpBuf
+  #define MDL_DATA_TRANSFER_READ_WRITE
+  #define MDL_DATA_TRANSFER_INIT
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("mdl_src_define", tmpBuf)>
+%endif
+%with ::CompiledModel
+%assign paramTuningTid = SLibTidOfParameterChangeEvent()
+%assign rootSystem = System[NumSystems-1]
+%if paramTuningTid >= 0 && !LibSystemFcnIsEmptyHelper(rootSystem,"Output",paramTuningTid)
+  %openfile tmpBuf  
+  #include "simtarget/slAccSfcnBridge.h"
+  %closefile tmpBuf
+  %<SLibCacheCodeToFile("mdl_src_userTop", tmpBuf)>
+%endif
+%endwith
+
+%openfile tmpBuf
+#include <stdio.h>
+#include "slexec_vm_simstruct_bridge.h"
+#include "slexec_vm_zc_functions.h"
+#include "slexec_vm_lookup_functions.h"
+#include "slsv_diagnostic_codegen_c_api.h"
+%closefile tmpBuf
+%<SLibCacheCodeToFile("mdl_src_incl", tmpBuf)>
+
+%openfile fcnsBuf
+%assign fcnAbstract = "Function to initialize sizes"
+%assign fcnName = "mdlInitializeSizes"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<RTMGetModelSS()>"
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "model"; GeneratedBy "accelreg.tlc"; Type "Initialize"}
+%% ============================================================================
+%% MdlInitializeSizes
+%%
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>)
+{
+
+  /* checksum */
+  %<RTMSetIdxed("ChecksumVal", 0, ModelChecksum[0])>;
+  %<RTMSetIdxed("ChecksumVal", 1, ModelChecksum[1])>;
+  %<RTMSetIdxed("ChecksumVal", 2, ModelChecksum[2])>;
+  %<RTMSetIdxed("ChecksumVal", 3, ModelChecksum[3])>;
+  
+  { 
+     /* First check to see if this is the sample verion of Simulink used 
+      * to generate this file. If not force a rebuild and return. */
+      mxArray *slVerStructMat = NULL;
+      mxArray *slStrMat = mxCreateString("simulink");
+      char slVerChar[10];
+      int status = mexCallMATLAB(1,&slVerStructMat,
+                                 1,&slStrMat,
+                                 "ver");
+      if(status == 0) {
+          mxArray * slVerMat = mxGetField(slVerStructMat,0,"Version");
+          if(slVerMat == NULL) {
+            status = 1;
+          } else {
+            status = mxGetString(slVerMat, slVerChar, 10);
+          }
+      }      
+      mxDestroyArray(slStrMat);
+      mxDestroyArray(slVerStructMat);
+      
+      if((status == 1) || (strcmp(slVerChar,"%<SimulinkVersion>") != 0)) {
+          return;
+      } 
+  }
+  
+  /* options */
+  %<RTMSet("Options", "SS_OPTION_EXCEPTION_FREE_CODE")>;
+
+  %if ! LibDWorkStructIsEmpty()
+    /* Accelerator check memory map size match for DWork */
+      if (ssGetSizeofDWork(S) != sizeof(%<::tDWorkType>)) {
+	ssSetErrorStatus(S,"Unexpected error: Internal DWork sizes do "
+	"not match for accelerator mex file.");
+      }
+  %endif
+
+  %if !LibBlockIOStructIsEmpty()
+    /* Accelerator check memory map size match for BlockIO */
+    if (ssGetSizeofGlobalBlockIO(S) != sizeof(%<::tBlockIOType>)) {
+      ssSetErrorStatus(S,"Unexpected error: Internal BlockIO sizes do "
+      "not match for accelerator mex file.");
+    }
+  %endif
+  
+  %if !LibExternalInputsStructIsEmpty()
+    /* Accelerator check memory map size match for ExternalInputs */
+
+    if (ssGetSizeofU(S) != sizeof(%<::tInputType>)) { 
+       static char msg[256];
+       sprintf(msg,"Unexpected error: Internal ExternalInputs sizes do "
+       "not match for accelerator mex file.");
+       ssSetErrorStatus(S,msg);
+     }
+   %endif
+  
+  %if !LibExternalOutputsStructIsEmpty()
+    /* Accelerator check memory map size match for ExternalOutputs */
+    if (ssGetSizeofY(S) != sizeof(%<::tOutputType>)) { 
+       static char msg[256];
+       sprintf(msg,"Unexpected error: Internal ExternalOutputs sizes do "
+       "not match for accelerator mex file.");
+     }
+   %endif
+
+  
+  %%
+  %% Parameters
+  %%
+  %if !LibParametersStructIsEmpty()
+    /* Accelerator check memory map size match for Parameters */
+    {
+      int ssSizeofParams;
+      ssGetSizeofParams(S,&ssSizeofParams);
+      if (ssSizeofParams != sizeof(%<::tParametersType>)) { 
+         static char msg[256];
+         sprintf(msg,"Unexpected error: Internal Parameters sizes do "
+         "not match for accelerator mex file.");
+       }
+     }
+    
+    /* model parameters */
+    _ssSetModelRtp(%<RTMGetModelSS()>, ...
+      (real_T *) &%<::tDefaultParameters>);
+  %endif
+  %%
+  %% Invariant Block Outputs
+  %%
+  %if !LibConstBlockIOStructIsEmpty()
+    
+    /* constant block I/O */
+    _ssSetConstBlockIO(%<RTMGetModelSS()>, &%<::tInvariantSignals>);
+  %endif
+
+  %%
+  %% Mass Matrix Offsets
+  %% Protected with C if-statement, as we could execute this code (to get checksum)
+  %% while somebody added/removed blocks with MassMatrix. In that case, the old 
+  %% MassMatrixPr pointers (stored on DWorks) are no longer valid and accessing them
+  %% would cause seg-v. We assure here that at least the DWork type cast is safe.
+  %%
+  %if (::CompiledModel.ModelIsLinearlyImplicit == "yes")
+    if (ssGetSizeofDWork(S) == sizeof(%<::tDWorkType>)) {
+      %<FcnGenInitMassMatrixPrInRoot()>
+    }  /* else, error condition has been set already */
+  %endif
+      
+  %<nonFinitesBuffer>\
+}
+
+%assign fcnAbstract = "mdlInitializeSampleTimes function (used to set up function-call connections)"
+%assign fcnName = "mdlInitializeSampleTimes"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<RTMGetModelSS()>"
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "model"; GeneratedBy "accelreg.tlc"; Type "Initialize"}
+%% ============================================================================
+%% MdlInitializeSampleTimes
+%%
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>) { 
+  %%
+  %% Set up the function call subsystem pointers
+  %%
+  %assign baseSysIdx = GetBaseSystemIdx()
+  %if Accelerator 
+    %if LibIsSystemField(System[baseSysIdx], "FcnCallSubsystemPtrs")
+      %<LibGetSystemField(System[baseSysIdx], "FcnCallSubsystemPtrs")>\
+    %endif
+    
+    %with ::CompiledModel
+      %assign paramTuningTid = SLibTidOfParameterChangeEvent()
+      %assign rootSystem = System[NumSystems-1]
+      %if paramTuningTid >= 0 && !LibSystemFcnIsEmptyHelper(rootSystem,"Output",paramTuningTid)       
+        slAccRegPrmChangeFcn(S, mdlOutputsTID%<paramTuningTid>);
+      %endif
+    %endwith
+  %endif
+}
+
+%if(FEVAL("slfeature", "AcceleratorExpandedSystemFcns") == 0)
+  %assign fcnAbstract = "Empty mdlTerminate function (never called)"
+  %assign fcnName = "mdlTerminate"
+  %assign fcnReturns = "static void"
+  %assign fcnParams = "SimStruct *S"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "model"; GeneratedBy "accelreg.tlc"; Type "Terminate"}
+  %% ============================================================================
+  %% MdlTerminate
+  %%
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>) { }
+%endif
+
+/* MATLAB MEX Glue */
+#include "simulink.c"
+%closefile fcnsBuf
+
+%<SLibCacheCodeToFile("mdl_fcn_defn", fcnsBuf)>
+
+%selectfile NULL_FILE
+
+%endif %% _ACCELREG_
+
+%% [EOF] accelreg.tlc
+

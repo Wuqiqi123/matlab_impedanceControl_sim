@@ -1,0 +1,37 @@
+%%
+%%  
+%%
+%% Abstract:
+%%   TLC file for generating defines and macros accessed via
+%%   Target Function Library (TFL).
+%%
+%% Copyright 2003-2009 The MathWorks, Inc.
+
+%implements "genrtintdiv" "C"
+
+%function rt_DIVREM(fctInfo,fileH,fileC) void
+  %<GenerateMacros(fctInfo,fileH,fileC)>
+%endfunction
+
+%function rt_DIVQUOT(fctInfo,fileH,fileC) void
+  %<GenerateMacros(fctInfo,fileH,fileC)>
+%endfunction
+
+%% Function: GenerateMacros ====================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header for rt_intdiv.h.
+%%
+%function GenerateMacros(fctInfo,fileH,fileC) void
+%openfile buf  
+#include <stdlib.h>
+
+#define rt_DIVREM(u1, u2) (div((u1),(u2)).rem)
+#define rt_DIVQUOT(u1, u2) (div((u1),(u2)).quot)
+
+%closefile buf
+%<SLibCacheUtilCodeToFile("util_hdr_fcn_decl", fileH, buf)>
+
+%% No source file, only a header
+%<SLibFilterUtilSourceFile(fileC)>
+%endfunction

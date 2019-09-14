@@ -1,0 +1,1000 @@
+%%
+%% This file contains tlc code for generation of casting of tunable parameters
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+
+
+%% Function: FixPt_Fix2Fix_Param_Expr ========================================
+%%
+%% Create a run-time casting expression for a parameter conversion. 
+%% If this is not possible, error out.
+%%
+%function FixPt_Fix2Fix_Param_Expr(yDT,uLabel,uDT) void
+  %%
+  %assign retVecStr = FixPt_Fix2Fix_Old("#error fatal", yDT, uLabel, uDT )
+  %%
+  %if SIZE(retVecStr,1) == 3
+    %%
+    %return retVecStr[1]
+  %else
+    %%START_ASSERT
+    %assign errTxt = "Parameter '%<uLabel>' is defined to be of data type " + \
+    "'%<uDT.DTName>', but this block is using it with a data type of " + \
+    "'%<yDT.DTName>'.  Simulink Coder is unable to generate a run-time " + \
+    "casting expression in cases where there is a mismatch in the bias or " + \
+    "fractional slope.  NOTE: One way to fix this problem is to remove the " + \
+    "parameter's '%<uDT.DTName>' data type specification, which will " + \
+    "result in it being declared with the block's context-sensitive data type."
+    %<LibBlockReportError([], errTxt)>
+    %%END_ASSERT
+  %endif
+  %%
+%endfunction %% FixPt_Fix2Fix_Param_Expr
+
+
+
+%function FixPt_Fix2Fix_Old(yLabel,yDT,uLabel,uDT) Output
+    %%
+    %% It would be desireable to callback to CGIR 100% for the time,
+    %% but there are existing dependence on expression results.
+    %% Sometimes the CGIR callback provides results that are only
+    %% in the form of multiple statements, even though the legacy
+    %% TLC code would have returned an expression.
+    %% 
+    %% Casting of tunable parameters is a known case that depends
+    %% on the old TLC
+    %%
+    %% One way that TLC achieves and expression is to generate
+    %% a function to do the conversion.  The returned expression
+    %% is a call to this generated function.
+    %%
+    %% There are also a few cases where CGIR is missing an optimization
+    %% such as eliminating a variable that is only assigned once and
+    %% read once.  This optimization cases will be corrected over time.
+    %%
+    %% When CGIR does return an expression, it will be used immediately
+    %% and the legacy TLC will be ignored.  If CGIR does not return
+    %% something in expression form, then this function will go deeper
+    %% into the legacy TLC code to see if it can generate an expression
+    %% (including the function call case)
+    %%
+    %% Online cast of Runtime Parameters via FixPt_Fix2Fix_Param_Expr()
+    %% is one of the cases that depends on getting an expression
+    %% and will error out if the cast involves statements.
+    %%
+    %assign uLabel = SLibProcessSafeExpression(Name, uLabel, 1)
+    %%
+    %<FixPt_WordLengthLimitationCheck(uDT)>\
+    %<FixPt_WordLengthLimitationCheck(yDT)>\
+    %%
+    %assign vecCGIR = FixPt_UnaryOp("Fix2Fix", yLabel, yDT, uLabel, uDT, ...
+      "Nearest", "Saturate")
+    %%
+    %if !ISEMPTY(vecCGIR[1])
+      %% 
+      %% CGIR callback gave an expression, so use it.
+      %%
+      %return ["%<vecCGIR[0]>", "%<vecCGIR[1]>", "%<vecCGIR[2]>"]
+    %endif
+    %%
+    %% handle trivial case
+    %%
+    %if FixPt_DataTypesSame(yDT,uDT)
+      %%START_ASSERT
+      %<LibReportFatalError("Trivial conversion from same data type should have been handled by CGIR callback")>
+      %%END_ASSERT
+    %endif
+    %%
+    %%
+    %% default return result
+    %%
+    %assign retVecStr = ""
+    %%
+    %% determine if any of the signals are floating point
+    %%
+    %assign yIsFloat = FixPt_DataTypeIsFloat(yDT)
+    %assign uIsFloat = FixPt_DataTypeIsFloat(uDT)
+    %%
+    %% output YES floating point 
+    %%
+    %if yIsFloat
+        %%
+        %% output YES floating point 
+        %% input  YES floating point 
+        %%
+        %if uIsFloat
+            %%
+            %assign retVecStr = FixPt_Dbl2Dbl(yLabel,yDT,uLabel,uDT)
+            %return retVecStr
+        %%
+        %% output YES floating point 
+        %% input  NOT floating point 
+        %%
+        %else
+            %assign retVecStr = FixPt_Fix2Dbl(yLabel,yDT,uLabel,uDT)
+            %return retVecStr
+        %endif
+    %%
+    %% output NOT floating point 
+    %%
+    %else
+        %%
+        %% output NOT floating point 
+        %% input  YES floating point 
+        %%
+        %if uIsFloat
+          %%
+          %assign retVecStr = FixPt_Dbl2Fix(yLabel,yDT,...
+            uLabel,uDT)
+          %return retVecStr
+        %%
+        %% output NOT floating point 
+        %% input  NOT floating point 
+        %%
+        %else
+            %if ( ( yDT.FracSlope != uDT.FracSlope ) || ...
+                  ( yDT.Bias      != uDT.Bias      ) )
+               %%
+               /* using CGIR generated code */
+               %<vecCGIR[2]>
+            %else
+              %%
+              %% Handle conversion with NO corrections
+              %%
+              %% create record for temporary RADIX ONLY version of output
+              %%
+              %copyrecord yRadixDT yDT
+              %%
+              %assign yRadixDT.FracSlope = 1.0
+              %assign yRadixDT.Bias      = 0.0
+              %%
+              %assign yTempLabel = "yTemp"
+              %%
+              %% create modified record for RADIX ONLY version of input
+              %%
+              %copyrecord uRadixDT uDT
+              %%
+              %assign uRadixDT.FracSlope = 1.0
+              %assign uRadixDT.Bias      = 0.0
+              %%
+              %assign retVecStr = FixPt_Fix2FixRad(yLabel,yRadixDT,...
+                uLabel,uRadixDT)
+              %%
+            %endif
+        %endif
+    %endif
+    %%
+    %return retVecStr
+    %%
+%endfunction  %% FixPt_Fix2Fix_Old
+
+
+
+%% Function: FixPt_Fix2FixRad ==========================================
+%%
+%% Abstract:
+%%  Radix Only Fixed Point to Fixed Point Conversion
+%%
+%%  Vc = Vb
+%%
+%%  Note the Stored Integers are denoted by B and C
+%%
+%%  C = 2^(Eb-Ec) B
+%%
+%%  For this example: All integers are UNSIGNED
+%%  and are a base integer types supported by the
+%%  compiler, such as ushort, uint, ulong
+%%
+%%  The records C and B must contain
+%%  all the fixed point data type and scaling fields.
+%%  They must also contain a field called "Label"
+%%  In C_Language terms CLabel must be an l-value.
+%%  BLabel is treated as read only and
+%%  they must provide the values (stored integers) for
+%%  B.  Please note none of the Labels can be addresses.
+%%
+%% Synopsis:
+%%      FixPt_Fix2FixRad(CLabel,CDT,BLabel,BDT)
+%%
+%%      CLabel,CDT = record describing output
+%%      BLabel,BDT = record describing input
+%%
+%% CAUTION
+%%   BLabel must be a "precedence immune expression" 
+%%       To prevent an explosion of unnecessary parentheses in the generated
+%%       code, defensive parentheses will NOT be wrapped around the input.
+%%       It is the callers responsiblility to include outer parentheses in
+%%       BLabel if there is any hypothetical way for the expression to give 
+%%       incorrect execution order when inserted in a larger expression.
+%%
+%function FixPt_Fix2FixRad(CLabel,CDT,BLabel,BDT) Output
+  %%
+  %assign BLabel = SLibProcessSafeExpression(Name, BLabel, 1)
+  %%
+  %<FixPt_FloatNotSupportedNamed(CDT,"CDT","FixPt_Fix2FixRad")>\
+  %<FixPt_FloatNotSupportedNamed(BDT,"BDT","FixPt_Fix2FixRad")>\
+  %<FixPt_Error_If_BinPtCast_Mismatched(CDT,BDT)>\
+  %%        
+    %%
+    %% Calculate the extra precision bits in the output
+    %% compared to the "natural" precision
+    %% Positive means overall shift left
+    %% Negative means overall shift right
+    %%
+    %assign ExPrec = BDT.FixedExp - CDT.FixedExp
+    %%
+    %% identify how overflows will be handled
+    %%   the default "do nothing" mode is "WRAP".
+    %%   This default mode will be
+    %%   left off the utility name for brevity.
+    %%
+    %% first, determine if saturation is relevant
+    %%   note calc validity limited to radix only cases
+    %%
+    %assign cHiExp = CDT.RequiredBits - CDT.IsSigned
+    %if fxpIsDataTypeBoolean(BDT)
+      %assign bRequiredBits = 1
+    %else
+      %assign bRequiredBits = BDT.RequiredBits
+    %endif
+    %assign bHiExp = bRequiredBits - BDT.IsSigned
+    %assign outHiExp = bHiExp + ExPrec
+    %%
+    %if ( cHiExp < outHiExp ) || ( !CDT.IsSigned && BDT.IsSigned ) || ...
+        ( ( cHiExp == outHiExp ) && ( ExPrec < 0 ) )
+        %%
+        %assign overflowPossible = 1
+        %%
+        %assign includeSaturationCode = 1
+    %else
+        %assign overflowPossible = 0
+        %assign includeSaturationCode = 0
+    %endif
+    %%
+    %if ( overflowPossible )
+      %%
+      %assign satModeUsed = "Saturate"
+    %else
+      %assign satModeUsed = "Wrap"
+    %endif
+    %%
+    %% identify how rounding will be handled
+    %%   If the mode leads to a "do nothing" then
+    %%   the mode will be left off the utility name.
+    %%   For either signed (2's complement!!!)
+    %%   or unsigned input, round to FLOOR is a do nothing
+    %%   mode.  If input is unsigned then round to ZERO
+    %%   is identical to round to FLOOR, ie "do nothing"
+    %%
+    %%   Note: rounding is relavent only if there is a shift right
+    %%
+    %assign includeRoundingCode = 0
+    %%
+    %if ( ExPrec < 0 ) 
+        %assign includeRoundingCode = 1
+    %else
+        %assign includeRoundingCode = 0
+    %endif
+    %%
+    %% Create a string to represent the utility
+    %%
+        %assign utilityName = FixPt_UtilityMakeName("TuneParamCast")
+        %%
+        %assign utilityName = FixPt_UtilityNameAppendDT(utilityName,CDT)
+        %%
+        %assign utilityName = FixPt_UtilityNameAppendDT(utilityName,BDT)
+        %%
+        %% identify amount of left shifting or right shifting
+        %% if any
+        %%
+        %if ExPrec > 0
+            %assign utilityName = utilityName + "_SL"
+            %assign utilityName = utilityName + STRING(ExPrec)
+        %elseif ExPrec < 0
+            %assign utilityName = utilityName + "_SR"
+            %assign utilityName = utilityName + STRING(-ExPrec)
+        %endif
+        %%
+        %% identify how overflows will be handled
+        %%
+        %if includeSaturationCode
+            %assign utilityName = utilityName + "_SAT"
+        %endif
+        %%
+        %% identify how rounding will be handled
+        %%
+        %if includeRoundingCode
+          %assign utilityName = utilityName + "_NEAR"
+        %endif
+    
+    %% Register utility name in the Shared Code Manager
+    %if(!EXISTS(block))
+      %assign block = ""
+    %endif
+    %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+    
+    %%
+    %assign rightSideStr = "%<utilityName>(%<BLabel>)"
+    %%
+    %assign effortStr = "simple"
+    %%
+    %assign completeStr = "%<CLabel> = %<rightSideStr>;"
+    %%
+    %assign retVec = ["%<effortStr>", "%<rightSideStr>", "%<completeStr>"]
+    %%
+    %% determine if the required utility has already been defined
+    %%   If it has not, then create the definition.
+    %%
+    %if !(ISFIELD(FixPtUtils,utilityName))
+        %%
+        %<LibPushEmptyStackSharedUtils()>\
+        %%
+        %% register that utility is being defined
+        %%
+        %assign tmpRet = SETFIELD(FixPtUtils,utilityName,1)
+        %%
+        %% open a buffer to hold the utility header comments
+        %%
+        %openfile fcnAbstract
+ Tunable Parameter Data Type and Scaling Conversion Utility
+   %<utilityName>
+         
+ This utility was generated because a tunable parameter was
+ declared using one data type and scaling, but a user of that 
+ parameter (typically a block) requires the parameter's value to 
+ be represented using a different data type and scaling.
+ This usage must be in the form of an expression.  In order to
+ provide an expression, the statements required for the conversion
+ have been wrapped in this function.  
+         %%
+         %if ISEQUAL(::CompiledModel.RTWCGIR,0)
+           %%
+ This function does not serve other conversion roles.  It only 
+ exists to support conversions of tunable parameters.
+         %endif
+        %closefile fcnAbstract
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %% open a buffer to hold the utility definition
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %openfile utilityDef
+        %%
+        %% case of C function
+        %%   including prototype definition
+        %%
+        %assign fcnName = utilityName
+        %assign fcnReturns = CDT.NativeType
+        %assign fcnParams = BDT.NativeType + " B"
+        %assign funcSignature = ...
+          fcnReturns + " " + fcnName + "(" + fcnParams + ")"
+        %openfile funcProto
+        %<funcSignature>;
+        %closefile funcProto
+        %selectfile utilityDef
+        %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+          Abstract fcnAbstract; Category "utility"; GeneratedBy "fixpt_tunable_param_cast.tlc"}
+        %<SLibDumpFunctionBanner(fcnRec)>
+        %undef fcnRec
+        %<funcSignature>
+        {
+        %%
+        %<FixPt_WordLengthLimitationCheck(CDT)>\
+        %<FixPt_WordLengthLimitationCheck(BDT)>\
+        %%
+        %assign vecCGIR2 = FixPt_UnaryOp("Fix2Fix", "C", CDT, "B", BDT, ...
+          "Nearest", satModeUsed)
+        %%
+        %if ISEMPTY(vecCGIR2[1])
+           %<CDT.NativeType> C;
+
+           %<vecCGIR2[2]>\
+           return (C);
+         %else
+           return (%<vecCGIR2[1]>);
+        %endif
+        }
+        %closefile utilityDef
+        %<SLibAddMathIncludeForUtilsSourceCode(utilityDef)>
+        %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+        %%
+        %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+        %<LibAddtoSharedUtilsIncludesVector(GSUStackBuf)>
+        %%
+    %endif  %% definition of Fix2Fix utility    
+  %%
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %return retVec
+%endfunction  %% FixPt_Fix2FixRad
+
+
+
+%% Function: FixPt_Dbl2Fix ==========================================
+%%
+%% Abstract:
+%%      Generate INLINED code for converting a floating point double to
+%%      a specified fixed point type.
+%%      Uses selected modes for rounding and saturation/wrap.
+%%
+%% Synopsis:
+%%      FixPt_Dbl2Fix(outLabel,outDT,inLabel,inDTName)
+%%
+%%      outLabel,outDT     = record describing output
+%%      inLabel    = label describing input
+%%      inDTName   = string containing inputs data type name
+%%
+%% CAUTION
+%%   inLabel must be a "precedence immune expression" 
+%%       To prevent an explosion of unnecessary parentheses in the generated
+%%       code, defensive parentheses will NOT be wrapped around the input.
+%%       It is the callers responsiblility to include outer parentheses in
+%%       inLabel if there is any hypothetical way for the expression to give 
+%%       incorrect execution order when inserted in a larger expression.
+%% 
+%function FixPt_Dbl2Fix(outLabel,outDT,inLabel,inDT) Output
+    %%
+    %<FixPt_FloatNotSupportedNamed(outDT,"outDT","FixPt_Dbl2Fix")>\
+    %<FixPt_FixptNotSupportedNamed(inDT, "inDT", "FixPt_Dbl2Fix")>\
+    %%
+    %% default return result
+    %%
+    %assign retVecStr = ""
+    %%
+    %assign inLabel = SLibProcessSafeExpression(Name, inLabel, 1)
+    %%
+    %assign inDTName = inDT.NativeType
+    %%        
+    %% give short name to various data type and scaling parameters
+    %% AND
+    %% adjust for input scaling that is not nominal
+    %%
+    %assign fSlopeNet = CAST("Real",inDT.FracSlope) / CAST("Real",outDT.FracSlope)
+    %assign biasUmY = CAST("Real",inDT.Bias) - CAST("Real",outDT.Bias)
+    %%
+    %% give short names for in and out labels
+    %%
+    %assign inIsDouble = FixPt_DataTypeIsDouble(inDT)
+    %%
+    %if !inIsDouble
+      %%
+      %assign uCast = "((double)%<inLabel>)"
+    %else
+      %assign uCast = inLabel
+    %endif
+    %%
+    %assign y = outLabel
+    %%
+    %% get output storage type
+    %%
+    %assign yStoreType = outDT.NativeType
+    %%
+    %% Using slope and bias, change u from "Real World" scale
+    %% to "storage integer" scale, but do this as floating point
+    %%
+    %if ( inDT.FracSlope == 1.0 && inDT.FixedExp == 0 )
+        %%
+        %% when input has trivial slope 
+        %% The general conversion equation 
+        %%
+        %%   Qo = ( Si * Qi + Bi - Bo ) / So
+        %%
+        %% is simplified to eliminate the multiplication in the numerator
+        %%
+        %%   Qo = ( Qi + Bi - Bo ) / So
+        %%
+        %% the online implemenation could be
+        %%
+        %% One Division Approach
+        %%
+        %%   Qo = ( Qi + Bdiv ) / So
+        %%
+        %%      Bdiv = (Bi-Bo) computed offline
+        %% 
+        %% One Multiplication Approach
+        %%
+        %%   Qo = Smul * Qi + Bmul
+        %%
+        %%      Smul = 1/So       computed offline
+        %%      Bmul = (Bi-Bo)/So computed offline
+        %% 
+        %% Both approaches involve one addition and one floating point multiply or divide.
+        %% The efficiency of multiplication is often advantageous but it is not that 
+        %% critical in hardware floating point.  The online division approach has
+        %% the advantage that it gives a more accurate result in many cases.
+        %% For accuracy, the division approach will be used when the input
+        %% has trivial slope. 
+        %% 
+        %%
+        %% handle bias adjustment
+        %% 
+        %if biasUmY > 0.0
+            %%
+            %assign uScaled = "(%<uCast>+%<biasUmY>)"
+            %%
+        %elseif biasUmY < 0.0
+            %%
+            %assign uScaled = "(%<uCast>-%<-1.0*biasUmY>)"
+        %else
+            %assign uScaled = uCast
+        %endif
+        %%
+        %% handle slope adjustment
+        %%
+        %if outDT.FracSlope != 1.0
+            %%
+            %% dtPrecision is always positive 
+            %%
+            %assign fSlopeY = CAST("Real",outDT.FracSlope)
+            %assign dtPrecision = FixPt_Pow2(outDT.FixedExp)
+            %assign dtPrecision = dtPrecision*fSlopeY
+            %%
+            %assign uScaled = "(%<uScaled>/%<dtPrecision>)"
+            %%
+        %elseif outDT.FixedExp != 0
+          %%
+          %% For pure power of 2 slope correct, with no bias
+          %% if input is single, then do calc in singles.
+          %%
+          %assign negFixExp = -1*outDT.FixedExp
+          %%
+          %assign uScaled = LibGenSharedMathFcnCall("ldexp",tSS_DOUBLE,"%<uScaled>","%<negFixExp>")
+        %endif
+    %else
+        %%
+        %% input has non-trivial TotalSlope
+        %%
+        %% Calculation will be of the form 
+        %%
+        %%   Qo = SlopeNet * Qi + BiasNet
+        %%
+        %%   where computed off-line are
+        %% 
+        %%   SlopeNet = Si/So
+        %%   BiasNet  = ( Bi - Bo ) / So
+        %%
+        %assign fixExpNet = inDT.FixedExp - outDT.FixedExp
+        %%
+        %% handle slope adjustment
+        %%
+        %if fSlopeNet != 1.0
+            %%
+            %% dtPrecision is always positive 
+            %%
+            %assign totalSlopeNet = FixPt_Pow2(fixExpNet)
+            %assign totalSlopeNet = fSlopeNet*totalSlopeNet
+            %%
+            %assign uScaled = "(%<uCast>*%<totalSlopeNet>)"
+            %%
+        %elseif fixExpNet != 0
+          %%
+          %% For pure power of 2 slope correct
+          %%
+          %assign uScaled = LibGenSharedMathFcnCall("ldexp",tSS_DOUBLE,"%<uCast>","%<fixExpNet>")
+        %else
+          %%
+          %assign uScaled = uCast
+        %endif
+        %%
+        %if biasUmY != 0.0
+          %%
+          %assign biasNet   = biasUmY / CAST("Real",outDT.FracSlope)
+          %%
+          %if outDT.FixedExp != 0
+            %%
+            %assign biasNet = biasNet * FixPt_Pow2(-outDT.FixedExp)
+          %endif
+          %%
+          %if biasNet > 0.0
+            %%
+            %assign uScaled = "(%<uScaled>+%<biasNet>)"
+          %else
+            %assign uScaled = "(%<uScaled>-%<-1.0*biasNet>)"
+          %endif
+        %endif
+    %endif
+    %%
+    %%  this is tailored to the various rounding modes
+    %%
+    %assign rightSideStr = LibGenSharedMathFcnCall("floor",tSS_DOUBLE,"%<uScaled>+0.5","")                %%
+    %assign rBits  = outDT.RequiredBits
+    %%
+        %%
+        %% calc max and min real world values
+        %%
+        %assign isSign = outDT.IsSigned
+        %assign pseudoMax = CAST("Real",FixPt_Pow2(rBits-isSign))
+        %%
+        %assign outMaxAsFloat = pseudoMax-1.0
+        %%
+        %if isSign
+            %assign outMinAsFloat = -1.0*pseudoMax
+        %else
+            %assign outMinAsFloat = 0.0
+        %endif
+        %%
+        %assign outMaxAsFloat = CAST("Real",outMaxAsFloat)
+        %assign outMinAsFloat = CAST("Real",outMinAsFloat)
+        %%
+        %assign outMaxAsInt = FixPt_GetMaxStr(outDT)
+        %assign outMinAsInt = FixPt_GetMinStr(outDT)
+        %%
+        %assign outMaxAsInt = "((%<outDT.NativeType>)%<outMaxAsInt>)"
+        %assign outMinAsInt = "((%<outDT.NativeType>)%<outMinAsInt>)"
+        %%
+        %% Do NOT use rt_SATURATE
+        %% because it uses the same data type for both the input and the output
+        %% The use of saturation is supposed to prevent overflows by
+        %% limiting the input range.  Unfortunately, there are cases where
+        %% rt_SATURATE can let out of range values pass through.
+        %% For example,
+        %% Suppose input is single and output is unsigned 32 bits. 
+        %% Singles only have 23+1 bits of mantissa precision
+        %% but the maximum uint32 is
+        %% 2^32-1 = 0xFFFFFFFF = 4294967295 which requires 32 bits of precision
+        %% The singles representation would have to quantize this to 
+        %%    single(4294967295) = 4294967296.0 = 2^32.
+        %% rt_Saturate would essentially do
+        %%
+        %%   if uSingle >= 4294967296.0F
+        %%     yUint32 = (uint32_T)4294967296.0F;   /* OVERFLOWS EVER TIME !!! */
+        %%   else if (uSingle <= 0.0F)
+        %%     yUint32 = (uint32_T)0.0F;
+        %%   else
+        %%     yUint32 = (uint32_T)uSingle;
+        %%
+        %% The second line in the code above always overflow for this example.
+        %% That is why rt_SATURATE can NOT be used in general.
+        %%
+        %% The example above code be solved by upcasting to doubles which have
+        %% 52+1 bits of mantissa precision.  However, support for 64 bit integers
+        %% is planned so this issue would be lurking.  In addition, up casting
+        %% to double has potentially efficiency issues on an embedded floating
+        %% point microprocessor.
+        %%
+        %% The preferred solution is
+        %%   if uSingle >= 4294967296.0F
+        %%     yUint32 = 4294967295L;      /* No conversion and no overflow */
+        %%   else if (uSingle <= 0.0F)
+        %%     yUint32 = 0L;               /* No conversion */
+        %%   else
+        %%     yUint32 = (uint32_T)uSingle;
+        %%
+        %% The fact that the upper limit relop uses 
+        %%    4294967296.0F 
+        %%  which is greater than
+        %%    4294967295L
+        %%  is not a problem because next smallest number the uSingle can represent is
+        %%    2^32-2^8 
+        %%  which is less than
+        %%    2^32-1
+        %%  so no overflows can sneak in.
+        %%
+        %assign rightSideStr = "( ( %<rightSideStr> >= %<outMaxAsFloat> ) ? %<outMaxAsInt> : ( ( %<rightSideStr> <= %<outMinAsFloat> ) ? %<outMinAsInt> : ((%<outDT.NativeType>)%<rightSideStr>) ) )"
+        %%
+        %assign effortStr = "simple"
+        %%
+        %assign completeStr = "%<y> = %<rightSideStr>;"
+        %%
+        %assign retVecStr = ["%<effortStr>", "%<rightSideStr>", "%<completeStr>"]
+        %return retVecStr
+    %%
+%endfunction  %% FixPt_Dbl2Fix
+
+
+%% Function: FixPt_Fix2Dbl ==========================================
+%%
+%% Abstract:
+%%      Generate INLINED code for converting a floating point double to
+%%      a specified fixed point type.
+%%      Uses selected modes for rounding and saturation/wrap.
+%%
+%% Synopsis:
+%%      FixPt_Fix2Dbl(outLabel,inLabel,in_Rec)
+%%
+%%      outLabel  = label describing output
+%%      outDTName = string containing output data type name
+%%      inLabel,in_Rec     = record describing input
+%%
+%% CAUTION
+%%   inLabel must be a "precedence immune expression" 
+%%       To prevent an explosion of unnecessary parentheses in the generated
+%%       code, defensive parentheses will NOT be wrapped around the input.
+%%       It is the callers responsiblility to include outer parentheses in
+%%       inLabel if there is any hypothetical way for the expression to give 
+%%       incorrect execution order when inserted in a larger expression.
+%% 
+%function FixPt_Fix2Dbl(outLabel,outDT,inLabel,inDT) void
+    %%
+    %<FixPt_FixptNotSupportedNamed(outDT,"outDT","FixPt_Fix2Dbl")>\
+    %<FixPt_FloatNotSupportedNamed(inDT, "inDT", "FixPt_Fix2Dbl")>\
+    %%
+    %assign inLabel = SLibProcessSafeExpression(Name, inLabel, 1)
+    %%
+    %assign outDTName = outDT.NativeType
+    %%
+    %% should handle floating point cases
+    %%
+    %% give short names for in and out labels
+    %%
+    %assign u = inLabel
+    %assign y = outLabel
+    %%
+    %% give short name to various data type and scaling parameters
+    %% AND
+    %% adjust for output scaling that is not nominal
+    %%
+    %assign fExp   = inDT.FixedExp - outDT.FixedExp
+    %assign fSlope = CAST("Real",inDT.FracSlope) / CAST("Real",outDT.FracSlope) 
+    %assign bias   = ( CAST("Real",inDT.Bias) - CAST("Real",outDT.Bias) ) / CAST("Real",outDT.FracSlope)
+    %assign isSign = inDT.IsSigned
+    %%START_ASSERT
+    %if outDT.FixedExp != 0
+        %%
+        %assign bias = bias * FixPt_Pow2(-outDT.FixedExp)
+    %endif
+    %%END_ASSERT
+    %% set up variable to hold cast if needed
+    %%
+    %if !FixPt_DataTypeIsDouble(outDT)
+        %%
+        %assign d2ycastpre  = "((" + STRING(outDTName) + ")"
+        %assign d2ycastpost = ")"
+        %%
+    %else
+        %%
+        %assign d2ycastpre  = ""
+        %assign d2ycastpost = ""
+        %%
+    %endif
+    %%
+    %% Using slope and bias, change u from "Real World" scale
+    %% to "storage integer" scale, but do this as floating point
+    %%
+    %if ( fSlope != 1.0 ) || ( fExp != 0.0 )
+      %%
+      %if fSlope != 1.0
+        %%
+        %% calc data type precision
+        %%
+        %assign dtPrecision = FixPt_Pow2(fExp)
+        %assign dtPrecision = dtPrecision*fSlope
+        %%
+        %if bias > 0.0
+          %%
+          %assign rightSideStr = "%<d2ycastpre>(%<dtPrecision>*(%<FixPt_double_label>)%<u>+%<bias>)%<d2ycastpost>"
+          %%
+        %elseif bias < 0.0
+          %%
+          %assign rightSideStr = "%<d2ycastpre>(%<dtPrecision>*(%<FixPt_double_label>)%<u>-%<-1.0*bias>)%<d2ycastpost>"
+        %else
+          %assign rightSideStr = "%<d2ycastpre>(%<dtPrecision>*(%<FixPt_double_label>)%<u>)%<d2ycastpost>"
+        %endif
+      %else
+        %if bias > 0.0
+          %%
+          %assign rightSideStr = "%<d2ycastpre>(%<LibGenSharedMathFcnCall("ldexp",tSS_DOUBLE,"(%<FixPt_double_label>)%<u>","%<fExp>")>+%<bias>)%<d2ycastpost>"
+          %%
+        %elseif bias < 0.0
+          %%
+          %assign rightSideStr = "%<d2ycastpre>(%<LibGenSharedMathFcnCall("ldexp",tSS_DOUBLE,"(%<FixPt_double_label>)%<u>","%<fExp>")>-%<-1.0*bias>)%<d2ycastpost>"
+        %else
+          %assign rightSideStr = "%<d2ycastpre>%<LibGenSharedMathFcnCall("ldexp",tSS_DOUBLE,"(%<FixPt_double_label>)%<u>","%<fExp>")>%<d2ycastpost>"
+        %endif
+      %endif
+    %else
+      %if bias > 0.0
+        %%
+        %assign rightSideStr = "%<d2ycastpre>((%<FixPt_double_label>)%<u>+%<bias>)%<d2ycastpost>"
+        %%
+      %elseif bias < 0.0
+        %%
+        %assign rightSideStr = "%<d2ycastpre>((%<FixPt_double_label>)%<u>-%<-1.0*bias>)%<d2ycastpost>"
+      %else
+        %if d2ycastpre == ""
+          %if FixPt_DataTypeIsDouble(inDT)
+            %%START_ASSERT
+            %assign rightSideStr = u
+            %%END_ASSERT
+          %else
+            %assign rightSideStr = "((%<FixPt_double_label>)%<u>)"
+          %endif
+        %else
+          %assign rightSideStr = "%<d2ycastpre>%<u>%<d2ycastpost>"
+        %endif
+      %endif
+    %endif
+    %%
+    %assign effortStr = "simple"
+    %%
+    %assign completeStr = "%<y> = %<rightSideStr>;"
+    %%
+    %assign retVecStr = ["%<effortStr>", "%<rightSideStr>", "%<completeStr>"]
+    %return retVecStr
+    %%
+%endfunction  %% FixPt_Fix2Dbl
+
+
+
+%% Function: FixPt_Dbl2Dbl ==========================================
+%%
+%function FixPt_Dbl2Dbl(yLabel,yDT,uLabel,uDT) void
+    %%
+    %<FixPt_FixptNotSupportedNamed(yDT,"yDT","FixPt_Dbl2Dbl")>\
+    %<FixPt_FixptNotSupportedNamed(uDT, "uDT", "FixPt_Dbl2Dbl")>\
+    %%
+    %assign uLabel = SLibProcessSafeExpression(Name, uLabel, 1)
+    %%
+    %if yDT.FixedExp != uDT.FixedExp
+      %%
+      %% note slopeCorrect is always positive so there are no 
+      %% precendence issues due to unary minus
+      %% 
+      %assign slopeCorrect = FixPt_Pow2(uDT.FixedExp-yDT.FixedExp)
+      %%
+    %else
+      %%
+      %assign slopeCorrect = 1.0
+      %%
+    %endif
+    %%
+    %if yDT.FracSlope != uDT.FracSlope
+      %%
+      %% note slopeCorrect is always positive so there are no 
+      %% precedence issues due to unary minus
+      %% 
+      %assign slopeCorrect = slopeCorrect * uDT.FracSlope / yDT.FracSlope
+      %%
+    %endif
+    %%
+    %assign biasCorrect  = uDT.Bias - yDT.Bias
+    %%
+    %if biasCorrect != 0.0
+      %%
+      %assign biasCorrect = biasCorrect * FixPt_Pow2(-yDT.FixedExp) / yDT.FracSlope
+      %%
+      %if biasCorrect >= 0
+        %assign biasCorrectStr = "%<biasCorrect>"
+      %else
+        %assign biasCorrectStr = "(%<biasCorrect>)"
+      %endif
+      %%
+      %if FixPt_IsZeroNumericOrString(uLabel)
+        %%
+        %assign rightSideStr = "( %<biasCorrectStr> )"
+        %%
+        %assign effortStr = "simple"
+        %%                  
+      %else
+        %if slopeCorrect != 1.0
+          %%
+          %assign rightSideStr = "( %<biasCorrectStr> + %<slopeCorrect> * %<uLabel> )"
+          %%
+          %assign effortStr = "simple"
+          %%
+        %else
+          %%
+          %assign rightSideStr = "( %<biasCorrectStr> + %<uLabel> )"
+          %%
+          %assign effortStr = "simple"
+          %%
+        %endif
+      %endif
+    %else
+      %if slopeCorrect != 1.0
+        %%
+        %if FixPt_IsZeroNumericOrString(uLabel)
+          %%
+          %if FixPt_DataTypeIsSingle(yDT)
+            %assign rightSideStr = "0.0F"
+          %else
+            %assign rightSideStr = "0.0"
+          %endif
+          %%
+          %assign effortStr = "trivial"
+          %%                  
+        %else
+          %%
+          %assign rightSideStr = "( %<slopeCorrect> * %<uLabel> )"
+          %%
+          %assign effortStr = "simple"
+          %%
+        %endif
+      %else
+        %%
+        %assign rightSideStr = uLabel
+        %%
+        %assign effortStr = "trivial"
+        %%
+      %endif
+    %endif
+    %%
+    %if FixPt_DataTypeIsSingle(yDT) && ( !FixPt_DataTypeIsSingle(uDT) || biasCorrect != 0.0 || slopeCorrect != 1.0 )
+      %%
+      %assign rightSideStr = "((float)%<rightSideStr>)"
+      %%
+      %assign effortStr = "simple"
+      %%
+    %else
+      %%
+      %assign rightSideStr = FixPt_ProtectDataTypeOfExpression(rightSideStr,yDT,uDT)
+      %%    
+    %endif
+    %%
+    %assign completeStr = "%<yLabel> = %<rightSideStr>;"
+    %%
+    %assign retVecStr = ["%<effortStr>", "%<rightSideStr>", "%<completeStr>"]
+    %%
+    %return retVecStr
+    %%
+%endfunction  %% FixPt_Dbl2Dbl
+
+
+
+%% FixPt_ProtectDataTypeOfExpression
+%%
+%function FixPt_ProtectDataTypeOfExpression(rightSideStr,yDT,uDT) void
+  %%
+  %assign protect = 0
+  %%
+  %if     FixPt_DataTypeIsDouble(yDT) && !FixPt_DataTypeIsDouble(uDT) 
+    %%
+    %assign protect = 1
+    %%
+  %elseif FixPt_DataTypeIsSingle(yDT) && !FixPt_DataTypeIsSingle(uDT) 
+    %%
+    %assign protect = 1
+    %%
+  %elseif FixPt_DataTypeIsFloat(uDT) 
+    %%
+    %assign protect = 1
+    %%
+  %elseif   yDT.ActualBits <  IntegerSizes.IntNumBits || ...
+          ( yDT.ActualBits == IntegerSizes.IntNumBits && uDT.ActualBits > IntegerSizes.IntNumBits )
+    %%
+    %assign protect = 1
+    %%
+  %endif
+  %%
+  %if protect
+    %%
+    %assign rightSideStr = SLibProcessSafeExpression(Name, rightSideStr, 1)
+    %%
+    %assign rightSideStr = "((%<yDT.NativeType>)%<rightSideStr>)"
+  %endif
+  %%
+  %return rightSideStr
+  %%
+%endfunction %% FixPt_ProtectDataTypeOfExpression
+
+
+
+%% Function: FixPt_Error_If_BinPtCast_Mismatched
+%%
+%% Abstract: Throw an error the data type in a cast operation
+%% have mismatched scaling.
+%%
+%% This is used to protect functions, usually internal ones, 
+%% that are specialized to the binary point only cases
+%%
+%function FixPt_Error_If_BinPtCast_Mismatched(outDT,inDT) void
+  %%
+  %% Make sure Fractional Slopes agree and that Biases agree
+  %%
+  %if !FixPt_FracSlopesSame( outDT.FracSlope, inDT.FracSlope ) || ...
+      ( outDT.Bias      != inDT.Bias      )
+    %%
+    %%START_ASSERT
+    %openfile errTxt
+Incorrect use of FixPt_Fix2FixRad
+The fractional slopes must be equal
+inDT.FracSlope  = %<inDT.FracSlope>
+outDT.FracSlope = %<outDT.FracSlope>
+and the biases must be equal too
+inDT.Bias  = %<inDT.Bias>
+outDT.Bias = %<outDT.Bias>
+    %closefile errTxt
+    %<LibReportFatalError(errTxt)>
+    %%END_ASSERT
+    %%
+  %endif
+  %return
+%endfunction

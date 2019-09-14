@@ -1,0 +1,56 @@
+%% ============================================================================
+%% File: prm_importedexternpointer.tlc
+%%
+%% Abstract:
+%%   
+%%   
+%%  
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%% 
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_PRM_IMPORTEDEXTERNPOINTER_") == 0
+%assign _PRM_IMPORTEDEXTERNPOINTER_ = 1
+
+%include "prm_cacheutils.tlc"
+
+
+%% Function: SLibCacheImportedExternPointerPrmBuffers =========================
+%% Abstract:
+%%   Generate the declaration & instantiation buffers for constant parameters
+%%
+%function SLibCacheImportedExternPointerPrmBuffers(startIdx) void
+
+  %% Create parameter buffers
+  %<SLibCreatePrmBuffer("ImportedExternPointer", "Decl")>
+  
+  %% Generate the parameter declaration buffer
+  %assign declBuffer = FcnGenImportedExternPointerParamDecl(startIdx)
+  %<SLibSetPrmBufferPart("ImportedExternPointer", "Decl", "Code", declBuffer)>
+
+%endfunction %% SLibCacheImportedExternPointerPrmBuffers
+
+
+%% Function: FcnGenImportedExternPointerParamDecl =============================
+%% Abstract:
+%%   Generate the ImportedExternPointer parameters declaration buffer
+%%
+%function FcnGenImportedExternPointerParamDecl(startIdx) void
+
+  %assign cacheBuffer = "" 
+  %foreach prmIdx = NumImportedExternPointer
+    %assign mdlParam = Parameter[startIdx + prmIdx]
+    %assign cacheBuffer = cacheBuffer + SLibGenModelParamDecl(mdlParam, TLC_FALSE)
+  %endforeach
+
+  %return cacheBuffer
+  
+%endfunction %% FcnGenImportedExternPointerParamDecl
+
+
+%endif %% EXISTS("_PRM_IMPORTEDEXTERNPOINTER_")
+
+%% [EOF] prm_importedexternpointer.tlc

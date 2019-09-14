@@ -1,0 +1,48 @@
+%% 
+%% 
+%%
+%% Copyright 2008 The MathWorks, Inc.
+%%
+%% Abstract: 
+%%   Code generation support for IPCSetup block
+
+%implements  "IPCPort" "C"
+
+%% Function: Start ============================================================
+%% Abstract:
+%%   Perform Start function
+%%
+%function Start(block, system) Output
+  %if ISFIELD(block, "IPCFile")
+    %<GENERATE_TYPE(block, "Start", IPCFile, system)>
+  %endif
+%endfunction
+ 
+%% Function: InitializeConditions =============================================
+%% Abstract:
+%%   Perform InitializeConditions function
+%%
+%function InitializeConditions(block, system) Output
+  %if ISFIELD(block, "IPCFile")
+    %<GENERATE_TYPE(block, "InitializeConditions", IPCFile, system)>
+  %endif
+%endfunction
+    
+%% Function: Outputs ===========================================================
+%% Abstract:
+%%   Run the TLC output script created during the rtwgen process for the
+%%   block.
+%%
+%function Outputs(block, system) Output
+  %if ISFIELD(block, "IPCFile")
+    %<GENERATE_TYPE(block,"Outputs", IPCFile, system)>
+  %endif
+%endfunction
+
+%function Terminate(block, system) Output
+  %if ISFIELD(block, "IPCFile")
+    %<GENERATE_TYPE(block, "Terminate", IPCFile, system)>
+  %endif
+%endfunction
+
+%% [eof] msfunction.tlc

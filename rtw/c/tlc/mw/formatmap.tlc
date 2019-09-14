@@ -1,0 +1,102 @@
+%% ============================================================================
+%% 
+%% 
+%% 
+%%
+%% Abstract:
+%%   This system file creates model.dt for code generation's RealTime and 
+%%   Embedded-c code formats. The map file contains the mapping information for
+%%   monitoring block outputs and modifying block parameters.
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%if EXISTS("_FORMATMAP_") == 0
+%assign _FORMATMAP_ = 1
+
+%realformat "CONCISE"
+
+%assign DataTypeTransHdr = LibGetDataTypeTransHdrBaseName()
+%if RTWVerbose
+%selectfile STDOUT
+### Creating data type transition file %<DataTypeTransHdr>.h
+%selectfile NULL_FILE
+%endif
+
+%openfile ModelDotDT = "%<DataTypeTransHdr>.h"
+/*
+ * %<DataTypeTransHdr>.h
+ *
+%<SLibCommonHeaderInfo()>\
+ */
+
+%if ExtMode == 1
+  #include "ext_types.h"
+%endif
+
+%%
+%% Datatype info for rapid accelerator
+%%
+%if ::isRAccel && LibGetNumDataTypesInModel() > 0
+  static DataTypeInfo rtDataTypeInfoTable[] = 
+  {
+    %<SLibDumpDataTypeInfoTable()>\    
+  };
+%endif
+
+
+%%
+%% Sizes and names
+%%
+
+%if LibGetNumDataTypesInModel() > 0
+  /* data type size table */
+  static uint_T rtDataTypeSizes[] = {
+    %<SLibDumpDataTypeSizeTable()>\
+  };
+
+  /* data type name table */
+  static const char_T * rtDataTypeNames[] = {
+    %<SLibDumpDataTypeNameTable()>\
+  };
+%endif
+%%
+%% Block I/O
+%%
+%if !SLibBlockIODataTypeTransitionTableIsEmpty()
+
+  /* data type transitions for block I/O structure */
+  static DataTypeTransition rtBTransitions[] = {
+    %<SLibDumpBlockIODataTypeTransitionTable()>\
+  };
+  
+  /* data type transition table for block I/O structure */
+  static DataTypeTransitionTable rtBTransTable = {
+    %<SLibDumpBlockIOMapInfo()>\
+  };
+%endif
+%%
+%% Parameters
+%%
+%if !SLibParametersDataTypeTransitionTableIsEmpty()
+
+  /* data type transitions for Parameters structure */
+  static DataTypeTransition rtPTransitions[] = {
+    %<SLibDumpParametersDataTypeTransitionTable()>\
+  };
+  
+  /* data type transition table for Parameters structure */
+  static DataTypeTransitionTable rtPTransTable = {
+    %<SLibDumpParametersMapInfo()>\
+  };
+%endif
+
+/* [EOF] %<DataTypeTransHdr>.h */
+%closefile ModelDotDT
+%<SLibAddGeneratedFileToList("%<DataTypeTransHdr>.h","interface","header","")>
+%selectfile NULL_FILE
+
+%endif %% _FORMATMAP_
+
+%% [EOF] formatmap.tlc

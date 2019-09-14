@@ -1,0 +1,42 @@
+%%
+%% des_util.tlc - Generate time source call for blocks in the DES domain
+%%
+%% Copyright 1995-2014 The MathWorks, Inc.
+%%  
+
+%% Function: getDESEngTimeSource ===============================================
+%% Abstract: Generate a call to the DES timing engine
+
+%function ifUseDESTimeSource(block) void
+  %if ISFIELD(block, "ParamSettings") && ...
+    ISFIELD(block.ParamSettings, "UseDESTimingEngine") && ...
+      block.ParamSettings.UseDESTimingEngine != -1
+      %return TLC_TRUE
+  %else
+     %return TLC_FALSE    
+%endif
+%endfunction
+
+
+%function getDESEngTimeSource(block) void
+  %openfile buff
+    sldeSolverGetTimeNow(%<block.ParamSettings.UseDESTimingEngine>)
+  %closefile buff
+  %return buff
+%endfunction
+
+
+%function checkAndGetDESEngTimeSource(block) void
+  
+  %if ifUseDESTimeSource(block) 
+    %return getDESEngTimeSource(block)
+  %else
+     %openfile buff
+        %<LibGetTaskTimeFromTID(block)>;
+     %closefile buff
+     %return buff  
+  %endif
+ 
+%endfunction
+
+%% [EOF] slmessages_util.tlc

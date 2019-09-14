@@ -1,0 +1,151 @@
+%%
+%%  
+%%
+%% Abstract:
+%%      TLC file for generating stub version of the nonfinite support.
+%%
+%% Copyright 2003-2013 The MathWorks, Inc.
+
+%selectfile NULL_FILE
+
+%% Create header file contents
+%openfile buf
+/*
+* %<fctInfo.FileName>.h
+*
+%<SLibCommonUtilHeaderInfo()>\
+*/
+%closefile buf
+
+%<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+
+%% For size_t.
+%<SLibCacheUtilCodeToFile("util_hdr_reqed_incl", fileH, "<stddef.h>")>
+%openfile buf
+#include "%<SLibCoderTypesFilename()>"
+
+%closefile buf
+%<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+%assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+%openfile buf
+%<FcnGenOpenExternCForCPP()>
+%<SLibGetFcnMemSecPragmaOnDecl("rt_InitInfAndNaN", msFcn, "Pre")>\
+%<LibExternInFcnDecls()>void rt_InitInfAndNaN(size_t realSize);
+%<SLibGetFcnMemSecPragmaOnDecl("rt_InitInfAndNaN", msFcn, "Post")>\
+%<SLibGetFcnMemSecPragmaOnDecl("rtIsInf", msFcn, "Pre")>\
+%<LibExternInFcnDecls()>boolean_T rtIsInf(real_T value);
+%<SLibGetFcnMemSecPragmaOnDecl("rtIsInf", msFcn, "Post")>\
+%<SLibGetFcnMemSecPragmaOnDecl("rtIsInfF", msFcn, "Pre")>\
+%<LibExternInFcnDecls()>boolean_T rtIsInfF(real32_T value);
+%<SLibGetFcnMemSecPragmaOnDecl("rtIsInfF", msFcn, "Post")>\
+%<SLibGetFcnMemSecPragmaOnDecl("rtIsNaN", msFcn, "Pre")>\
+%<LibExternInFcnDecls()>boolean_T rtIsNaN(real_T value);
+%<SLibGetFcnMemSecPragmaOnDecl("rtIsNaN", msFcn, "Post")>\
+%<SLibGetFcnMemSecPragmaOnDecl("rtIsNaNF", msFcn, "Pre")>\
+%<LibExternInFcnDecls()>boolean_T rtIsNaNF(real32_T value);
+%<SLibGetFcnMemSecPragmaOnDecl("rtIsNaNF", msFcn, "Post")>\
+%<FcnGenCloseExternCForCPP()>
+%closefile buf
+%<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+
+%% Create source file contents
+%openfile buf
+/*
+* %<fctInfo.FileName>.%<LangFileExt>
+*
+%<SLibCommonUtilHeaderInfo()>\
+*/
+%closefile buf
+%<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+
+%openfile buf
+#include "rt_nonfinite.h"
+%closefile buf
+
+%<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>
+
+%openfile buf
+%if GenCPP
+  extern "C" {
+%endif
+%assign fcnName = "rt_InitInfAndNaN"
+%assign fcnReturns = "void"
+%assign fcnParams = "size_t realSize"
+%assign fcnAbstract = "Stubbed version of the nonfinite support."
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "utility"; GeneratedBy "genrtnonfinite_stub.tlc"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+%<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %<LibGenUnusedParamFcnCall("RT_UNUSED_PARAMETER", "realSize")>;
+}
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+
+  %assign fcnName = "rtIsInf"
+  %assign fcnReturns = "boolean_T"
+  %assign fcnParams = "real_T value"
+  %assign fcnAbstract = "Test if value is infinite."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "utility"; GeneratedBy "genrtnonfinite_stub.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %<LibGenUnusedParamFcnCall("RT_UNUSED_PARAMETER", "value")>;
+    return %<GET_TYPE_ID_REPLACEMENT("false")>;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtIsInfF"
+  %assign fcnReturns = "boolean_T"
+  %assign fcnParams = "real32_T value"
+  %assign fcnAbstract = "Test if single-precision value is infinite."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "utility"; GeneratedBy "genrtnonfinite_stub.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %<LibGenUnusedParamFcnCall("RT_UNUSED_PARAMETER", "value")>;
+    return %<GET_TYPE_ID_REPLACEMENT("false")>;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtIsNaN"
+  %assign fcnReturns = "boolean_T"
+  %assign fcnParams = "real_T value"
+  %assign fcnAbstract = "Test if value is not a number."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtnonfinite_stub.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %<LibGenUnusedParamFcnCall("RT_UNUSED_PARAMETER", "value")>;
+    return %<GET_TYPE_ID_REPLACEMENT("false")>;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtIsNaNF"
+  %assign fcnReturns = "boolean_T"
+  %assign fcnParams = "real32_T value"
+  %assign fcnAbstract = "Test if single-precision value is not a number."
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtnonfinite_stub.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    %<LibGenUnusedParamFcnCall("RT_UNUSED_PARAMETER", "value")>;
+    return %<GET_TYPE_ID_REPLACEMENT("false")>;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+%if GenCPP
+  }
+%endif
+%closefile buf
+%<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+
+

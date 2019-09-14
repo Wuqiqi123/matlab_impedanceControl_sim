@@ -1,0 +1,37 @@
+%% ============================================================================
+%% File : ertmdlrefcontinuous.tlc
+%% 
+%% Copyright 1994-2009 The MathWorks, Inc.
+%% ============================================================================
+%selectfile NULL_FILE
+
+%if EXISTS("_ERT_MDLREF_CONTINUOUS_") == 0
+%assign _ERT_MDLREF_CONTINUOUS_ = 1
+
+%% Function: FcnModelRefCreateAndInitializeSolverData  ==========================
+%% Abstract:
+%%   Link the submodel into the parent RTWSolverInfo
+%%
+%function FcnModelRefCreateAndInitializeSolverData() void
+  %assert IsModelReferenceTarget()
+  %assert LibIsContinuous(0)
+
+  %openfile contBuffer
+  /* Set the Timing fields to the appropriate data in the RTWSolverInfo */
+  %<RTMSet("SimTimeStepPointer", "%<RTMSolverGet("SimTimeStepPtr")>")>;
+  %if RTMStepSizeForTIDIsReqFcn(0)
+    %<RTMSet("StepSize0", "%<RTMSolverGet("StepSize")>")>;
+  %endif
+  %if RTMStepSizeIsReqFcn()    
+    %% Currently, sample time parameterization does not support models with continuous rates.    
+    %assert !SLibModelParameterizeDiscreteRates()
+    %<RTMSet("StepSize", FundamentalStepSize)>;
+  %endif
+  %closefile contBuffer
+
+  %return contBuffer
+%endfunction
+
+%endif %% _ERT_MDLREF_CONTINUOUS_
+
+%% [EOF] ertmdlrefcontinuous.tlc

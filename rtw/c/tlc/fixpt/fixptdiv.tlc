@@ -1,0 +1,30 @@
+%%
+%% This file contains tlc code for generation of fixed point division
+%%
+%% Copyright 1994-2011 The MathWorks, Inc.
+%%
+
+%% Function: FixPt_Division ==========================================
+%% Abstract:
+%%   Vc = Va / Vb
+%% Synopsis:
+%%      FixPt_Division(cLabel,cDT,aLabel,aDT,bLabel,bDT,roundMode,satMode)
+%%
+%%      cLabel,cDT = record describing output
+%%      aLabel,aDT = record describing input 1
+%%      bLabel,bDT = record describing input 2
+%%      roundMode  = string specifying round to "Zero", "Nearest", etc.
+%%      satMode    = string specifying "Wrap" or "Saturate" on overflow
+%%
+%function FixPt_Division(cLabel,cDT,aLabel,aDT,bLabel,bDT,roundMode,satMode) Output
+  %%
+  %<FixPt_WordLengthLimitationCheck(aDT)>\
+  %<FixPt_WordLengthLimitationCheck(bDT)>\
+  %<FixPt_WordLengthLimitationCheck(cDT)>\
+  %%
+  %assign vec = FixPt_BinaryOp("FixPtDiv", cLabel, cDT, aLabel, aDT, ...
+    bLabel, bDT, roundMode, satMode)
+  %%
+  %<vec[2]> \
+  %%
+%endfunction

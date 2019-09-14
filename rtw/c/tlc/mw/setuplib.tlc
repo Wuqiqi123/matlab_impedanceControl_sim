@@ -1,0 +1,3387 @@
+%% ============================================================================
+%% File : setuplib.tlc
+%%
+%% Abstract:
+%%   This file includes a number of functions that are called from commonsetup
+%%   to setup various TLC globals and ::CompiledModel fields. The functions
+%%   help setup:
+%%   o Basic global defaults
+%%   o Default settings for various code-generation fields on ::CompiledModel
+%%   o Memory allocation and data-visibility flags for the different code
+%%     formats
+%%   o Variables for keeping track of the headers and sources
+%%   o Variables for keeping track of Identifiers common to all code formats
+%%   o Variables for keeping track of Identifiers that depend on the
+%%     specific code format
+%%   o Variables for keeping track of function names
+%%   o Variables for supporting datatypes
+%%   o Variables that pertian to specific code formats
+%%   o Variables pertaining to logging
+%%   o Variables for supporting Ada math and block code
+%%   o Variables for setting up C-APIs to track block IO and run-time params
+%%
+%%   Additionally, the file also contains a function that validates the
+%%   ::CompiledModel by checking if:
+%%   o Datatypes have been set up
+%%   o Model has no Algebraic Loops
+%%
+%% 
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% ============================================================================
+
+%include "utillib.tlc"
+
+%if EXISTS("_SETUPLIB_") == 0
+%assign _SETUPLIB_ = 1
+
+%function isGRTMallocOnERT() void
+  %return SLibIsERTCodeFormat() && UsingMalloc
+%endfunction
+
+%% Function: SLibSetupBasicDefaults ============================================
+%% Abstract:
+%%   Set up defaults for basic code generation options. These need to be setup
+%%   even before we begin loading funclib.tlc.
+%%
+%function SLibSetupBasicDefaults() void
+  %%
+  %% Set language
+  %%
+  %language "C"
+  
+  %%
+  %% Matrix Dimensions
+  %%
+  %assign ::matrixDimensionThreshhold = 2
+  
+  %%
+  %% Invalid Counter
+  %%
+  %assign ::INVALID_COUNTER = -1
+
+  %%
+  %% Invalid Buffer
+  %%
+  %assign ::INVALID_BUFFER = -1
+
+  %%
+  %% Generate C++, compute extern "c" prefix, 
+  %% and compute prefix for previously externed symbols
+  %%
+  %assign ::GenCPP = ...
+    (ISFIELD(::CompiledModel.ConfigSet, "TargetLang") && ...
+     (::CompiledModel.ConfigSet.TargetLang=="C++")) 
+  
+  %if ::GenCPP
+    %assign ::LangFileExt   = "cpp"
+    %assign ::ExternCPrefix = "extern \"C\""
+  %else
+    %assign ::LangFileExt   = "c"
+    %assign ::ExternCPrefix = ""
+  %endif
+
+  %assign ::EmulationHWComment = ""
+  
+  %% Determine if a memset to zero function is registered in the TFL
+  %% This will be used to avoid the lookup in the future if one is not registered
+  %assign ::Memset2Zero = FEVAL("rtw_tfl_query_memset2zero", ::CompiledModel.Name)
+   
+  %%
+  %% MatFileLogging comes early as possible
+  %assign ::MatFileLogging = ::CompiledModel.ConfigSet.MatFileLogging
+
+  %% AnyCross will be set to true if we encounter any
+  %% subsystems with the CrossNoArgFcnBound flag set.
+  %% We initialize it to false here and set it to true if
+  %% we see a "Cross" system while walking the systems
+  %% during the SLibGenBodyCache phase. We use it later on
+  %% when generating code in one of the "isRequired" functions
+  %% (see rtmisreqfcns.tlc for the use of this flag)
+  %assign ::AnyCross = TLC_FALSE
+
+  %% ThisSubsysCross will be temporarily set to true by 
+  %% FcnGenerateSubFcnBody while generating a "cross" subsystem
+  %assign ::ThisSubsysCross = TLC_FALSE
+
+  %% This global variable is for the purpose of avoiding
+  %% the System.CurrentTID approach used for argument tracking. 
+  %assign ::GlobalCurrentTID = []
+
+  %% This global variable indicates if we are currently generating
+  %% code for a subfunction
+  %assign ::GlobalGeneratingSubFunctions = TLC_FALSE
+
+  %% These globals indicate the current module and function index
+  %assign ::CurrentModuleIdx = -1
+  %assign ::CurrentFunctionIdx = -1
+  %assign ::CurrentUtilsIncludesIdx = ""
+
+  %% Assign includes for shared utilities to []
+  %assign ::GlobalSharedUtilsIncludes = []
+  
+  %assign ::IsSimBuild = FEVAL("slprivate", ...
+    "isSimulationBuild",LibGetModelName(),::CompiledModel.ModelReferenceTargetType)
+	
+  %% Clean up our comments in generate code to aline with the change from 'Auto' for storage class to 'default'
+  %assign ChangeAutoForStorageClassToDefaultInComments = CGMODEL_ACCESS("CodeGenComments.AutoToDefault")
+  %assign ::AutoOrDefaultStorageClass = ""
+  %if ChangeAutoForStorageClassToDefaultInComments > 0
+	%assign ::AutoOrDefaultStorageClass = "default"
+  %else
+	%assign ::AutoOrDefaultStorageClass = "auto"
+  %endif
+	
+%endfunction %% SLibSetupBasicDefaults
+
+%% Function: SLibERTFeatureSetup ============================================
+%% Abstract:
+%%   Assert that feature settings are consistent with target settings
+%%   (i.e., a feature is not inappropriately enabled).  If inconsistent,
+%%   Simulink is out of sync with codegen and the build must be terminated.
+%%
+%function SLibERTFeatureSetup() void
+
+  %assign ::ConfigSet = ::CompiledModel.ConfigSet
+
+  %if !EXISTS("IgnoreCustomStorageClasses")
+    %assign ::IgnoreCustomStorageClasses = ConfigSet.IgnoreCustomStorageClasses
+  %endif
+  %<LibAddToCompiledModel("IgnoreCustomStorageClasses",IgnoreCustomStorageClasses)>
+
+  %<LibAddToCompiledModel("GenerateCodeInterfaceReport", TLC_FALSE)>
+
+  %if !EXISTS("IncludeMdlTerminateFcn")
+    %assign ::IncludeMdlTerminateFcn = ConfigSet.IncludeMdlTerminateFcn || SLibIsExportFcnDiagram()
+  %endif
+  %<LibAddToCompiledModel("IncludeMdlTerminateFcn",IncludeMdlTerminateFcn)>
+
+  %if !EXISTS("CombineOutputUpdateFcns")
+    %assign ::CombineOutputUpdateFcns = ConfigSet.CombineOutputUpdateFcns
+  %endif
+  %<LibAddToCompiledModel("CombineOutputUpdateFcns",CombineOutputUpdateFcns)>
+
+  %if !EXISTS("GRTInterface")
+    %assign ::GRTInterface = ConfigSet.GRTInterface
+  %endif
+  %<LibAddToCompiledModel("GRTInterface",GRTInterface)>
+  
+  %if !EXISTS("SuppressErrorStatus")
+    %assign ::SuppressErrorStatus = ConfigSet.SuppressErrorStatus
+  %endif
+  %<LibAddToCompiledModel("SuppressErrorStatus",SuppressErrorStatus)>
+
+  %if !EXISTS("ZeroExternalMemoryAtStartup")
+    %assign ::ZeroExternalMemoryAtStartup = ConfigSet.ZeroExternalMemoryAtStartup
+  %endif
+  %<LibAddToCompiledModel("ZeroExternalMemoryAtStartup",ZeroExternalMemoryAtStartup)>
+
+  %if !EXISTS("ZeroInternalMemoryAtStartup")
+    %assign ::ZeroInternalMemoryAtStartup = ConfigSet.ZeroInternalMemoryAtStartup
+  %endif
+  %<LibAddToCompiledModel("ZeroInternalMemoryAtStartup",ZeroInternalMemoryAtStartup)>
+
+  %if !EXISTS("InitFltsAndDblsToZero")
+    %assign ::InitFltsAndDblsToZero = ConfigSet.InitFltsAndDblsToZero
+  %endif
+  %<LibAddToCompiledModel("InitFltsAndDblsToZero",InitFltsAndDblsToZero)>
+
+  %if !EXISTS("ForceBlockIOInitOptimize")
+    %assign ::ForceBlockIOInitOptimize = ConfigSet.ForceBlockIOInitOptimize
+  %endif
+  %<LibAddToCompiledModel("ForceBlockIOInitOptimize",ForceBlockIOInitOptimize)>
+
+  %if !EXISTS("InsertBlockDesc")
+    %assign ::InsertBlockDesc = ConfigSet.InsertBlockDesc
+  %endif
+  %<LibAddToCompiledModel("InsertBlockDesc",InsertBlockDesc)>
+
+  %if !EXISTS("InsertPolySpaceComments")
+    %assign ::InsertPolySpaceComments = ConfigSet.InsertPolySpaceComments
+  %endif
+  %<LibAddToCompiledModel("InsertPolySpaceComments",InsertPolySpaceComments)>
+
+  %if !SLibIsDeploymentDiagramType()
+    %if !EXISTS("SFDataObjDesc")
+      %assign ::SFDataObjDesc = ConfigSet.SFDataObjDesc
+    %endif
+    %<LibAddToCompiledModel("SFDataObjDesc",SFDataObjDesc)>
+  %endif
+
+  %if !EXISTS("SimulinkDataObjDesc")
+    %assign ::SimulinkDataObjDesc = ConfigSet.SimulinkDataObjDesc
+  %endif
+  %<LibAddToCompiledModel("SimulinkDataObjDesc",SimulinkDataObjDesc)>
+
+  %if !EXISTS("ERTCustomFileBanners")
+    %assign ::ERTCustomFileBanners = ConfigSet.ERTCustomFileBanners
+  %endif
+  %% Model Reference Sim Target does not use the Custom File Banners
+  %if IsModelReferenceSimTarget()
+    %assign ::ERTCustomFileBanners = TLC_FALSE
+  %endif
+  %<LibAddToCompiledModel("ERTCustomFileBanners",ERTCustomFileBanners)>
+
+  %if !SLibIsDeploymentDiagramType()
+    %if !EXISTS("DefineNamingRule")
+      %assign ::DefineNamingRule = ConfigSet.DefineNamingRule
+    %endif
+    %<LibAddToCompiledModel("DefineNamingRule",DefineNamingRule)>
+  %endif
+    
+  %if !SLibIsDeploymentDiagramType()
+    %if !EXISTS("SignalNamingRule")
+      %assign ::SignalNamingRule = ConfigSet.SignalNamingRule
+    %endif
+    %<LibAddToCompiledModel("SignalNamingRule",SignalNamingRule)>
+  %endif
+  
+  %if !SLibIsDeploymentDiagramType()
+    %if !EXISTS("ParamNamingRule")
+      %assign ::ParamNamingRule = ConfigSet.ParamNamingRule
+    %endif
+    %<LibAddToCompiledModel("ParamNamingRule",ParamNamingRule)>
+  %endif
+  
+  %if !EXISTS("InlinedPrmAccess")
+    %assign ::InlinedPrmAccess = ConfigSet.InlinedPrmAccess
+  %endif
+  %<LibAddToCompiledModel("InlinedPrmAccess",InlinedPrmAccess)>
+
+  %if !EXISTS("GenerateSampleERTMain")
+    %assign ::GenerateSampleERTMain = ConfigSet.GenerateSampleERTMain
+  %endif
+  %<LibAddToCompiledModel("GenerateSampleERTMain",GenerateSampleERTMain)>
+
+    
+  %if !SLibIsDeploymentDiagramType()
+    %if !EXISTS("MultiInstanceERTCode")
+      %assign ::MultiInstanceERTCode = ConfigSet.MultiInstanceERTCode
+    %endif
+    %<LibAddToCompiledModel("MultiInstanceERTCode",MultiInstanceERTCode)>
+  %else
+    %assign ::MultiInstanceERTCode = 0
+  %endif
+ 
+  %if !EXISTS("PurelyIntegerCode")
+    %assign ::PurelyIntegerCode = ConfigSet.PurelyIntegerCode
+  %endif
+  %<LibAddToCompiledModel("PurelyIntegerCode",PurelyIntegerCode)>
+
+  %if !EXISTS("SupportNonFinite")
+    %assign ::SupportNonFinite = ConfigSet.SupportNonFinite
+  %endif
+  %<LibAddToCompiledModel("SupportNonFinite",SupportNonFinite)>
+
+  %if !EXISTS("SupportComplex")
+    %assign ::SupportComplex = ConfigSet.SupportComplex
+  %endif
+  %<LibAddToCompiledModel("SupportComplex",SupportComplex)>
+
+  %if !EXISTS("SupportContinuousTime")
+    %assign ::SupportContinuousTime = ConfigSet.SupportContinuousTime
+  %endif
+  %<LibAddToCompiledModel("SupportContinuousTime",SupportContinuousTime)>
+
+  %if !EXISTS("SupportNonInlinedSFcns")
+    %assign ::SupportNonInlinedSFcns = ConfigSet.SupportNonInlinedSFcns
+  %endif
+  %<LibAddToCompiledModel("SupportNonInlinedSFcns",SupportNonInlinedSFcns)>
+
+  %if !SLibIsDeploymentDiagramType()
+    %if !EXISTS("NoFixptDivByZeroProtection")
+      %assign ::NoFixptDivByZeroProtection = ConfigSet.NoFixptDivByZeroProtection
+    %endif
+    %<LibAddToCompiledModel("NoFixptDivByZeroProtection",NoFixptDivByZeroProtection)>
+  %endif
+    
+  %if !EXISTS("CustomSymbolStrGlobalVar")
+    %assign ::CustomSymbolStrGlobalVar = ConfigSet.CustomSymbolStrGlobalVar
+  %endif
+  %<LibAddToCompiledModel("CustomSymbolStrGlobalVar",CustomSymbolStrGlobalVar)>
+  
+  %if !EXISTS("CustomSymbolStrType")
+    %assign ::CustomSymbolStrType = ConfigSet.CustomSymbolStrType
+  %endif
+  %<LibAddToCompiledModel("CustomSymbolStrType",CustomSymbolStrType)>
+
+  %if !EXISTS("CustomSymbolStrField")
+    %assign ::CustomSymbolStrField = ConfigSet.CustomSymbolStrField
+  %endif
+  %<LibAddToCompiledModel("CustomSymbolStrField",CustomSymbolStrField)>
+
+  %if !EXISTS("CustomSymbolStrFcn")
+    %assign ::CustomSymbolStrFcn = ConfigSet.CustomSymbolStrFcn
+  %endif
+  %<LibAddToCompiledModel("CustomSymbolStrFcn",CustomSymbolStrFcn)>
+  
+  %if !EXISTS("CustomSymbolStrBlkIO")
+    %assign ::CustomSymbolStrBlkIO = ConfigSet.CustomSymbolStrBlkIO
+  %endif
+  %<LibAddToCompiledModel("CustomSymbolStrBlkIO",CustomSymbolStrBlkIO)>
+
+  %if !EXISTS("CustomSymbolStrTmpVar")
+    %assign ::CustomSymbolStrTmpVar = ConfigSet.CustomSymbolStrTmpVar
+  %endif
+  %<LibAddToCompiledModel("CustomSymbolStrTmpVar",CustomSymbolStrTmpVar)>
+
+  %if !EXISTS("CustomSymbolStrMacro")
+    %assign ::CustomSymbolStrMacro = ConfigSet.CustomSymbolStrMacro
+  %endif
+  %<LibAddToCompiledModel("CustomSymbolStrMacro",CustomSymbolStrMacro)>
+
+  %if !EXISTS("ReqsInCode")
+    %assign ::ReqsInCode = ConfigSet.ReqsInCode
+  %endif
+  %<LibAddToCompiledModel("ReqsInCode",ReqsInCode)>
+
+  %if !EXISTS("ProdEqTarget")
+    %assign ::ProdEqTarget = ConfigSet.ProdEqTarget
+  %endif
+  %<LibAddToCompiledModel("ProdEqTarget",ProdEqTarget)>
+  
+  %if !EXISTS("PortableWordSizes")
+    %assign ::PortableWordSizes = ConfigSet.PortableWordSizes
+  %endif
+  %<LibAddToCompiledModel("PortableWordSizes",PortableWordSizes)>
+  
+  %assign HardwareBoardNone = ISEQUAL(::CompiledModel.ConfigSet.HardwareBoard,"None")
+  %if !SLibIsERTTarget() && !GRTInterface && !SLibSingleTasking() && HardwareBoardNone
+    %% Turn ON InlineSetEventsForThisBaseRateFcn for non-ERT targets with 
+    %% simplified call interface.
+    %% However, do not turn ON InlineSetEventsForThisBaseRateFcn for the
+    %% targets that use ert.tlc and have a target-specific scheduler (for 
+    %% which SLibIsERTTarget=false and HardwareBoardNone=false).
+    %assign ::InlineSetEventsForThisBaseRateFcn = TLC_TRUE
+  %elseif !EXISTS("InlineSetEventsForThisBaseRateFcn")
+    %assign ::InlineSetEventsForThisBaseRateFcn = TLC_FALSE
+  %endif
+  %<LibAddToCompiledModel("InlineSetEventsForThisBaseRateFcn", InlineSetEventsForThisBaseRateFcn)>
+
+  %assign HardwareBoardNone = ISEQUAL(::CompiledModel.ConfigSet.HardwareBoard,"None")
+  %if (!SLibIsERTTarget() || SLibAutosarActive()) && !GRTInterface && !SLibSingleTasking() && HardwareBoardNone
+    %% Turn ON SuppressMultiTaskScheduler for non-ERT targets with simplified 
+    %% call interface
+    %% However, do not turn ON SuppressMultiTaskScheduler for the targets 
+    %% that use ert.tlc and have a target-specific scheduler (for which 
+    %% SLibIsERTTarget=false and HardwareBoardNone=false).
+    %assign ::SuppressMultiTaskScheduler = TLC_TRUE
+  %else
+    %if !EXISTS("SuppressMultiTaskScheduler")
+      %assign ::SuppressMultiTaskScheduler = TLC_FALSE 
+    %else
+      %assign ::SuppressMultiTaskScheduler = SuppressMultiTaskScheduler && !SLibSingleTasking() ...
+        && !SLibIsExportFcnDiagram()
+    %endif
+  %endif
+  %<LibAddToCompiledModel("SuppressMultiTaskScheduler",SuppressMultiTaskScheduler)>
+
+  %%
+  %% Coder Data Groups
+  %%
+  %createrecord CoderDataGroups {}
+  %<LibAddToCompiledModel("CoderDataGroups", CoderDataGroups)>
+  %<LibAddToCompiledModel("ChildCoderDataGroupAssignment", "")>
+  %<LibAddToCompiledModel("ChildCoderDataGroupMemcpy", "")>
+  %<LibAddToCompiledModel("ChildCoderDataGroupDeclare", "")>
+  %<LibAddToCompiledModel("ChildCoderDataGroupAllocate", "")>
+  %<LibAddToCompiledModel("OpaqueTypeDeallocation", "")>
+  %assign ancestorAllocatesCoderDataGroups = TLC_FALSE
+  %foreach idx = ::CompiledModel.NumCoderDataGroups
+    %if !SLibAllocatesCoderDataGroup(::CompiledModel.CoderDataGroup[idx])
+      %assign ancestorAllocatesCoderDataGroups = TLC_TRUE
+      %break
+    %endif
+  %endforeach
+  %<LibAddToCompiledModel("AncestorAllocatesCoderDataGroups", ...
+    ancestorAllocatesCoderDataGroups)>
+  
+  %%
+  %% ERT: suppress the model_SetEventsForThisBaseRate function
+  %%
+  %if !EXISTS("SuppressSetEventsForThisBaseRateFcn")
+    %assign ::SuppressSetEventsForThisBaseRateFcn = 0
+  %endif
+  %if IsModelReferenceTarget() 
+    %assign ::SuppressSetEventsForThisBaseRateFcn = 1
+  %endif
+  %<LibAddToCompiledModel("SuppressSetEventsForThisBaseRateFcn",...
+    SuppressSetEventsForThisBaseRateFcn)>
+
+   %if !EXISTS("GenerateClassInterface")
+    %if SLibRTWCPPClassActive()
+        %assign ::GenerateClassInterface = TLC_TRUE
+    %else
+        %assign ::GenerateClassInterface = TLC_FALSE
+    %endif
+  %endif
+
+  %if GenerateClassInterface
+    %assert GenCPP
+    %assert MultiInstanceERTCode
+
+    %if EXISTS(ExportFunctionsMode) && ExportFunctionsMode != 0
+      %<SLibReportErrorWithId("RTW:tlc:NoCppExportFcn")>
+    %endif
+  %endif
+
+  %if !EXISTS(ERTMainAccess)
+    %assign ::ERTMainAccess = TLC_FALSE
+  %endif
+
+  %if ::CombineOutputUpdateFcns == 1 && ... 
+    (::CompiledModel.ConfigSet.MatFileLogging || ...
+      EXISTS("ExtMode") && ExtMode == 1)
+    %assign ::IncludeLoggingInstrumentation = TLC_TRUE
+  %else
+    %assign ::IncludeLoggingInstrumentation = TLC_FALSE
+  %endif
+  
+  %assign usingMalloc = 0  
+  %% Setup the UsingMalloc
+  %if ISFIELD(::CompiledModel,"RTWGenSettings")
+
+    %if ISFIELD(::CompiledModel.RTWGenSettings,"UsingMalloc")
+      %if ::CompiledModel.RTWGenSettings.UsingMalloc == "yes"
+        %assign usingMalloc = 1
+      %endif
+    %endif
+  %endif
+  %if ISFIELD(::CompiledModel.ConfigSet,"GenerateAllocFcn") && ...
+    ::CompiledModel.ConfigSet.GenerateAllocFcn == TLC_TRUE
+    %assign usingMalloc = 1
+    %if !MultiInstanceERTCode
+      %<SLibReportErrorWithId("RTW:tlc:AllocFcnMultiInstance")>
+    %endif
+  %endif    
+  %assign ::UsingMalloc = usingMalloc
+  %<LibAddToCompiledModel("UsingMalloc", UsingMalloc)>
+  
+  %if MultiInstanceERTCode
+    %if !EXISTS("MultiInstanceErrorCode") && ISFIELD(::CompiledModel.ConfigSet,"MultiInstanceErrorCode")
+      %assign ::MultiInstanceErrorCode = ::CompiledModel.ConfigSet.MultiInstanceErrorCode
+    %endif
+  %endif 
+  
+  %assign hasStandSystem = TLC_FALSE
+  %assign numSystems = ::CompiledModel.NumSystems
+  %foreach idx = numSystems
+    %assign sys = ::CompiledModel.System[idx]
+    %<LibAddToSystem(sys, "NeedCPIInDisable", 0)>
+    %<LibAddToSystem(sys, "NeedCPIInEnable", 0)>
+    %if sys.StandaloneSubsystem == 1
+      %assign hasStandSystem = TLC_TRUE      
+      %% Set up fields for initialization of constBlockIO and rtP
+      %<LibAddToSystem(sys, "StandaloneConstBlockIOInit", "")>
+      %<LibAddToSystem(sys, "StandaloneParameterInit", "")>
+      %foreach idx = ::CompiledModel.NumCoderDataGroups
+        %if SLibDataGroupStaticInit(::CompiledModel.CoderDataGroup[idx])
+          %assign groupName = ::CompiledModel.CoderDataGroup[idx].Name
+          %assign groupToken = "CoderDataGroup" + groupName
+          %<LibAddToSystem(sys, "Standalone" + groupToken + "Init", "")>
+        %endif
+      %endforeach
+      %<LibAddToSystem(sys, "StandaloneDataInit", "")>
+      %<LibAddToSystem(sys, "CachedInitializeDataBody", "")>
+      %<LibAddToSystem(sys, "TempInitBuffer", "")>
+      %<LibAddToSystem(sys, "CachedNonFiniteParamAssignments", "")>
+      %<LibAddToSystem(sys, "CachedNonFiniteBlockIOAssignments", "")>
+    %elseif sys.FileNameOwnerIdx != numSystems && (sys.RTWSystemCode == 1 || sys.RTWSystemCode == 2)
+      %<LibAddToSystem(sys, "TempInitBuffer", "")>
+      %<LibAddToSystem(sys, "CachedInitializeDataBody", "")>
+    %endif
+  %endforeach
+  %<LibAddToCompiledModel("HasStandaloneSubsystem",hasStandSystem)>
+
+  %% These flags indicate that there is a variable of
+  %% this type somewhere in the model.  Previously we
+  %% used the root system to determine this, but with
+  %% standalone systems, the root may not have any blockIO
+  %% but a standalone subsystem could have some.
+  %<LibAddToCompiledModel("HasBlockIOArg", 0)>
+  %<LibAddToCompiledModel("HasConstBlockIOArg", 0)>
+  %<LibAddToCompiledModel("HasDWorkArg", 0)>
+  %<LibAddToCompiledModel("HasParametersArg", 0)>
+  %<LibAddToCompiledModel("HasZCEventArg", 0)>
+  %foreach idx = ::CompiledModel.NumCoderDataGroups
+    %assign groupToken = "HasCoderDataGroup" + ::CompiledModel.CoderDataGroup[idx].Name + "Arg"
+    %<LibAddToCompiledModel(groupToken, 0)>
+  %endforeach
+  
+  %if !EXISTS(CalledTflTlcCallbacks)
+    %assign ::CalledTflTlcCallbacks = ""
+  %else
+    %assign ::CalledTflTlcCallbacks = CalledTflTlcCallbacks
+  %endif
+  
+  %if (!SLibIsERTTarget())
+
+    %%
+    %% Ignore custom storage = true
+    %%
+    %if (IgnoreCustomStorageClasses == 0)
+      %assign ::ShowErrorStackTrace = TLC_TRUE
+      %<SLibReportErrorWithId("RTW:tlc:CSCNeedERT")>
+    %endif
+
+    %%
+    %% Generate terminate function = true
+    %%
+    %if (IncludeMdlTerminateFcn == 0) && !SLibIsExportFcnDiagram()
+      %assign errMsg = "To suppress generating model terminate function, you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% Suppress error status = false
+    %%
+    %if (SuppressErrorStatus == 1)
+      %assign errMsg = "To suppress error status codes, you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% Suppress scheduler 
+    %%
+    %if (SuppressMultiTaskScheduler == 1) && (GRTInterface == 1)
+      %assign errMsg = "To suppress scheduler with classic call interface, "...
+        "you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+    
+    %%
+    %% zero external memory at startup = true
+    %%
+    %if (ZeroExternalMemoryAtStartup == 0)
+      %assign errMsg = "To remove root i/o zero initialization, you need to use an "...
+        "ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% zero internal memory at startup = true
+    %%
+    %if (ZeroInternalMemoryAtStartup == 0)
+      %assign errMsg = "To remove internal state zero initialization, you need to "...
+        "use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% insert block description = false
+    %%
+    %if (InsertBlockDesc == 1)
+      %assign errMsg = "To include block description in the generated code, you "...
+        "need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% insert stateflow data description = false
+    %%
+    %if EXISTS("SFDataObjDesc") && (SFDataObjDesc == 1)
+      %assign errMsg = "To include description for stateflow data object in the "...
+        "generated code, you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% insert Simulink data description = false
+    %%
+    %if (SimulinkDataObjDesc == 1)
+      %assign errMsg = "To include description for Simulink data object in the "...
+        "generated code, you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% ert custom file banners = false
+    %%
+    %if (ERTCustomFileBanners == 1)
+      %assign errMsg = "To generate customize file banners, you need to use an ERT "...
+        "or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% define naming rule = "None"
+    %%
+    %if EXISTS(DefineNamingRule) && (DefineNamingRule != "None")
+      %assign errMsg = "To apply naming rule to #define declaration, you need to "...
+        "use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% signal naming rule = "None"
+    %%
+    %if EXISTS("SignalNamingRule") && (SignalNamingRule != "None")
+      %assign errMsg = "To apply naming rule to signal declaration, you need to use "...
+        "an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% parameter naming rule = "None"
+    %%
+    %if EXISTS("ParamNamingRule") && (ParamNamingRule != "None")
+      %assign errMsg = "To apply naming rule to parameter declaration, you need to "...
+        "use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% inlined parameter access = "Literals"
+    %%
+    %if (InlinedPrmAccess != "Literals")
+      %assign errMsg = "To access inlined parameters through macros, you need to "...
+        "use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% generate sample main = false
+    %%
+    %if EXISTS("GenerateSampleERTMain") && (GenerateSampleERTMain == 1)
+      %assign errMsg = "To generate sample ert main, you need to use an ERT or "...
+        "ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% PurelyIntegerCode = false
+    %%
+    %if (PurelyIntegerCode == 1)
+      %assign errMsg = "To generate purely integer code, you need to use an ERT "...
+        "or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% SupportComplex = true
+    %%
+    %if (SupportComplex == 0)
+      %assign errMsg = "To suppress complex math support, you need to use an "...
+        "ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% SupportContinuousTime = true
+    %%
+    %if (SupportContinuousTime == 0)
+      %assign errMsg = "To suppress continuous time support, you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% SupportNonInlinedSFcns = true
+    %%
+    %if (SupportNonInlinedSFcns == 0)
+      %assign errMsg = "To suppress non-inlined s-function support, you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% NoFixptDivByZeroProtection = false
+    %%
+    %if EXISTS(NoFixptDivByZeroProtection) && (NoFixptDivByZeroProtection == 1)
+      %assign errMsg = "To remove code that protects division against "...
+        "arithmetic exceptions, you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif
+
+    %%
+    %% CustomSymbolStr = $R$N$M
+    %%
+    %if (CustomSymbolStrGlobalVar != "$R$N$M" || ...
+      CustomSymbolStrType != "$N$R$M_T" || ...
+      (CustomSymbolStrField != "$N$M" && CustomSymbolStrField != "$H$N$M")|| ...
+      (CustomSymbolStrBlkIO != "rtb_$N$M" && CustomSymbolStrBlkIO != "rtb_$H$N$M") || ...
+      CustomSymbolStrTmpVar != "$N$M" || ...
+      (CustomSymbolStrFcn != "$R$N$M$F" && CustomSymbolStrFcn != "$R$H$N$M$F")|| ...
+      CustomSymbolStrMacro != "$R$N$M")
+      %assign errMsg = "To customize the symbol mangling rule, "...
+        "you need to use an ERT or ERT-based target."
+      %<LibReportFatalError(errMsg)>
+    %endif    
+  %endif
+  
+  %assign targetCannotHaveTIDArg = GenerateClassInterface || SLibFcnProtoCtrlActive()
+    
+  %if EXISTS(ERTRemoveTidArgForSingleTaskingModel)
+    %if !ERTRemoveTidArgForSingleTaskingModel && targetCannotHaveTIDArg
+      %assign errMsg = "Function Prototype Control or C++ class interface: "...
+        "-a option ERTRemoveTidArgForSingleTaskingModel = 0 is not supported."...
+        "Consider removing this option "
+      %<LibReportFatalError(errMsg)>      
+    %endif
+  %else
+    %assign ::ERTRemoveTidArgForSingleTaskingModel = TLC_TRUE
+  %endif
+  
+%endfunction %% SLibERTFeatureCheck
+
+
+%% Function: SLibSetupDiagnosticOptions ========================================
+%% Abstract:
+%%   Set up options that report diagnostics during the code generation process.
+%%   These options do not directly affect the actual code that is generated.
+%%
+%function SLibSetupDiagnosticDefaults() void
+  %%
+  %% Set verbosity (postpone adding to ::CompiledModel until after the function
+  %% library is loaded)
+  %%
+  %if !EXISTS("RTWVerbose")
+    %assign ::RTWVerbose = 1
+  %endif
+
+  %%
+  %% Boolean to display warnings due to use of obsolete functions
+  %%
+  %if !EXISTS("ShowObsoleteWarnings")
+    %assign ::ShowObsoleteWarnings = 0
+  %endif
+
+  %%
+  %% Flag to control display of overflow warnings for blocks that have
+  %% saturation capability, but have it turned off(unchecked) in their dialog.
+  %%       0 no warning is displayed
+  %%       1 displays one warning for the model during code generation
+  %%       2 displays one warning which contains a list of all offending blocks
+  %%
+  %if !EXISTS("WarnNonSaturatedBlocks")
+    %assign ::WarnNonSaturatedBlocks = 2
+  %endif
+
+  %%
+  %% TLC global variable cleanup
+  %%       Setting this variable to 1 causes cleanup of global TLC variables
+  %%       after they are used such as after their LibDump* function is called.
+  %%
+  %%
+  %if !EXISTS("ResetTLCGlobalsAfterUse")
+    %assign ::ResetTLCGlobalsAfterUse = 1
+  %endif
+
+%endfunction %% SLibSetupDiagnosticDefaults
+
+
+%% Function: SLibSetupPrintStatusMsgs ==========================================
+%% Abstract:
+%%   Utility function for printing a status message to STDOUT.
+%%
+%function SLibSetupPrintStatusMsgs(statusID) void
+  %if !RTWVerbose
+    %return
+  %endif
+
+  %selectfile STDOUT
+  %switch statusID
+    %case "libload"
+### Loading TLC function libraries
+      %break
+    %default
+      %break
+  %endswitch
+  %selectfile NULL_FILE
+%endfunction %% SLibSetupPrintStatusMsgs
+
+
+%% Function: SLibSetupLayoutOptions ============================================
+%% Abstract:
+%%   Setup fields that are responsible for determining the layout of the
+%%   generated code.
+%%
+%function SLibSetupLayoutOptions() void
+
+  %assert (!IsModelReferenceTarget() || GenerateSampleERTMain == 0)
+
+  %% Pass arguments into entry point functions
+  %assert (!IsModelReferenceTarget() || MultiInstanceERTCode == 0 || GenerateClassInterface || ...
+    (MultiInstanceERTCode == 1 && UsingMalloc))
+  
+  %% Pass arguments into entry point functions
+  %if !EXISTS("MultiInstanceErrorCode")
+    %assign ::MultiInstanceErrorCode = "None"
+  %endif
+  %<LibAddToCompiledModel("MultiInstanceErrorCode",MultiInstanceErrorCode)>
+
+  %% Pass top level I/O using structures
+  %if !EXISTS("RootIOStructures")
+    %if GenerateClassInterface
+      %assign ::RootIOStructures = 1
+    %else
+      %assign ::RootIOStructures = 0
+    %endif
+  %endif
+  %<LibAddToCompiledModel("RootIOStructures",RootIOStructures)>
+
+  %if SLibIsERTTarget() && ISFIELD(::CompiledModel.ConfigSet, "RootIOFormat")
+    %% RootIOFormat does not exist, for e.g. for MDS
+    %<LibAddToCompiledModel("RootIOFormat", ::CompiledModel.ConfigSet.RootIOFormat)>   
+  %else
+    %% For non-ERT targets, assume "Individual arguments" by default
+    %<LibAddToCompiledModel("RootIOFormat", "Individual arguments")>
+  %endif
+  
+  %if !EXISTS("GenerateEnableDisable")
+    %assign ::GenerateEnableDisable = 0
+  %endif
+  %<LibAddToCompiledModel("GenerateEnableDisable", GenerateEnableDisable)>
+  
+  %% Suppress ErrorStatus in real-time model
+  %if EXISTS("ExtMode") && ...
+    ExtMode == 1 && ...
+    SuppressErrorStatus == 1
+    %assign errMsg = "Cannot select ERT option 'Remove error status field in " + ...
+      "real-time model data structure' when selecting ERT option 'External mode'"
+    %<LibReportFatalError(errMsg)>
+  %endif
+
+  %if !EXISTS("ExportFunctionsMode")
+    %assign ::ExportFunctionsMode = 0 
+  %endif
+  
+  %%
+  %% Setup GenerateComments to be true if not setup already
+  %%
+  %if !EXISTS("GenerateComments")
+    %assign ::GenerateComments = 1
+  %endif
+  %<LibAddToCompiledModel("GenerateComments",GenerateComments)>
+
+  %%
+  %% Output comments for parameters in model.prm file
+  %%
+  %if !EXISTS("ForceParamTrailComments")
+    %assign ::ForceParamTrailComments = 0
+  %endif
+  %<LibAddToCompiledModel("ForceParamTrailComments", ForceParamTrailComments)>
+
+  %%
+  %% Boolean to display eliminted C-code with /* */
+  %%
+  %if !EXISTS("ShowEliminatedStatements")
+    %assign ::ShowEliminatedStatements = 1
+  %endif
+  %<LibAddToCompiledModel("ShowEliminatedStatements", ShowEliminatedStatements)>
+
+  %%
+  %% Declare externs for all globals and function-calls.
+  %%
+  %if !EXISTS("HaveSeparateSourceFiles")
+    %assign ::HaveSeparateSourceFiles = 0
+  %endif
+  %<LibAddToCompiledModel("HaveSeparateSourceFiles", HaveSeparateSourceFiles)>
+
+  %%
+  %% Boolean to switch on/off the protection against calling initialize function
+  %% twice at startup.
+  %%
+  %if !EXISTS("ProtectCallInitFcnTwice")
+    %assign ::ProtectCallInitFcnTwice = 0
+  %endif
+  %<LibAddToCompiledModel("ProtectCallInitFcnTwice", ProtectCallInitFcnTwice)>`
+
+  %%
+  %% TLC interface API
+  %%
+  %if !EXISTS("GenerateInterfaceAPI")
+    %assign ::GenerateInterfaceAPI = 0
+  %endif
+  %<LibAddToCompiledModel("GenerateInterfaceAPI", GenerateInterfaceAPI)>
+
+  %%
+  %% ASAP2 file (assumes GenerateInterfaceAPI already defined)
+  %%
+  %if !EXISTS("GenerateASAP2")
+    %assign ::GenerateASAP2 = 0
+  %endif
+  %<LibAddToCompiledModel("GenerateASAP2", GenerateASAP2)>
+  %if GenerateASAP2 == 1
+    %assign ::CompiledModel.GenerateInterfaceAPI = 1
+  %endif
+
+  %%
+  %% MDX file 
+  %%
+  %if !EXISTS("GenerateMDX")
+    %assign ::GenerateMDX = 0
+  %endif
+  %<LibAddToCompiledModel("GenerateMDX", GenerateMDX)>
+
+  %%
+  %% Setup InlineParameters to be false if not setup already
+  %%
+  %if !EXISTS("InlineParameters")
+    %assign ::InlineParameters = 0
+  %endif
+  %<LibAddToCompiledModel("InlineParameters", InlineParameters)>
+
+  %%
+  %% Inline outputs of blocks with Constant TID in C-code
+  %%
+  %if !EXISTS("InlineInvariantSignals")
+    %if InlineParameters == 1
+      %assign ::InlineInvariantSignals = 1
+    %else
+      %assign ::InlineInvariantSignals = 0
+    %endif
+  %endif
+  %<LibAddToCompiledModel("InlineInvariantSignals", InlineInvariantSignals)>
+
+  %%
+  %% MaxStackSize
+  %%
+  %if !EXISTS("MaxStackSize")
+    %assign ::MaxStackSize = rtInf
+  %else
+    %if EXISTS("DivideStackByRate") && DivideStackByRate == TLC_TRUE
+      %assign ::MaxStackSize = MaxStackSize / ::CompiledModel.NumRuntimeExportedRates
+    %endif
+  %endif
+  %<LibAddToCompiledModel("MaxStackSize", MaxStackSize)>
+
+  %%
+  %% MaxStackVariableSize
+  %%
+  %if !EXISTS("MaxStackVariableSize")
+    %assign ::MaxStackVariableSize = rtInf
+  %endif
+  %<LibAddToCompiledModel("MaxStackVariableSize", MaxStackVariableSize)>
+
+  %%
+  %% Boolean to generate assertion free code, default is no asserts
+  %%
+  %if !EXISTS("DoAsserts")
+    %assign ::DoAsserts = 0
+  %endif
+  %<LibAddToCompiledModel("DoAsserts", DoAsserts)>
+
+  %%
+  %% Set RateBasedStepFcn if not set yet
+  %% this flag is used by targets that support
+  %% RateBasedStep Fcn.
+  %%
+  %if !EXISTS("RateBasedStepFcn")
+    %assign ::RateBasedStepFcn = 0
+  %endif
+  %<LibAddToCompiledModel("RateBasedStepFcn", RateBasedStepFcn)>
+  
+  %% Determine step function prototypes
+  %assign rootSystem = ::CompiledModel.System[CompiledModel.NumSystems-1]
+  %if LibIsSingleRateSystem(rootSystem)
+    %assign singleRate = 1
+  %else
+    %assign singleRate = 0
+  %endif
+  %<LibAddToCompiledModel("RootSystemIsSingleRate", singleRate)>
+
+%endfunction %% SLibSetupLayoutOptions
+
+
+%% Function: SLibSetupRollingInfo ==============================================
+%% Abstract:
+%%   Setup variables needed for rolling
+%%   - Using the Code Generation page on the Simulation Parameters dialog, you can specify
+%%     the RollThreshold
+%%   - Other variables set up here are for tracking code generation during the
+%%     execution of %roll constructs in TLC
+%%
+%function SLibSetupRollingInfo() void
+  %%
+  %% Automatic roll threshold
+  %%
+  %if !EXISTS("RollThreshold")
+    %assign ::RollThreshold = 5
+  %endif
+  %<LibAddToCompiledModel("RollThreshold", RollThreshold)>
+
+  %%
+  %% Tracking field:
+  %% For counter for roll loop control variable
+  %%
+  %if !EXISTS("LoopControlIdx")
+    %assign ::LoopControlIdx = 0
+  %endif
+  %<LibAddToCompiledModel("LoopControlIdx", LoopControlIdx)>
+
+  %%
+  %% Tracking field:
+  %% This is the current loop offset if we are inside a %roll and lcv != ""
+  %%
+  %if !EXISTS("CurrentLoopOffset")
+    %assign ::CurrentLoopOffset = 0
+  %endif
+  %<LibAddToCompiledModel("CurrentLoopOffset", CurrentLoopOffset)>
+
+  %%
+  %% Tracking field:
+  %% Current loop offset when inside a %roll
+  %%
+  %if !EXISTS("CurrentRollRegionOffset")
+    %assign ::CurrentRollRegionOffset = -1
+  %endif
+  %<LibAddToCompiledModel("CurrentRollRegionOffset", CurrentRollRegionOffset)>
+
+  %%
+  %% Override Roll Variable Declaration 'const %<dt>' => '%<dt>'
+  %%
+  %if !EXISTS("RollInputIsWritable")
+    %assign ::RollInputIsWritable = 0
+  %endif
+  %<LibAddToCompiledModel("RollInputIsWritable", RollInputIsWritable)>
+
+%endfunction %% SLibSetupRollingInfo
+
+
+%% Function: SLibSetupLoggingInfo ==============================================
+%% Abstract:
+%%   Setup all globals related to logging data and states
+%%
+%function SLibSetupLoggingInfo() void
+  %%
+  %% Use standard ".mat" file logging
+  %%
+  %if MatFileLogging == 1 && IsModelReferenceTarget()
+    %<SLibReportErrorWithId("RTW:tlc:NoMdlRefMatFileLogging")>
+  %endif
+
+  %<LibAddToCompiledModel("MatFileLogging", MatFileLogging)>
+  %assert EXISTS(MultiInstanceERTCode) && EXISTS(MultiInstanceErrorCode)
+  %if ( MatFileLogging && MultiInstanceERTCode && (GenerateClassInterface || !UsingMalloc) )
+    %if MultiInstanceErrorCode == "Warning"
+      %<SLibReportWarningWithId("RTW:tlc:MatFileLoggingNotForGenReusableCodeWarning")>
+    %elseif MultiInstanceErrorCode == "Error"
+      %<SLibReportErrorWithId("RTW:tlc:MatFileLoggingNotForGenReusableCodeError")>
+    %endif
+  %endif
+
+  %%
+  %% Append this prefix to all the variable names when saving to the
+  %% .mat file
+  %%
+  %if !EXISTS("LogVarNameModifier")
+    %assign ::LogVarNameModifier = "rt_"
+  %endif
+  %<LibAddToCompiledModel("LogVarNameModifier", LogVarNameModifier)>
+  %if !EXISTS("BlockIOSignals")
+    %assign ::BlockIOSignals = 0
+  %endif
+  %if !EXISTS("ParameterTuning")
+    %assign ::ParameterTuning = 0
+  %endif 
+  
+  %if EXISTS(::ErrorXMLMode)
+    %assign ::CompiledModel.ErrorXMLMode = ::ErrorXMLMode
+  %endif
+
+  %% Determine the maximum length of character strings in the generated code
+  %if IsModelReferenceSimTarget()
+    %assign ::RTWMaxStringLength = 2000 %% MSVC limit
+  %else
+    %if !EXISTS("RTWMaxStringLength")
+      %% The limit set here is ANSI recommended. The limit can be overwritten
+      %% by specifying a Configset TLC option -aRTWMaxStringLength = N
+      %assign ::RTWMaxStringLength = 509
+    %endif
+  %endif
+  
+%endfunction %% SLibSetupLoggingInfo
+
+%% Function: FcnSetupHdrsAndSources ===========================================
+%% Abstract:
+%%   Setup variables to store all sources & headers needed for model
+%%
+%function FcnSetupHdrsAndSources() void
+  %assign numSrcs = 0
+  %<LibAddToCompiledModel("Sources", [])>
+  %<LibAddToCompiledModel("StaticSources", [])>
+  %<LibAddToCompiledModel("ReusableLibSources", [])>
+  %% For model reference we do not generate model.c file
+  %if !IsModelReferenceTarget()
+    %assign ::CompiledModel.Sources = CompiledModel.Sources+LibGetMdlSrcBaseName()
+    %assign numSrcs = 1
+  %endif
+  %<LibAddToCompiledModel("NumSources", numSrcs)>
+  %<LibAddToCompiledModel("NumStaticSources", 0)>
+  %<LibAddToCompiledModel("NumReusableLibSources", 0)>
+  %<LibAddToCompiledModel("Headers", [])>
+  %<LibAddToCompiledModel("NumHeaders", 0)>
+
+  %<LibAddToCompiledModel("SysPathHeaders", [])>
+  %<LibAddToCompiledModel("NumSysPathHeaders", 0)>
+  %<LibAddToCompiledModel("SysLocalHeaders", [])>
+  %<LibAddToCompiledModel("NumSysLocalHeaders", 0)>
+  %<LibAddToCompiledModel("BlockPathHeaders", [])>
+  %<LibAddToCompiledModel("NumBlockPathHeaders", 0)>
+  %<LibAddToCompiledModel("BlockLocalHeaders", [])>
+  %<LibAddToCompiledModel("NumBlockLocalHeaders", 0)>
+  %<LibAddToCompiledModel("NonSharedPathHeaders", [])>
+  %<LibAddToCompiledModel("NumNonSharedPathHeaders", 0)>
+  %<LibAddToCompiledModel("NonSharedLocalHeaders", [])>
+  %<LibAddToCompiledModel("NumNonSharedLocalHeaders", 0)>
+%endfunction %% FcnSetupHdrsAndSources
+
+
+%% Function: SLibSetupCodeGenTrackingFields ====================================
+%% Abstract:
+%%   Setup fields that track the current state of code generation. These are
+%%   fields that are setup for internal use by the TLC code-base.
+%%
+%function SLibSetupCodeGenTrackingFields() void
+  %%
+  %% Unmangle function names via RTWData
+  %%
+  %assign tmpVar = FunctionNamesRepository { dummy 1 }
+  %<LibAddToCompiledModel("FunctionNamesRepository", FunctionNamesRepository)>
+
+  %%
+  %% Cache whether IntegerSizes exists (created when %including
+  %% funclib.tlc, which %includes fixptlib.tlc, which can create
+  %% IntegerSizes
+  %%
+  %<LibAddToCompiledModel("IntegerSizesExists", EXISTS("IntegerSizes"))>
+  %% These maximums, based on the target integer size, are used in
+  %% determining the type of loop counters which may exceed the size
+  %% of signed int on the target. 
+  %if ::CompiledModel.IntegerSizesExists
+    %switch IntegerSizes.IntNumBits
+    %case 8
+    %case 16
+    %case 32
+      %assign ::TargetMaxInt = INT%<IntegerSizes.IntNumBits>MAX
+      %assign ::TargetMaxUInt = UINT%<IntegerSizes.IntNumBits>MAX
+      %break
+    %default
+      %assign ::TargetMaxInt = (1 << (IntegerSizes.IntNumBits-1)) - 1
+      %assign ::TargetMaxUInt = (TargetMaxInt << 1) + 1
+    %endswitch
+  %else
+    %assign ::TargetMaxInt = 0
+    %assign ::TargetMaxUInt = 0
+  %endif
+
+  %%
+  %% Setup HaveVirtualOutports to be false
+  %%
+  %assign ::HaveVirtualOutports = 0
+  %<LibAddToCompiledModel("HaveVirtualOutports", HaveVirtualOutports)>
+
+  %%
+  %% Setup GeneratingDeadCode (in MdlStart) to be false
+  %%
+  %<LibAddToCompiledModel("GeneratingDeadCode", 0)>
+
+  %%
+  %% Setup GeneratingOutputsCode to keep track of when outputs code is
+  %% being generated (for expression folding)
+  %%
+  %<LibAddToCompiledModel("GeneratingOutputsCode", 0)>
+
+  %%
+  %% Default value for child S-Functions
+  %%
+  %<LibAddToCompiledModel("NumChildSFunctions", 0)>
+  %<LibAddToCompiledModel("ChildSFunctionList", [])>
+
+  %%
+  %% Flags for tracking Non-finites
+  %%
+  %<LibAddToCompiledModel("NeedRealInf", 0)>
+  %<LibAddToCompiledModel("NeedRealMinusInf", 0)>
+  %<LibAddToCompiledModel("NeedRealNaN", 0)>
+
+  %%
+  %% Global Variable to cache the existence of TLC files
+  %%   FILE_EXISTS can be very slow.  Once it is known that a file exists,
+  %%   it is much quicker to look in the cache.
+  %%
+  %if !EXISTS("GblInlinedTLCFileAccessed")
+    %createrecord ::GblInlinedTLCFileAccessed {}
+  %endif
+
+  %%
+  %% Setup fields for tracking the header and source files.
+  %%
+  %<FcnSetupHdrsAndSources()>
+
+  %%
+  %% Setup field to track if we need TID or not
+  %%
+  %<LibAddToCompiledModel("NeedTID", 0)>
+
+  %%
+  %% Setup field to track if we need TID in custom code
+  %%
+  %<LibAddToCompiledModel("CustomCodeNeedTID", TLC_FALSE)>
+  
+  %% 
+  %% Setup field to track if we use firstTime
+  %%
+  %<LibAddToCompiledModel("NeedFirstTime", 0)>
+  
+  %% 
+  %% Setup field to track if the model reference initilize function is empty 
+  %%  
+  %<LibAddToCompiledModel("EmptyModelRefInitializeFcn", 0)>
+%endfunction %% SLibSetupCodeGenTrackingFields
+
+%%Function SLibNeedGenerateGRTWrapper ==============================
+%%  For GRT code formate, this function will determinate if we will
+%%  generate GRT classic code or New GRT which is ERT with GRT Wrapper.
+%%
+%%   For ert code format, if Generate GRT Interface option is checked,
+%%  returns true. and do diagnostic check.
+%%
+
+%function SLibNeedGenerateGRTWrapper() void
+  %assign retVal = TLC_FALSE
+
+  %assign ::isGRTMalloc = TLC_FALSE
+  %if CodeFormat == "RealTime" || CodeFormat == "RealTimeMalloc"
+    %if UsingMalloc
+      %if GenRTModel
+        %assert ::MultiInstanceERTCode == 1
+        %assign ::RootIOStructures = 1
+        %assign ::CompiledModel.RootIOStructures = 1
+        %assign ::CompiledModel.HasSimStructVars = 0
+        %assign ::CompiledModel.RootIOFormat = "Part of model data structure"
+      %else
+        %assign errMsg = "Real-Time malloc target doesn't support SimStruct, target "...
+          "must use rtModel. Malloc based targets must not have GenRTModel = 0 in " ...
+          "sytem target file."
+        %<LibReportFatalError(errMsg)>
+      %endif 
+      
+      %if CodeFormat == "RealTimeMalloc"
+        %assign ::isGRTMalloc = TLC_TRUE
+      %endif
+      
+    %endif   
+    
+    %if GenRTModel && !IsModelReferenceTarget()
+      %assign ::CodeFormat = "Embedded-C"
+      %assign retVal = TLC_TRUE
+      %assign ::TargetOS = "BareBoardExample"
+      %assign ::CombineOutputUpdateFcns = 0
+      %if ::GRTInterface==TLC_FALSE
+        %assign retVal = TLC_FALSE
+        %assign ::CombineOutputUpdateFcns = ConfigSet.CombineOutputUpdateFcns
+      %endif
+    %endif
+  %elseif SLibIsERTCodeFormat() && !IsModelReferenceTarget()
+    %assign retVal = ::CompiledModel.ConfigSet.GRTInterface
+    %if retVal
+      %if CombineOutputUpdateFcns
+        %<SLibReportErrorWithId("RTW:tlc:GRTInterface")>
+      %endif
+      %if PurelyIntegerCode
+        %<SLibReportErrorWithId("RTW:tlc:GRTInterface2")>        
+      %endif
+    %endif
+    %if UsingMalloc      
+      %assert ::MultiInstanceERTCode == 1
+      %if ::CompiledModel.RootIOFormat == "Part of model data structure" || ...
+        ::CompiledModel.RootIOFormat == "Structure reference"
+        %assign ::RootIOStructures = 1
+        %assign ::CompiledModel.RootIOStructures = 1
+      %else
+        %assign ::RootIOStructures = 0
+        %assign ::CompiledModel.RootIOStructures = 0
+      %endif
+      %assign ::CompiledModel.HasSimStructVars = 0
+    %endif
+  %endif
+
+  %if retVal
+    %if EXISTS(MultiInstanceERTCode) && MultiInstanceERTCode && !isGRTMalloc
+      %<SLibReportErrorWithId("RTW:tlc:GRTInterface3")>
+    %endif
+
+    %foreach tid = ::CompiledModel.NumRuntimeExportedRates
+      %<SLibSetNeedFloatAbsoluteTime(tid)>
+    %endforeach
+  %endif
+  
+  %assign ::SeparateRegistrationFcn = 0
+  %assign ::PackageModelDataIntoRTM = 0  
+  %if retVal==TLC_TRUE || ::UsingMalloc 
+    %assign ::SeparateRegistrationFcn = 1
+  %endif
+  %if ::UsingMalloc   
+    %assign ::PackageModelDataIntoRTM = 1
+  %endif
+  
+  %return retVal
+
+%endfunction
+
+%% Function: SLibSetupCodeFormat ===============================================
+%% Abstract:
+%%   Sets up:
+%%   (a) Default code format if not already setup to be "RealTime"
+%%
+%%   (b) Accelerator and ExtMode to be 0 if not already setup/
+%%
+%%   (c) UsingMalloc and IOQualifier based on the CodeFormat:
+%%
+%%   .-----------------------+-------.
+%%   | Code                  | Using |
+%%   | Format                | Malloc|
+%%   +-----------------------+-------+
+%%   | RealTime              |   0   |
+%%   | RealTimeMalloc        |   1   |
+%%   | Embedded-C            |   0   |
+%%   | Ada                   |   0   |
+%%   | S-Function            |   1   |
+%%   `-----------------------+-------'
+%%
+%%   Note on UsingMalloc:
+%%   Codegen uses static or dynamic memory allocation for specified values of 0
+%%   and 1, respectively.  Note these dependencies on UsingMalloc.
+%%
+%%   o Global parameter data is not allowed when dynamic memory allocation is
+%%     used.  That is, TLC function LibCacheGlobalPrmData is disabled.
+%%
+%%   o Model_prm is included at the top of model.c and the bottom of model.c
+%%     for UsingMalloc equal to 0 and 1, respectively.
+%%
+%%   (d) PreStructDeclarePragma & PostStructDeclarePragma
+%%
+%%   If code format is "RealTime", change to "Embedded-C" and
+%%   "GenerateGRTWrapper=1"
+%%
+%function SLibSetupCodeFormat() void
+
+  %%
+  %% Setup the code format if not already setup
+  %%
+  %if !EXISTS("CodeFormat")
+    %assign ::CodeFormat = "RealTime"
+  %endif
+ 
+  %%
+  %% Setup the global variable to check if is RSIM
+  %% 
+  %if !EXISTS("_RSIM_")
+    %assign ::isRSim = TLC_FALSE
+  %else
+    %assign ::isRSim = TLC_TRUE
+  %endif
+ 
+  %if !EXISTS("_RSIM_FULL_")
+    %assign ::isRSimWithSolverModule = TLC_FALSE
+  %else   
+    %assign ::isRSimWithSolverModule = TLC_TRUE
+  %endif
+  
+  %if !EXISTS("_RACCEL_")
+    %assign ::isRAccel = TLC_FALSE
+  %else
+    %assign ::isRAccel = TLC_TRUE
+  %endif
+  
+  %if ::isRAccel
+    %assign ::raccelObserverLog = ...
+      ::CompiledModel.ObserversInstrumentationInjection
+  %else
+    %assign ::raccelObserverLog = 0
+  %endif
+
+  %if !EXISTS("SLCGUseRTWContext")
+    %assign ::SLCGUseRTWContext = 0
+  %endif
+  %%
+  %% Setup fields for generating the rtModel
+  %%
+  %if SLibIsERTCodeFormat()
+    %% Always generate the rtModel for ERT
+    %assign ::GenRTModel = 1
+  %endif
+
+  %if !EXISTS(GenRTModel) 
+    %assign ::GenRTModel = 0
+  %endif
+
+  %if (GenRTModel == 0) && EXISTS("_GRT_")
+      %assign warnMsg = "Support of SimStruct will be discontinued "...
+        "for the Real-Time code format. Real-Time based target must use rtModel in "...
+        "a future release. Please follow the instructions for "...
+        "'Converting Your Target to Use rtModel' in the Users Guide of "...
+        "Simulink Coder to update your target"
+      %<LibReportWarning(warnMsg)>
+  %endif
+
+  %%
+  %% The ExtModeXCP flag identifies an External Mode solution based on 
+  %% XCP Transport Layer
+  %%
+  %if EXISTS("ExtMode") && ...
+      ISFIELD(::CompiledModel.ConfigSet, "ExtModeMexFile") && ...
+      (::CompiledModel.ConfigSet.ExtModeMexFile == "ext_xcp")
+      %assign ::ExtModeXCP = TLC_TRUE
+  %else
+      %assign ::ExtModeXCP = TLC_FALSE
+  %endif
+  
+  %%
+  %% The ExtModeXCPClassicInterface flag identifies an External Mode 
+  %% solution based on XCP Transport Layer and the Classic External Mode
+  %% interface ext_work.h
+  %%
+  %% Note: this parameter has been introduced as temporary solution 
+  %%       to reduce the efforts to port an existing main to the new 
+  %%       XCP-based technology.
+  %%       However ext_work.h interface will be deprecated in future releases 
+  %%       and it will be replaced by ext_mode.h
+  %%
+  %if !EXISTS("ExtModeXCPClassicInterface")
+      %% By default, the ext_mode.h interface is only enabled when GenerateSampleERTMain
+      %% is selected. This parameter can be overwritten by support package authors 
+      %% as appropriate, by passing the "-aExtModeXCPClassicInterface=X"
+      %% argument in the TLCOptions
+      %assign ::ExtModeXCPClassicInterface = !GenerateSampleERTMain
+  %endif
+
+  %if EXISTS("ExtMode") && (ExtMode == 1) && ExtModeXCP
+    %if ExtModeXCPClassicInterface == 1
+      %% Add the file implementing the "ext_work.h" interface to BuildInfo
+        %if !FEVAL("rtw.connectivity.Utils.buildInfoAddSrcFileToExtModeGroup", ::CompiledModel.Name, "xcp_ext_work.c")
+          %<SLibReportErrorWithId("RTW:tlc:ExtModeModifyBuildInfo")>
+        %endif
+    %else
+      %% Add the file implementing the new "ext_mode.h" interface to BuildInfo
+        %if !FEVAL("rtw.connectivity.Utils.buildInfoAddSrcFileToExtModeGroup", ::CompiledModel.Name, "xcp_ext_mode.c")
+          %<SLibReportErrorWithId("RTW:tlc:ExtModeModifyBuildInfo")>
+        %endif
+    %endif
+  %endif
+
+  %%
+  %% Extmode flag
+  %%   The flag is explicitly turned off for the following conditions:
+  %%     1) ExtMode is not defined
+  %%     2) The target is xPC (SLRT).  All xPC (SLRT) builds enable ExtMode,
+  %%        but the extmode server in the generated code is not used and
+  %%        does not need to be added to the build.
+  %%     3) ExtMode is defined, but the interface level is not Level1
+  %%        (old tcp/ip protocol) and we are not using XCP Open Protocol
+  %%
+  %if !EXISTS("ExtMode") || ...
+      (EXISTS("xPC") && (xPC == 1)) || ...
+      (ISFIELD(::CompiledModel.ConfigSet, "ExtModeIntrfLevel") && ...
+      ::CompiledModel.ConfigSet.ExtModeIntrfLevel != "Level1" && ...
+      !ExtModeXCP)
+      %assign ::ExtMode = 0
+  %endif
+  
+  %if ExtMode == 1 || isRSim
+    %assign ::CompiledModel.HaveSeparateSourceFiles = 1
+  %endif
+
+  %%
+  %% We generate code for the transition table if ExtMode is true or
+  %% if we are generating the Rsim target to a top model and the Rsim
+  %% option to load parameters is enabled.
+  %%
+  %% Note: the transition table is not required for XCP-based External Mode
+  %%
+  %assign ::CreateTransitionTable = 0
+  %if ((ExtMode == 1) && !ExtModeXCP) || ...
+    ((isRSim && !IsModelReferenceTarget() && RSIM_PARAMETER_LOADING == 1))
+      %assign ::CreateTransitionTable = 1
+    %endif
+
+  %%
+  %% In XCP-based External Mode, the generation of External Mode Task Info 
+  %% is required to retrieve the rate/task id associated to each signal.
+  %% In particular, the extmode_task_info() function is used
+  %% by coder.internal.xcp.updateCodeDescriptor script to write 
+  %% the task/rate id information in Code Descriptor.
+  %%
+  %% Moreover the ext_mode_types.h needs to be generated, as it contains
+  %% data types definitions (such as extmodeSimulation_T) that are model dependent
+  %%
+  %assign ::CreateExtModeTaskInfo = 0
+  %assign ::CreateExtModeTypes = 0
+  %if (ExtMode == 1) && ExtModeXCP
+      %assign ::CreateExtModeTaskInfo = 1
+      %assign ::CreateExtModeTypes = 1
+  %endif
+
+  %if SLibNeedGenerateGRTWrapper()
+    %assign ::GenerateGRTWrapper = TLC_TRUE
+    %addtorecord ::CompiledModel GRTWrapper ""
+    %addtorecord ::CompiledModel GRTWrapperFcnDef ""
+    
+    %% Standalone subsystems are not supported with GRT wrapper
+    %if ::CompiledModel.HasStandaloneSubsystem
+      %<SLibReportErrorWithId("RTW:tlc:GRTInterface4")>
+    %endif
+  %else
+    %assign ::GenerateGRTWrapper = TLC_FALSE
+  %endif
+
+  %assign name = "rtCP"
+  %<LibAddToCompiledModel("tUnstructConstParameters", name)>
+  %<LibAddToCompiledModel("HasSharedConstants", TLC_FALSE)>
+  
+  %if EXISTS("SimstructBasedTarget") && ...
+    (SimstructBasedTarget == TLC_FALSE && GenRTModel == 0)
+    %<SLibReportErrorWithId("RTW:tlc:SimStructBasedTarget")>
+  %endif
+
+  %if !EXISTS("SimstructBasedTarget")
+    %if ::GenRTModel == 0
+      %assign ::SimstructBasedTarget = TLC_TRUE
+    %else
+      %assign ::SimstructBasedTarget = TLC_FALSE
+    %endif
+  %endif
+
+  %if (IsModelReferenceTarget() && IsSimstructBasedTarget())
+    %assign ::ModelReferenceForASimstructBasedTarget = TLC_TRUE
+    %assert (EXISTS("tMdlRefSfcnS"))
+    %% tMdlRefSfcn is not defined in the TLC files. Model reference
+    %% targets that use SimStruct must declare tMdlRefSfcnS
+    %% in their target TLC files
+  %else
+    %assign ::ModelReferenceForASimstructBasedTarget = TLC_FALSE
+  %endif
+
+  %if IsModelReferenceRTWTarget()
+    %if !( SLibIsERTCodeFormat() || ...
+      CodeFormat == "RealTime" || ...
+      isRSim ) || ...
+      UsingMalloc
+      %<SLibReportErrorWithIdAndArgs("RTW:tlc:MRCodeFormat", CodeFormat)>
+    %endif
+    %assign ::CodeFormat = "Embedded-C"
+
+    %if ::GenRTModel == 0
+      %assign ::GenRTModel = 1
+      %% Model reference coder target requires rtModel
+      %% data structure to store information about the model
+
+      %assign msgTxt = "### Turning on GenRTModel setting to use " ...
+	"rtModel data structure"
+      %<LibWriteToStandardOutput(msgTxt)>
+    %endif
+  %endif
+
+  %% Global timing engine for model reference only works with
+  %% Embedded-C and simstruct based targets
+  %assign ::NumModelBlocksWithCAPI = 0
+  %if HasModelReferenceBlocks()
+    %if !SLibIsERTCodeFormat() && !::SimstructBasedTarget
+      %<SLibReportErrorWithId("RTW:tlc:InvalidSTF")>
+    %endif
+    
+    %% Count up the number of Model blocks that may have generated a C-API.
+    %% For Coder targets, this will be all model blocks, but for SIM
+    %% targets we will skip protected model blocks.
+    %assign mdlRefBlks    = ::CompiledModel.ModelReferenceBlocks
+    %assign nMdlRefBlks   = SIZE(mdlRefBlks,0)
+    %foreach rowIdx = nMdlRefBlks
+      %assign mdlRefInfo = mdlRefBlks[rowIdx]
+      %assign mdlBlk  = ::CompiledModel.System[mdlRefInfo[0]].Block[mdlRefInfo[1]]
+      %if mdlBlk.ParamSettings.SupportsCAPI
+        %assign ::NumModelBlocksWithCAPI = ::NumModelBlocksWithCAPI + 1
+      %endif
+    %endforeach
+  %endif
+  
+  %<LibAddToCompiledModel("CodeFormat", CodeFormat)>
+
+  %%
+  %% When this flag is true, initialization code is 
+  %% optimized out because 'ZeroInternalMemoryAtStartup' or 
+  %% 'ZeroExternalMemoryAtStartup' are set to false. 
+  %%
+  
+  %assign ::GenerateInitCodeRemoved    = TLC_FALSE
+  %%
+  %% Accelerator flag.  Used in conjuction with the S-Function code format.
+  %%
+  %if !EXISTS("Accelerator")
+    %assign ::Accelerator = 0
+  %endif
+  %<LibAddToCompiledModel("Accelerator", Accelerator)>
+   
+  %if !EXISTS(TargetRegistMutexOp)
+    %assign ::TargetRegistMutexOp = 0
+  %endif
+  
+  %if !EXISTS(TargetRegistSynchroOp)
+    %assign ::TargetRegistSynchroOp = 0
+  %endif
+
+  %switch CodeFormat
+    %case "RealTime"
+      %assign IOQualifier   = "."
+      %if UsingMalloc != 0
+	%assign errTxt = "UsingMalloc setting passed in from gensettings " ...
+	  "is not consistent with selected CodeFormat"
+	%<LibReportFatalError(errTxt)>
+      %endif
+      %break
+    %case "RealTimeMalloc"
+      %assign IOQualifier   = "->"
+      %if UsingMalloc != 1
+	%assign errTxt = "UsingMalloc setting passed in from gensettings " ...
+	  "is not consistent with selected CodeFormat"
+	%<LibReportFatalError(errTxt)>
+      %endif
+      %break
+    %case "Embedded-C"
+      %if UsingMalloc
+        %assign IOQualifier   = "->"
+      %else
+        %assign IOQualifier   = "."
+      %endif
+      %if UsingMalloc != 0 && !SLibIsERTCodeFormat()
+	%assign errTxt = "UsingMalloc setting passed in from gensettings " ...
+	  "is not consistent with selected CodeFormat"
+	%<LibReportFatalError(errTxt)>
+      %endif
+      %break
+    %case "S-Function"
+      %assign IOQualifier   = "->"
+      %if UsingMalloc != 1
+	%assign errTxt = "UsingMalloc setting passed in from gensettings " ...
+	  "is not consistent with selected CodeFormat"
+	%<LibReportFatalError(errTxt)>
+      %endif
+      %if !Accelerator
+        %assign ::CompiledModel.Name = "%<CompiledModel.Name>_sf"
+      %else
+        %assign ::CompiledModel.Name = "%<CompiledModel.Name>_acc"
+      %endif
+      %break
+    %default
+      %<SLibReportErrorWithIdAndArgs("RTW:tlc:UnknownCodeFormat", CodeFormat)>
+  %endswitch
+
+  %%
+  %% Error check for UsingMalloc and IOQualifier
+  %%
+  %assign errTxt = "Must specify UsingMalloc as 0 or 1."
+  %if !EXISTS("UsingMalloc")
+    %% variable doesn't exist
+  %elseif !ISEQUAL(UsingMalloc, 0) && !ISEQUAL(UsingMalloc, 1)
+    %% variable exists, but has invalid setting
+  %else
+    %% valid setting so clear error text
+    %assign errTxt = ""
+  %endif
+
+  %if !EXISTS("IOQualifier")
+    %assign errTxt = "Must specify IOQualifier corresponding to " ...
+      "UsingMalloc.  Value should be . or -> for UsingMalloc equal " ...
+      "to 0 and 1, respectively."
+  %endif
+
+  %if errTxt != ""
+    %<LibReportFatalError(errTxt)>
+  %endif
+
+  %%
+  %% Add fields to ::CompiledModel
+  %%
+  %assign ::IOQualifier = IOQualifier
+  %<LibAddToCompiledModel("IOQualifier", IOQualifier)>
+
+  %%
+  %% Initialize target specific compiler hooks
+  %%
+  
+  %% Pragmas for alignment of structures
+  %if !EXISTS("PreStructDeclarePragma")
+    %assign ::PreStructDeclarePragma = ""
+  %endif
+  %<LibAddToCompiledModel("PreStructDeclarePragma", PreStructDeclarePragma)>
+
+  %if !EXISTS("PostStructDeclarePragma")
+    %assign ::PostStructDeclarePragma = ""
+  %endif
+  %<LibAddToCompiledModel("PostStructDeclarePragma", PostStructDeclarePragma)>
+
+  %if GenRTModel
+    %<SLibInitRTMdlRecs()>
+  %endif
+
+  %assign cs = ::CompiledModel.ConfigSet
+
+  %if SLibIsERTTarget()
+    %assign srcCTemplate  = FEVAL("rtw_cgt_name_conv",cs.ERTSrcFileBannerTemplate,"cgt2tlc")
+    %assign srcHTemplate  = FEVAL("rtw_cgt_name_conv",cs.ERTHdrFileBannerTemplate,"cgt2tlc")
+    %assign dataCTemplate = FEVAL("rtw_cgt_name_conv",cs.ERTDataSrcFileTemplate,"cgt2tlc")
+    %assign dataHTemplate = FEVAL("rtw_cgt_name_conv",cs.ERTDataHdrFileTemplate,"cgt2tlc")
+
+    %if !EXISTS("ERTSrcFileBannerTemplate")
+      %assign ::ERTSrcFileBannerTemplate = srcCTemplate
+    %endif
+
+    %if !EXISTS("ERTHdrFileBannerTemplate")
+      %assign ::ERTHdrFileBannerTemplate = srcHTemplate
+    %endif
+
+    %if !EXISTS("ERTCustomFileTemplate")
+      %assign ::ERTCustomFileTemplate = cs.ERTCustomFileTemplate
+    %endif
+
+    %<LibAddToCompiledModel("ERTSrcFileBannerTemplate",ERTSrcFileBannerTemplate)>
+    %<LibAddToCompiledModel("ERTHdrFileBannerTemplate",ERTHdrFileBannerTemplate)>
+    %<LibAddToCompiledModel("ERTDataSrcFileTemplate",dataCTemplate)>
+    %<LibAddToCompiledModel("ERTDataHdrFileTemplate",dataHTemplate)>
+    %<LibAddToCompiledModel("ERTCustomFileTemplate",ERTCustomFileTemplate)>
+  %else
+    %<LibAddToCompiledModel("ERTSrcFileBannerTemplate","n/a")>
+    %<LibAddToCompiledModel("ERTHdrFileBannerTemplate","n/a")>
+    %<LibAddToCompiledModel("ERTDataSrcFileTemplate","n/a")>
+    %<LibAddToCompiledModel("ERTDataHdrFileTemplate","n/a")>
+    %<LibAddToCompiledModel("ERTCustomFileTemplate","n/a")>
+  %endif
+
+  %% Initialize MatrixOfRequireRateInteraction for embedded-c
+  %%
+  %if SLibIsERTCodeFormat()
+    %assign numSyncTs = ::CompiledModel.NumRuntimeExportedRates
+    %if numSyncTs > 1
+      %assign tmp = FEVAL("zeros", numSyncTs, numSyncTs)
+    %else
+      %assign tmp = Matrix(1,1)[[0]]
+    %endif
+    %addtorecord ::CompiledModel RequireMultiRateSampleHits 0
+    %addtorecord ::CompiledModel RequireRateInteraction 0
+    %addtorecord ::CompiledModel MatrixOfRequireRateInteraction tmp
+  %endif
+
+%endfunction %% SLibSetupCodeFormat
+
+
+%% Function: FcnSetupCommonCodeIdents ==========================================
+%% Abstract:
+%%   Setup identifiers that are common to all Code Formats.
+%%
+%function FcnSetupCommonCodeIdents() void
+  %if !EXISTS("tRealPart")
+    %assign ::tRealPart = "re"
+  %endif
+  %<LibAddToCompiledModel("tRealPart", tRealPart)>
+
+  %if !EXISTS("tImagPart")
+    %assign ::tImagPart = "im"
+  %endif
+  %<LibAddToCompiledModel("tImagPart", tImagPart)>
+
+  %%yz %<LibAddToCompiledModel("tLocalBlockIO", "rtb")>
+
+  %% Setup the timing bridge for model reference, and 
+  %% a variable to keep track of when it is accessed.
+  %% For Simstruct based targets, we always need the GlobalTID map.
+  %assign ::tMdlRefTimingBridgeAccessed = TLC_FALSE
+  %assign ::tMdlRefGlobalTIDMapAccessed = ...
+    (IsModelReferenceForASimstructBasedTarget()) ? TLC_TRUE : TLC_FALSE
+  %assign ::tMdlRefNeedTIDArgs =  ::tMdlRefGlobalTIDMapAccessed
+  
+  %% This is no longer a boolean setting.  The decision to prefix
+  %% model names is made by searching for "$R" (root model name) in
+  %% the symbol format string.
+  %if (!SLibIsERTTarget())
+    %assign ::PrefixModelToStructs = 1
+  %else
+    %assign ::PrefixModelToStructs = !ISEMPTY(FEVAL("strfind",CustomSymbolStrMacro,"$R"))
+  %endif
+  
+  %if IsModelReferenceTarget()
+    %% PrefixModelToStructs is only used for global typedefs and variables.
+    %% Most of the global typedefs/varaibles are not used by model reference.
+    %% Most of model reference typedefs are generated based on the
+    %% hidden root subsystem. (see ASSERT_MDLREF_NO_TBLOCKIO in this file)
+    %%
+    %% Note that since subsystems do not have RT_MODEL,
+    %% in order to eliminate clash, we must prefix model name to
+    %% RT_MODEL.
+
+    %assign ::PrefixModelToStructs = 1
+
+  %endif
+  %<LibAddToCompiledModel("PrefixModelToStructs", PrefixModelToStructs)>
+
+  %if !EXISTS("GenerateFullHeader")
+    %assign ::GenerateFullHeader = 1
+  %else
+    %assign ::GenerateFullHeader = %<GenerateFullHeader>
+  %endif
+  %<LibAddToCompiledModel("GenerateFullHeader", GenerateFullHeader)>
+
+  %if !EXISTS("IncludeFileBanners")
+    %assign IncludeFileBanners = 1
+  %endif
+  %<LibAddToCompiledModel("IncludeFileBanners", IncludeFileBanners)>
+
+  %if !EXISTS("ConfigCheckComments")
+    %assign ::ConfigCheckComments = ""
+  %else
+    %assign ::ConfigCheckComments = %<ConfigCheckComments>
+  %endif
+  
+  %if !EXISTS("GenerateDefaultFcnBanner")
+    %assign ::GenerateDefaultFcnBanner = 0
+  %else
+    %assign ::GenerateDefaultFcnBanner = %<GenerateDefaultFcnBanner>
+  %endif
+  %if !EXISTS("GenerateDefaultFcnBannerSharedUtil")
+    %assign ::GenerateDefaultFcnBannerSharedUtil = 0
+  %else
+    %assign ::GenerateDefaultFcnBannerSharedUtil = %<GenerateDefaultFcnBannerSharedUtil>
+  %endif
+  
+  %if !EXISTS("GeneratedFileList")
+    %assign ::GeneratedFileList = ""
+  %else
+    %assign ::GeneratedFileList = GeneratedFileList
+  %endif
+
+
+%endfunction %% FcnSetupCommonCodeIdents
+
+%% Function: FcnSetupRTModelNames ==============================================
+%% Abstract:
+%%   Used by RealTime and RealTimeMalloc targets to setup the names of the
+%%   rtModel
+%%
+%function FcnSetupRTModelNames() void
+  %if !EXISTS("::tSimStruct")
+    %assign ::tSimStruct = GenRTModel ? "rtM_%<::CompiledModel.Name>" : "rtS"
+  %endif
+  %if !EXISTS("::tSimStructType")
+    %assign ::tSimStructType = GenRTModel ? "rtModel_%<::CompiledModel.Name>" : ...
+      "SimStruct"
+  %endif
+  %<LibAddToCompiledModel("::tSimStruct", tSimStruct)>
+%endfunction %% FcnSetupRTModelNames
+
+%function SLibSetupCoderTypesInfo() void
+
+  %assign potentialBaseNames = []
+
+  %assign rtwtypesBaseName = SLibGetFileNameForCode("rtwtypes_hdr")
+  %assign rtwtypesFileName = rtwtypesBaseName + ".h"
+  %assign rtwtypesFilePath = FcnOutputFilePath(rtwtypesFileName)
+  %assign potentialBaseNames = potentialBaseNames + rtwtypesBaseName
+
+  %assign mdlrefTypesBaseName = SLibGetFileNameForCode("mdlrefTypes_hdr")
+  %assign mdlrefTypesFileName = mdlrefTypesBaseName + ".h"
+  %assign mdlrefTypesFilePath = FcnOutputFilePath(mdlrefTypesFileName)
+  %assign potentialBaseNames = potentialBaseNames + mdlrefTypesBaseName
+
+  %assign builtinTypeidTypesBaseName = SLibGetFileNameForCode("builtinTypeidTypes_hdr")
+  %assign builtinTypeidTypesFileName = builtinTypeidTypesBaseName + ".h"
+  %assign builtinTypeidTypesFilePath = FcnOutputFilePath(builtinTypeidTypesFileName)
+  %assign potentialBaseNames = potentialBaseNames + builtinTypeidTypesBaseName
+
+  %assign multiwordTypesBaseName = SLibGetFileNameForCode("multiwordTypes_hdr")
+  %assign multiwordTypesFileName = multiwordTypesBaseName + ".h"
+  %assign multiwordTypesFilePath = FcnOutputFilePath(multiwordTypesFileName)
+  %assign potentialBaseNames = potentialBaseNames + multiwordTypesBaseName
+
+  %assign zerocrossingTypesBaseName = SLibGetFileNameForCode("zerocrossingTypes_hdr")
+  %assign zerocrossingTypesFileName = zerocrossingTypesBaseName + ".h"
+  %assign zerocrossingTypesFilePath = FcnOutputFilePath(zerocrossingTypesFileName)
+  %assign potentialBaseNames = potentialBaseNames + zerocrossingTypesBaseName
+
+  %createrecord coderTypesInfo {}
+  %addtorecord coderTypesInfo BaseName rtwtypesBaseName
+  %addtorecord coderTypesInfo ModelReferenceTypesBaseName mdlrefTypesBaseName
+  %addtorecord coderTypesInfo BuiltinTypeidTypesBaseName builtinTypeidTypesBaseName
+  %addtorecord coderTypesInfo MultiwordTypesBaseName multiwordTypesBaseName
+  %addtorecord coderTypesInfo ZerocrossingTypesBaseName zerocrossingTypesBaseName
+  %addtorecord coderTypesInfo FileName rtwtypesFileName
+  %addtorecord coderTypesInfo ModelReferenceTypesFileName mdlrefTypesFileName
+  %addtorecord coderTypesInfo BuiltinTypeidTypesFileName builtinTypeidTypesFileName
+  %addtorecord coderTypesInfo MultiwordTypesFileName multiwordTypesFileName
+  %addtorecord coderTypesInfo ZerocrossingTypesFileName zerocrossingTypesFileName
+  %addtorecord coderTypesInfo FilePath rtwtypesFilePath
+  %addtorecord coderTypesInfo ModelReferenceTypesFilePath mdlrefTypesFilePath
+  %addtorecord coderTypesInfo BuiltinTypeidTypesFilePath builtinTypeidTypesFilePath
+  %addtorecord coderTypesInfo MultiwordTypesFilePath multiwordTypesFilePath
+  %addtorecord coderTypesInfo ZerocrossingTypesFilePath zerocrossingTypesFilePath
+  %addtorecord coderTypesInfo PotentialBaseNames potentialBaseNames
+
+  %<LibAddToCompiledModel("CoderTypesInfo", coderTypesInfo)>
+  
+%endfunction
+
+%% Function: SLibSetupCodeIdentifiers===========================================
+%% Abstract:
+%%   Sets up fields for various Identifiers used in the generated code.
+%%   Some of these fields are set up on the basis of the specific code format
+%%
+%function SLibSetupCodeIdentifiers() void
+
+  %%
+  %% Setup identifiers that do not depend on code format
+  %%
+  %<FcnSetupCommonCodeIdents()>
+
+  %% Clear the projected multiword scm map
+  %assign dummy = FEVAL("rtwprivate", "retrieveMultiWordUtilitiesAndFunctions", "%<::CompiledModel.LocalSharedCodeManagerFile>", 0, "")
+  
+  %% Only generate into _sharedutils if a sub-model or top model with references.
+  %% This provides for backwards compatibility of the user makefiles and other
+  %% custom post-codegen processing. Note: Any change to this logic should be
+  %% duplicated in infoMATFileMgr.m so that checking _sharedutil dir checksum is
+  %% done only when GenUtilsSrcInSharedLocation is set.
+  %assign gShared = 0
+  %assign gReusedLibs = 0
+  %if LibHasClientsOrServers() || ...
+    HasModelReferenceBlocksInModel() || ...
+    IsModelReferenceTarget() || ...
+    (::CompiledModel.ConfigSet.UtilityFuncGeneration == "Shared location") || ...
+    (::CompiledModel.ConfigSet.ExistingSharedCode != "")
+    %if !ISFIELD(::CompiledModel, "RTWInfoMatFile")
+      %<LoadRTWInfoMatFileforTLC()>
+    %endif
+    %assign gShared = 1
+    %assign gPath = ::CompiledModel.RTWInfoMatFile.sharedSourcesDir
+  %else
+    %assign gPath = FEVAL("rtwprivate", "rtwattic","getBuildDir")
+  %endif
+  %% Ensure MATLAB code and TLC code are in sync
+  %assign rtwgenshared = FEVAL("rtw_gen_shared_utils", LibGetModelName())
+  %assert rtwgenshared == gShared
+  %<LibAddToCompiledModel("GenUtilsSrcInSharedLocation", gShared)>
+  %<LibAddToCompiledModel("GenUtilsPath", gPath)>
+  %<LibAddToCompiledModel("GenReusedLibsOutsideModel", gReusedLibs)>
+  %% Store GenUtilsLocation in rtwattic for reference after TLC phase
+  %matlab rtwprivate("rtwattic","AtticData","genDirForTFL","%<::CompiledModel.GenUtilsPath>")
+
+  %assign ::Tid01Eq = ISEQUAL(::CompiledModel.SolverType, "FixedStep") && ...
+                      ::CompiledModel.FixedStepOpts.TID01EQ
+  %<LibAddToCompiledModel("Tid01Eq", Tid01Eq)>
+
+  %% We may have unstructured global parameters for model
+  %% blocks and modelref targets, independent of the code format.
+  %if IsModelReferenceTarget() || HasModelReferenceBlocks()
+    %assign name = "rtP"
+    %<LibAddToCompiledModel("tUnstructParameters", name)>
+  %endif
+  
+  %switch ::CompiledModel.CodeFormat
+    %case "Embedded-C"
+
+      %if !EXISTS("AutoBuildProcedure")
+	%assign ::AutoBuildProcedure = 0
+      %endif
+
+      %if IsModelReferenceTarget()
+	%assign ::AutoBuildProcedure = 0
+      %endif
+
+      %<LibAddToCompiledModel("AutoBuildProcedure", AutoBuildProcedure)>
+
+      %assign varPrefix = PrefixModelToStructs ? "%<::CompiledModel.Name>_" : "rt"
+      %assign tdPostfix = PrefixModelToStructs ? "_%<::CompiledModel.Name>" : ""
+
+      %<LibAddToCompiledModel("tLogObject", "rtL")>
+      %<LibAddToCompiledModel("tLogObjectType", "LogObject")>
+
+      %<LibAddToCompiledModel("tExtModeObject", "rtE")>
+      %<LibAddToCompiledModel("tExtModeObjectType", "ExtModeObject")>
+
+      %assign ::logObject     = "logObject"
+      %assign ::logObjectAddr = "&%<logObject>"
+
+      %assign upperSolver = FEVAL("upper", ::CompiledModel.Solver)
+      %<LibAddToCompiledModel("upperSolver", upperSolver)>
+      %assign solverOrder = IDNUM(::CompiledModel.Solver)[1]
+      %<LibAddToCompiledModel("solverOrder", solverOrder)>
+      %break
+
+    %case "RealTime"
+      %if !EXISTS("AutoBuildProcedure")
+	%assign ::AutoBuildProcedure = 0
+      %endif
+      %<LibAddToCompiledModel("AutoBuildProcedure", AutoBuildProcedure)>
+      
+      %assign upperSolver = FEVAL("upper", ::CompiledModel.Solver)
+      %<LibAddToCompiledModel("upperSolver", upperSolver)>
+      %assign solverOrder = IDNUM(::CompiledModel.Solver)[1]
+      %<LibAddToCompiledModel("solverOrder", solverOrder)>
+      %break
+
+    %case "S-Function"
+      %assign varPrefix = PrefixModelToStructs ? "%<::CompiledModel.Name>_" : ""
+      %assign tdPostfix = PrefixModelToStructs ? "_%<::CompiledModel.Name>" : ""
+
+      %if !EXISTS("AutoBuildProcedure")
+	%assign ::AutoBuildProcedure = 0
+      %endif
+      %<LibAddToCompiledModel("AutoBuildProcedure", AutoBuildProcedure)>
+
+      %break
+
+  %endswitch
+
+  %%
+  %% Constant run-time parameters
+  %%
+  %if !EXISTS("tConstPrms")
+    %assign ::tConstPrms = "rtCP"
+  %endif
+
+  %%
+  %% Default logObject is the SimStruct. Is overridden in some
+  %% code formats
+  %%
+  %if !EXISTS("logObject")
+    %assign ::logObject   = ::tSimStruct
+    %assign ::logObjectAddr = ::tSimStruct
+  %endif
+
+%endfunction %% SLibSetupCodeFmtRTWIdents
+
+
+%% Function: SLibSetupLibSrcFcnNames ===========================================
+%% Abstract:
+%%   Setup LibSrc function names.
+%%
+%function SLibSetupLibSrcFcnNames() void
+  %if !EXISTS("tCreateLogVar")
+    %assign ::tCreateLogVar = "rt_CreateLogVar"
+  %endif
+
+  %if !EXISTS("tCreateLogVarWithConvert")
+    %assign ::tCreateLogVarWithConvert = "rt_CreateLogVarWithConvert"
+  %endif
+
+  %if !EXISTS("tUpdateLogVar")
+    %assign ::tUpdateLogVar = "rt_UpdateLogVar"
+  %endif
+
+  %if !EXISTS("tCreateStructLogVar")
+    %assign ::tCreateStructLogVar = \
+      "rt_CreateStructLogVar"
+  %endif
+
+  %if !EXISTS("tUpdateStructLogVar")
+    %assign ::tUpdateStructLogVar = \
+      "rt_UpdateStructLogVar"
+  %endif
+
+  %<LibAddToCompiledModel("tCreateLogVar", tCreateLogVar)>
+  %<LibAddToCompiledModel("tUpdateLogVar", tUpdateLogVar)>
+  %<LibAddToCompiledModel("tCreateStructLogVar", tCreateStructLogVar)>
+  %<LibAddToCompiledModel("tUpdateStructLogVar", tUpdateStructLogVar)>
+
+%endfunction %% SLibSetupLibSrcFcnNames
+
+
+%% Function: SLibCheckCompiledModel ============================================
+%% Abstract:
+%%   Check if the ::CompiledModel satisfies some important preliminary criteria:
+%%    - There are no algebraic loops
+%%
+%function SLibCheckCompiledMdl() void
+  %%
+  %% Exit if there are any algebraic loops
+  %%
+  %if ::CompiledModel.NumAlgebraicLoops > 0
+    %if !Accelerator
+      %<SLibReportErrorWithIdAndArgs("RTW:tlc:AlgebraicLoop", "Simulink Coder")>
+     %endif
+  %endif
+%endfunction %% SLibCheckCompiledMdl
+
+
+%% Function: SLibSetupDoCodeFmtChecks ==========================================
+%% Abstract:
+%%   Do checks that pertain to specific code formats
+%%
+%function SLibSetupDoCodeFmtChecks() void
+  %%
+  %% S-Function wrapper for ERT-C-Code
+  %%
+  %if !EXISTS("GenerateErtSFunction")
+    %assign ::GenerateErtSFunction = 0
+  %endif
+  %if GenerateErtSFunction == 1
+    %if !SLibIsERTCodeFormat()
+      %<SLibReportErrorWithId("RTW:tlc:ERTSfcn")>
+    %elseif LibIsContinuous(0)
+      %<SLibReportErrorWithId("RTW:tlc:ERTSfcn2")>
+    %endif
+  %endif
+  %<LibAddToCompiledModel("GenerateErtSFunction", GenerateErtSFunction)>
+
+  %<LibAddToCompiledModel("EmptyRealTimeObject", 0)>
+
+  %%
+  %% Flag to determine if purely integer code is to be generated.
+  %% This flag will be set to 1 if INTEGER_CODE=1 is specified on the make_rtw
+  %% command line.
+  %% NOTE: This flag is only supported for the Embedded-C code format.
+  %%
+  %if PurelyIntegerCode == 1 && !SLibIsERTCodeFormat()
+    %<SLibReportErrorWithId("RTW:tlc:IntegerOnly")>
+  %endif
+
+  %%
+  %% Flag to indicate the model.rtw has been created with root Inports
+  %% non-contiguous.  This is required for the S-Function code format.
+  %%
+  %if CodeFormat == "S-Function" && !Accelerator
+    %assign InvalidSTF = 1
+    %if ISFIELD(::CompiledModel.RTWGenSettings,"IsRTWSfcn")
+      %if ::CompiledModel.RTWGenSettings.IsRTWSfcn == "yes"
+	%assign InvalidSTF = 0
+      %endif
+    %endif
+    %if InvalidSTF == 1
+      %<SLibReportErrorWithId("RTW:tlc:SfcnCodeFormat")>
+    %endif
+  %endif
+  
+  %% Report errors for unsupported C++ targets  
+  %if GenCPP == 1
+    %assign ::cppxPC     = 0
+    %if EXISTS("xPC") && (xPC == 1)
+        %assign ::cppxPC = 1
+    %endif
+    %if cppxPC == 1
+      %<SLibReportErrorWithId("RTW:tlc:CPPForxPC")>
+    %endif
+  %endif
+%endfunction %% SLibSetupDoCodeFmtChecks
+
+
+%% Function: SLibSetupAdaCGTrackingFields ======================================
+%% Abstract:
+%%   Setup variables that track Ada code generation.
+%%
+%function SLibSetupAdaCGTrackingFields() void
+  %%
+  %% With RT_Lookup
+  %%
+  %if !EXISTS("WithRTlook")
+    %assign ::WithRTlook = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTlook", WithRTlook)>
+
+  %%
+  %% With RT_Lookup2D
+  %%
+  %if !EXISTS("WithRTlook2D")
+    %assign ::WithRTlook2D = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTlook2D", WithRTlook2D)>
+
+  %%
+  %% With RT_LookupND
+  %%
+  %if !EXISTS("WithRTLookupND")
+    %assign ::WithRTLookupND = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTLookupND", WithRTLookupND)>
+
+  %%
+  %% With RT_LookupND32
+  %%
+  %if !EXISTS("WithRTLookupND32")
+    %assign ::WithRTLookupND32 = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTLookupND32", WithRTLookupND32)>
+
+  %%
+  %% With RT_SplineND
+  %%
+  %if !EXISTS("WithRTSplineND")
+    %assign ::WithRTSplineND = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTSplineND", WithRTSplineND)>
+
+  %%
+  %% With RT_SplineND32
+  %%
+  %if !EXISTS("WithRTSplineND32")
+    %assign ::WithRTSplineND32 = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTSplineND32", WithRTSplineND32)>
+
+  %%
+  %% With RT_Rand
+  %%
+  %if !EXISTS("WithRTrand")
+    %assign ::WithRTrand = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTrand", WithRTrand)>
+
+  %%
+  %% Flag to include integer multiply and divide saturation routines.
+  %%
+  %if !EXISTS("WithRTsat")
+    %assign ::WithRTsat = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTsat", WithRTsat)>
+
+  %%
+  %% With RT_Matrix
+  %%
+  %if !EXISTS("WithRTmat")
+    %assign ::WithRTmat = 0
+  %endif
+  %<LibAddToCompiledModel("WithRTmat", WithRTmat)>
+
+  %%
+  %% With Cstreams
+  %%
+  %if !EXISTS("WithCstreams")
+    %assign ::WithCstreams = 0
+  %endif
+  %<LibAddToCompiledModel("WithCstreams", WithCstreams)>
+
+  %%
+  %% Flag to include declaration of constants for pi, e, ln(10), log10(e)
+  %%
+  %if !EXISTS("MathConstantDefines")
+    %assign Pi = PiRec { Required 0 }
+    %assign E = ERec { Required 0 }
+    %assign LN10   = LN10Rec { Required 0 }
+    %assign LOG10E = LOG10E { Required 0 }
+    %assign MathConstantDefines = MathConstantDefinesRec { Stub 0 }
+    %assign MathConstantDefines = MathConstantDefines + Pi
+    %assign MathConstantDefines = MathConstantDefines + E
+    %assign MathConstantDefines = MathConstantDefines + LN10
+    %assign MathConstantDefines = MathConstantDefines + LOG10E
+  %endif
+  %assign ::MathConstantDefines = MathConstantDefines
+  %<LibAddToCompiledModel("MathConstantDefines", MathConstantDefines)>
+
+%endfunction %% SLibSetupAdaCGTrackingFields
+
+
+%% Function: SLibSetupBIOAPI ===================================================
+%% Abstract:
+%%   Setup Block IO Signals C API for monitoring signals in a running model
+%%
+%function SLibSetupBIOAPI() void
+  %if !EXISTS("BlockIOSignals")
+    %assign ::BlockIOSignals = 0
+  %endif
+  %if BlockIOSignals == 1
+    %<SLibReportErrorWithId("RTW:tlc:DeprecatedParamTuningAndBlockIOSig")>
+    %endif
+%endfunction %% SLibSetupBIOAPI
+
+
+%% Function: SLibSetupPrmAPI ==================================================
+%% Abstract:
+%%   Parameter Tuning C API for changing parameter values in a running model
+%%
+%function SLibSetupPrmAPI() void
+  %if !EXISTS("ParameterTuning")
+    %assign ::ParameterTuning = 0
+  %endif
+  %if ParameterTuning == 1
+    %<SLibReportErrorWithId("RTW:tlc:DeprecatedParamTuningAndBlockIOSig")>
+  %endif
+%endfunction %% SLibSetupPrmAPI
+
+%% Function: SLibSetupCAPI ====================================================
+%% Abstract:
+%%   Setup C API for monitoring signals and tuning parameter in a running model
+%%
+%%
+%function SLibSetupCAPI() void
+  %if !EXISTS("RTWCAPITestPtSignals")
+    %assign ::RTWCAPITestPtSignals = 0
+  %endif
+  %if !EXISTS("RTWCAPISignals")
+    %assign ::RTWCAPISignals     = 0
+  %endif
+
+  %% Only generate testpoints in the BlockSignals C-API structure if
+  %% generating code for ModelRef Sim target.
+  %if IsModelReferenceSimTarget()
+    %assert (::RTWCAPISignals)
+    %% We do not need all global signals. We only need
+    %% test pointed signals
+    %assign ::RTWCAPITestPtSignals = 1
+  %endif
+
+  %if !EXISTS("RTWCAPIParams")
+      %assign ::RTWCAPIParams    = 0
+  %endif
+  %if !EXISTS("WriteCAPIUsingTemplates")
+    %assign ::WriteCAPIUsingTemplates = 1
+  %endif
+    
+  %% Add logic for turning on RTWCAPI States here
+  %if !EXISTS("MatFileLogging")
+    %assign ::MatFileLogging = 0
+    %% Above line needs to replaced with below line with Matt's change
+    %% %assign ::MatFileLogging = ::CompiledModel.ConfigSet.MatFileLogging
+  %endif
+  %% Compute if State Logging needs CAPI States. This is true if: 
+  %%  (1) there are model blocks
+  %%  (2) state logging is on
+  %%  (3) MatFileLogging is on
+  %%  (4) the old api is not specified
+  
+  %assign RTWStatesLogging = 0
+  %if !IsModelReferenceTarget() && HasModelReferenceBlocks()
+    %assign dlo = ::CompiledModel.DataLoggingOpts
+    %if ((dlo.StateSaveName != "" || dlo.FinalStateName != "") && ...
+         (MatFileLogging == 1))
+        %assign RTWStatesLogging = 1 
+      %endif
+    %endif
+  %<LibAddToCompiledModel("RTWStatesLogging",RTWStatesLogging)> 
+  
+  %if ISFIELD(::CompiledModel.ConfigSet, "RTWCAPIStates")
+    %assign ConfigSetCAPIStates    = ::CompiledModel.ConfigSet.RTWCAPIStates
+  %else
+    %assign ConfigSetCAPIStates    = 0
+  %endif
+  
+  %if !EXISTS("RTWCAPIStates")
+    %assign ::RTWCAPIStates = 0
+  %endif  
+  %assign ::RTWCAPIRootIO = 0
+  %if ISFIELD(::CompiledModel.ConfigSet, "RTWCAPIRootIO") && ...
+    ::CompiledModel.ConfigSet.RTWCAPIRootIO==TLC_TRUE
+    %assign ::RTWCAPIRootIO  = 1
+  %endif
+  %% RTWCAPIStates is ON if either RTWCAPIStates (Model Reference Simulation, 
+  %% -aRTWCAPIStates TLC option) OR RTWStatesLogging (States are logged) OR 
+  %% ConfigSetCAPIStates (States is ON in the Config Set)
+  %if RTWCAPIStates==0
+    %assign ::RTWCAPIStates = RTWStatesLogging || ConfigSetCAPIStates
+  %endif
+  %assign ::RTWCAPI = ::RTWCAPISignals || ::RTWCAPIParams || ::RTWCAPIStates ...
+    || ::RTWCAPIRootIO 
+  %if RTWCAPI
+    %assign ::CompiledModel.HaveSeparateSourceFiles = 1
+  %endif
+  %if (RTWCAPIParams) && (CodeFormat == "S-Function")
+    %<SLibReportErrorWithId("RTW:tlc:CAPIAccel2")>
+  %endif
+  %if PurelyIntegerCode && RTWCAPI
+    %<SLibReportErrorWithId("RTW:tlc:CAPIIntegerOnly")>
+  %endif
+  %if !EXISTS("xPC")
+    %assign ::xPC = 0
+  %endif
+  %assign ::tBlockSignals       = "rtBlockSignals"
+  %assign ::tBlockSignalsType   = "rtwCAPI_Signals"
+  %assign ::tBlockStates        = "rtBlockStates"
+  %assign ::tBlockStatesType    = "rtwCAPI_States"
+  %assign ::tBlockParams        = "rtBlockParameters"
+  %assign ::tBlockParamsType    = "rtwCAPI_BlockParameters"
+  %assign ::tModelParams        = "rtModelParameters"
+  %assign ::tModelParamsType    = "rtwCAPI_ModelParameters"
+  %assign ::tRootInputs         = "rtRootInputs"
+  %assign ::tRootOutputs        = "rtRootOutputs"
+  %assign ::tDataAddrType       = "void* "
+  %assign ::tDataAddrMap        = "rtDataAddrMap"
+  %assign ::tDataTypeMapType    = "rtwCAPI_DataTypeMap"
+  %assign ::tDataTypeMap        = "rtDataTypeMap"
+  %assign ::tDimensionMapType   = "rtwCAPI_DimensionMap"
+  %assign ::tDimensionMap       = "rtDimensionMap"
+  %assign ::tDimensionArrayType = "uint_T"
+  %assign ::tDimensionArray     = "rtDimensionArray"
+  %assign ::tFixPtMapType       = "rtwCAPI_FixPtMap"
+  %assign ::tFixPtMap           = "rtFixPtMap"
+  %assign ::tElementMapType     = "rtwCAPI_ElementMap"
+  %assign ::tElementMap         = "rtElementMap"
+  %assign ::tSampleTimeMapType  = "rtwCAPI_SampleTimeMap"
+  %assign ::tSampleTimeMap      = "rtSampleTimeMap"
+  %assign ::tVarDimsAddrMapType = "int32_T* "
+  %assign ::tVarDimsAddrMap     = "rtVarDimsAddrMap"
+  %assign ::SupportTunableStructParam  = 1
+
+  %<LibAddToCompiledModel("RTWCAPI", RTWCAPI)>
+  %<LibAddToCompiledModel("RTWCAPISignals", RTWCAPISignals)>
+  %<LibAddToCompiledModel("RTWCAPIParams", RTWCAPIParams)>
+  %<LibAddToCompiledModel("RTWCAPITestPtSignals", RTWCAPITestPtSignals)>
+  %<LibAddToCompiledModel("RTWCAPIStates", RTWCAPIStates)>
+  %if RTWCAPI
+    %assign ::CompiledModel.GenerateInterfaceAPI = 1
+  %endif
+  %if RTWCAPISignals
+    %assign ::CompiledModel.MapBlockOutputs = 1
+  %endif
+  %if RTWCAPIParams
+    %assign ::CompiledModel.MapParameters        = 1
+    %assign ::CompiledModel.MapStateflow         = 1
+  %endif
+  %if RTWCAPIStates
+    %assign ::CompiledModel.MapDWork = 1
+    %assign ::CompiledModel.MapContStates = 1
+  %endif
+  %if RTWCAPIRootIO
+    %assign ::CompiledModel.MapExternalInputs  = 1
+    %assign ::CompiledModel.MapExternalOutputs = 1
+  %endif
+  %if EXISTS("GenerateASAP2") && GenerateASAP2==1
+    %assign ::CompiledModel.MapExternalOutputs = 1
+  %endif
+%endfunction %% SLibSetupCAPI
+
+%% Function: SLibSetupAndCheckCustomSC =========================================
+%% Abstract:
+%%   Setup custom storage classes.
+%%
+%function SLibSetupAndCheckCustomSC() void
+  
+  %if !ISFIELD(::CompiledModel.ConfigSet, "MemSecPackage")
+    %% Return early if non-ERT target
+    %addtorecord ::CompiledModel CoderDictionary {DefaultMemorySections ""}
+    %return
+  %endif
+  
+  %% Create a record in ::CompiledModel.CoderDictionary with same structure as 
+  %% ::CompiledModel.ConfigSet (just for memory sections). This will help 
+  %% minimize changes to downstream TLC code. 
+  %% 
+  %% In the .rtw file, the record is structured differently (that is, each 
+  %% memory section has its own class and package). Since this (or fully 
+  %% modeled MS) is the long-term plan, the structure in .rtw file aligns with
+  %% the long-term plam. 
+  %if SLibIsCoderDictionaryActiveForDefaults()
+    %% Memory Section class and package names are stored in the defaults mapping
+    
+    %% NOTE: In 17b, memory sections can only be selected from one package
+    %assign msPackage = ::CompiledModel.CoderDictionary.PackageForDefaults
+    
+    %% Function Defaults
+    %assign fcnDefaults = ::CompiledModel.CoderDictionary.FunctionDefaults
+    %assign msInitTerm = FcnGetMemorySection(fcnDefaults.InitializeTerminate)
+    %assign msExec = FcnGetMemorySection(fcnDefaults.Execution)
+    %assign msSharedUtil = FcnGetMemorySection(fcnDefaults.SharedUtility)
+    
+    %% Data Defaults
+    %assign dataDefaults = ::CompiledModel.CoderDictionary.DataDefaults
+    %assign msInputs = FcnGetMemorySection(dataDefaults.Inputs)
+    %assign msOutputs = FcnGetMemorySection(dataDefaults.Outputs)
+    %assign msConstants = FcnGetMemorySection(dataDefaults.Constants)
+    %assign msInternal = FcnGetMemorySection(dataDefaults.InternalData)
+
+    %assign msParameters = "Default"
+    %assign parametersMSRec = ""
+    %if ISFIELD(dataDefaults.LocalParameters, "MemorySection")
+      %assign parametersMSRec = dataDefaults.LocalParameters
+    %elseif ISFIELD(dataDefaults.GlobalParameters, "MemorySection")
+      %assign parametersMSRec = dataDefaults.GlobalParameters
+    %endif
+ 
+    %if (!ISEMPTY(parametersMSRec))
+      %assign msParameters = FcnGetMemorySection(parametersMSRec)
+    %endif
+    
+  %else
+    %% Memory Section class and package names are stored in the ConfigSet
+    
+    %assign msPackage = ::CompiledModel.ConfigSet.MemSecPackage
+    
+    %% Function Defaults
+    %assign msInitTerm = ::CompiledModel.ConfigSet.MemSecFuncInitTerm
+    %assign msExec = ::CompiledModel.ConfigSet.MemSecFuncExecute
+    %assign msSharedUtil = ::CompiledModel.ConfigSet.MemSecFuncSharedUtil  
+    
+    %% Data Defaults
+    %assign msInputs = ::CompiledModel.MemorySectionsFromMapping.MemSecDataInputs
+    %assign msOutputs = ::CompiledModel.MemorySectionsFromMapping.MemSecDataOutputs
+    %assign msConstants = ::CompiledModel.MemorySectionsFromMapping.MemSecDataConstants
+    %assign msInternal = ::CompiledModel.MemorySectionsFromMapping.MemSecDataInternal
+    %assign msParameters = ::CompiledModel.MemorySectionsFromMapping.MemSecDataParameters
+  %endif
+  
+  %if !ISFIELD(::CompiledModel, "CoderDictionary")
+    %% CoderDictionary record does not exist if CodeInterfaceCustomization < 2
+    %addtorecord ::CompiledModel CoderDictionary {DefaultMemorySections ""}   
+  %else
+    %addtorecord ::CompiledModel.CoderDictionary DefaultMemorySections ""
+  %endif
+  
+  %createrecord msRecords { MemSecPackage "%<msPackage>" ; ...
+    MemSecFuncInitTerm msInitTerm; ...
+    MemSecFuncExecute msExec; ...
+    MemSecFuncSharedUtil msSharedUtil; ...
+    MemSecDataInputs msInputs; ...
+    MemSecDataOutputs msOutputs; ...
+    MemSecDataConstants msConstants; ...
+    MemSecDataInternal msInternal; ...
+    MemSecDataParameters msParameters } 
+  
+  %assign ::CompiledModel.CoderDictionary.DefaultMemorySections = msRecords
+  
+  %with ::CompiledModel
+    %if ( (CustomStorageClasses.NumCustomStorageClasses > 0) || ...
+      ((ISFIELD(::CompiledModel.ConfigSet, "MemSecPackage")) && ...
+      ("--- None ---" != ::CompiledModel.ConfigSet.MemSecPackage)) || ...
+      (SLibIsCoderDictionaryActiveForDefaults() && ...
+      ("--- None ---" != ::CompiledModel.CoderDictionary.PackageForDefaults)) ) 
+      %% Setup custom storage classes if we have any
+      %<SLibSetupCustomStorageClasses()>
+    %endif
+  %endwith
+  
+%endfunction %% SLibSetupAndCheckCustomSC
+
+%% Function: FcnGetMemorySection =========================================
+%% Abstract:
+%%   Get memory section information given a data or function category record
+%%
+%function FcnGetMemorySection(categoryRec) void  
+  %assign ms = "Default" 
+  %if ISFIELD(categoryRec, "MemorySection") 
+    %assign msRec = categoryRec.MemorySection
+    %assign ms = SLibGetMemorySectionForUUID(msRec.UUID)  
+  %endif
+  
+  %return ms
+%endfunction %% FcnGetMemorySection
+
+%% Function: FcnCacheRootBodyMthNames ==========================================
+%% Abstract:
+%%   Cache method names for the root system based on code format
+%%
+%function FcnCacheRootBodyMthNames(rootSys,useCaps,useMdlName,reqMethods) void
+  %assign mPrefix = useCaps ? "M" : "m"
+
+  %if !ISFIELD(rootSys,"OutputFcn") && reqMethods.OutputFcn
+    %if useMdlName
+      %addtorecord rootSys OutputFcn "%<Name>_output"
+    %else
+      %addtorecord rootSys OutputFcn "%<mPrefix>dlOutputs"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"UpdateFcn") && reqMethods.UpdateFcn
+    %if useMdlName
+      %addtorecord rootSys UpdateFcn "%<Name>_update"
+    %else
+      %addtorecord rootSys UpdateFcn "%<mPrefix>dlUpdate"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"DerivativeFcn") && reqMethods.DerivativeFcn
+    %if useMdlName
+      %addtorecord rootSys DerivativeFcn "%<Name>_derivatives"
+    %else
+      %addtorecord rootSys DerivativeFcn "%<mPrefix>dlDerivatives"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"ProjectionFcn") && reqMethods.ProjectionFcn
+    %if useMdlName
+      %addtorecord rootSys ProjectionFcn "%<Name>_projection"
+    %else
+      %addtorecord rootSys ProjectionFcn "%<mPrefix>dlProjection"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"ForcingFunctionFcn") && reqMethods.ForcingFunctionFcn
+    %if useMdlName
+      %addtorecord rootSys ForcingFunctionFcn "%<Name>_forcingfunction"
+    %else
+      %addtorecord rootSys ForcingFunctionFcn "%<mPrefix>dlForcingFunction"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"MassMatrixFcn") && reqMethods.MassMatrixFcn
+    %if useMdlName
+      %addtorecord rootSys MassMatrixFcn "%<Name>_massmatrix"
+    %else
+      %addtorecord rootSys MassMatrixFcn "%<mPrefix>dlMassMatrix"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"InitSystemMatricesFcn") && reqMethods.InitSystemMatricesFcn
+    %if useMdlName
+      %addtorecord rootSys InitSystemMatricesFcn "%<Name>_initsystemmatrices"
+    %else
+      %addtorecord rootSys InitSystemMatricesFcn "%<mPrefix>dlInitSystemMatrices"
+    %endif
+  %endif  
+  
+  %if !ISFIELD(rootSys,"SetupRuntimeResourcesFcn") && reqMethods.SetupRuntimeResourcesFcn
+    %if useMdlName
+       %addtorecord rootSys SetupRuntimeResourcesFcn "%<Name>_setupruntimeresources"
+    %else
+       %addtorecord rootSys SetupRuntimeResourcesFcn "%<mPrefix>dlSetupRuntimeResources"
+    %endif
+  %endif
+  
+  %if !ISFIELD(rootSys,"InitializeFcn") && reqMethods.InitializeFcn
+    %if useMdlName
+      %addtorecord rootSys InitializeFcn "%<Name>_initialize"
+    %else
+      %if CodeFormat == "S-Function"
+	%addtorecord rootSys InitializeFcn "%<mPrefix>dlInitializeConditions"
+      %else
+	%addtorecord rootSys InitializeFcn "%<mPrefix>dlInitialize"
+      %endif
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"SystemInitializeFcn") && reqMethods.SystemInitializeFcn
+    %if useMdlName
+      %addtorecord rootSys SystemInitializeFcn "%<Name>_initialize"
+    %else
+      %if CodeFormat == "S-Function"
+	%addtorecord rootSys SystemInitializeFcn "%<mPrefix>dlInitializeConditions"
+      %else
+	%addtorecord rootSys SystemInitializeFcn "%<mPrefix>dlInitialize"
+      %endif
+    %endif
+  %endif
+  
+  %if !ISFIELD(rootSys,"SystemResetFcn") && reqMethods.SystemResetFcn
+    %if useMdlName
+      %addtorecord rootSys SystemResetFcn "%<Name>_reset"
+    %else
+      %addtorecord rootSys SystemResetFcn "%<mPrefix>dlReset"
+    %endif
+  %endif
+  
+  %if !ISFIELD(rootSys,"SharedInitializeFcn") && reqMethods.SharedInitializeFcn
+    %if useMdlName
+      %addtorecord rootSys SharedInitializeFcn "%<Name>_sharedInitialize"
+    %else
+      %addtorecord rootSys SharedInitializeFcn "%<mPrefix>dlSharedInitialize"
+    %endif
+  %endif
+  
+  %if !ISFIELD(rootSys,"EnableFcn") && reqMethods.EnableFcn
+    %if useMdlName
+      %addtorecord rootSys EnableFcn "%<Name>_enable"
+    %else
+      %addtorecord rootSys EnableFcn "%<mPrefix>dlEnable"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"DisableFcn") && reqMethods.DisableFcn
+    %if useMdlName
+      %addtorecord rootSys DisableFcn "%<Name>_disable"
+    %else
+      %addtorecord rootSys DisableFcn "%<mPrefix>dlDisable"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"ZeroCrossingFcn") && reqMethods.ZeroCrossingFcn
+    %if useMdlName
+      %addtorecord rootSys ZeroCrossingFcn "%<Name>_zeroCrossings"
+    %else
+      %addtorecord rootSys ZeroCrossingFcn "%<mPrefix>dlZeroCrossings"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"StartFcn") && reqMethods.StartFcn
+    %if useMdlName
+      %addtorecord rootSys StartFcn "%<Name>_start"
+    %else
+      %addtorecord rootSys StartFcn "%<mPrefix>dlStart"
+    %endif
+  %endif
+  
+  %if !ISFIELD(rootSys,"CleanupRuntimeResourcesFcn") && reqMethods.CleanupRuntimeResourcesFcn
+    %if useMdlName
+      %addtorecord rootSys CleanupRuntimeResourcesFcn "%<Name>_cleanupruntimeresources"
+    %else
+      %addtorecord rootSys CleanupRuntimeResourcesFcn "%<mPrefix>dlCleanupRuntimeResources"
+    %endif
+  %endif
+  
+  %if !ISFIELD(rootSys,"TerminateFcn") && reqMethods.TerminateFcn
+    %if useMdlName
+      %addtorecord rootSys TerminateFcn "%<Name>_terminate"
+    %else
+      %addtorecord rootSys TerminateFcn "%<mPrefix>dlTerminate"
+    %endif
+  %endif
+
+  %if !ISFIELD(rootSys,"ConstCodeFcn") && reqMethods.ConstCodeFcn
+    %if useMdlName
+      %addtorecord rootSys ConstCodeFcn "%<Name>_Const"
+    %else
+      %addtorecord rootSys ConstCodeFcn "%<mPrefix>dlConst"
+    %endif
+  %endif
+  
+  %if !ISFIELD(rootSys,"ModelInitialize") && reqMethods.ModelInitializeFcn
+    %if useMdlName
+      %addtorecord rootSys ModelInitializeFcn "%<Name>_Initialize"
+    %else
+      %addtorecord rootSys ModelInitializeFcn "%<mPrefix>dlInitialize"
+    %endif
+  %endif
+%endfunction %% FcnCacheRootBodyMthNames
+
+
+%% Function: FcnSetupRootBodyReqMths ==========================================
+%% Abstract:
+%%   Cache the root methods that are required by each code format
+%%
+%function FcnSetupRootBodyReqMths() void
+  %%
+  %% Initialize the record to have no methods
+  %%
+  %createrecord reqBodyMethods \
+     {\
+        EnableFcn            TLC_FALSE;\
+        DisableFcn           TLC_FALSE;\
+        SetupRuntimeResourcesFcn TLC_FALSE;\
+	InitializeFcn        TLC_FALSE;\
+        SystemInitializeFcn  TLC_FALSE;\
+        SystemResetFcn       TLC_FALSE;\
+        SharedInitializeFcn  TLC_FALSE;\
+	StartFcn             TLC_FALSE;\
+	OutputFcn            TLC_FALSE;\
+	UpdateFcn            TLC_FALSE;\
+	OutputUpdateFcn      TLC_FALSE;\
+	DerivativeFcn        TLC_FALSE;\
+        ProjectionFcn        TLC_FALSE;\
+        ForcingFunctionFcn   TLC_FALSE;\
+        MassMatrixFcn        TLC_FALSE;\
+        InitSystemMatricesFcn TLC_FALSE;\
+        CleanupRuntimeResourcesFcn TLC_FALSE;\
+	TerminateFcn         TLC_FALSE;\
+        ConstCodeFcn         TLC_FALSE;\
+        ModelInitializeFcn   TLC_FALSE;\
+	ZeroCrossingFcn      TLC_FALSE\
+      }
+
+  %switch CodeFormat
+    %case "RealTime"
+      %assign reqBodyMethods.StartFcn            = TLC_TRUE
+      %assign reqBodyMethods.SystemInitializeFcn = TLC_TRUE
+      %assign reqBodyMethods.SystemResetFcn      = TLC_TRUE
+      %assign reqBodyMethods.EnableFcn           = TLC_TRUE
+      %assign reqBodyMethods.OutputFcn           = TLC_TRUE
+      %assign reqBodyMethods.UpdateFcn           = TLC_TRUE
+      %assign reqBodyMethods.DerivativeFcn       = TLC_TRUE
+      %assign reqBodyMethods.ProjectionFcn       = TLC_TRUE
+      %assign reqBodyMethods.ForcingFunctionFcn  = TLC_TRUE
+      %assign reqBodyMethods.MassMatrixFcn       = TLC_TRUE
+      %assign reqBodyMethods.InitSystemMatricesFcn = TLC_TRUE
+      %assign reqBodyMethods.TerminateFcn        = TLC_TRUE
+      %if isRSimWithSolverModule %% ModelReference is ok. Embedded-C supports all
+	%assign reqBodyMethods.ZeroCrossingFcn = TLC_TRUE
+      %endif
+      %assign reqBodyMethods.ConstCodeFcn        = TLC_TRUE
+      %break
+    %case "S-Function"
+      %if Accelerator
+	%assign reqBodyMethods.OutputFcn           = TLC_TRUE
+	%assign reqBodyMethods.UpdateFcn           = TLC_TRUE
+	%assign reqBodyMethods.DerivativeFcn       = TLC_TRUE
+	%assign reqBodyMethods.ProjectionFcn       = TLC_TRUE
+        %assign reqBodyMethods.ForcingFunctionFcn  = TLC_TRUE
+        %assign reqBodyMethods.MassMatrixFcn       = TLC_TRUE
+        %assign reqBodyMethods.InitSystemMatricesFcn = TLC_TRUE        
+        %assign reqBodyMethods.ZeroCrossingFcn     = TLC_TRUE
+	%assign reqBodyMethods.TerminateFcn        = TLC_TRUE 
+        %assign reqBodyMethods.SetupRuntimeResourcesFcn  = TLC_TRUE 
+        %assign reqBodyMethods.CleanupRuntimeResourcesFcn = TLC_TRUE
+      %else
+	%assign reqBodyMethods.StartFcn            = TLC_TRUE
+        %assign reqBodyMethods.SystemInitializeFcn = TLC_TRUE
+        %assign reqBodyMethods.SystemResetFcn      = TLC_TRUE
+	%assign reqBodyMethods.EnableFcn           = TLC_TRUE
+	%assign reqBodyMethods.DisableFcn          = TLC_TRUE
+	%assign reqBodyMethods.OutputFcn           = TLC_TRUE
+	%assign reqBodyMethods.UpdateFcn           = TLC_TRUE
+	%assign reqBodyMethods.DerivativeFcn       = TLC_TRUE
+	%assign reqBodyMethods.ProjectionFcn       = TLC_TRUE
+        %assign reqBodyMethods.ForcingFunctionFcn  = TLC_TRUE
+        %assign reqBodyMethods.MassMatrixFcn       = TLC_TRUE
+        %assign reqBodyMethods.InitSystemMatricesFcn = TLC_TRUE
+        %assign reqBodyMethods.ZeroCrossingFcn     = TLC_TRUE
+	%assign reqBodyMethods.TerminateFcn        = TLC_TRUE
+        %assign reqBodyMethods.ConstCodeFcn        = TLC_TRUE
+        %assign reqBodyMethods.SetupRuntimeResourcesFcn  = TLC_TRUE 
+        %assign reqBodyMethods.CleanupRuntimeResourcesFcn = TLC_TRUE
+      %endif
+      %break
+    %case "Embedded-C"
+    %case "Ada"
+      %assign reqBodyMethods.StartFcn            = TLC_TRUE
+      %assign reqBodyMethods.SystemInitializeFcn = TLC_TRUE
+      %assign reqBodyMethods.SystemResetFcn      = TLC_TRUE
+      %assign reqBodyMethods.EnableFcn           = TLC_TRUE
+      %if EXISTS("GenerateErtSFunction") && ...
+        ::GenerateErtSFunction == 1
+        %% ERT sfunction need generate disable function 
+        %% in it wrapper
+        %assign reqBodyMethods.DisableFcn      = TLC_TRUE  
+      %endif
+      %assign reqBodyMethods.OutputFcn           = TLC_TRUE
+      %assign reqBodyMethods.UpdateFcn           = TLC_TRUE
+      %assign reqBodyMethods.DerivativeFcn       = TLC_TRUE
+      %assign reqBodyMethods.ProjectionFcn       = TLC_TRUE
+      %assign reqBodyMethods.ForcingFunctionFcn  = TLC_TRUE
+      %assign reqBodyMethods.MassMatrixFcn       = TLC_TRUE
+      %assign reqBodyMethods.InitSystemMatricesFcn = TLC_TRUE
+      %assign reqBodyMethods.ZeroCrossingFcn     = TLC_TRUE
+      %assign reqBodyMethods.TerminateFcn        = TLC_TRUE
+      %assign reqBodyMethods.ConstCodeFcn        = TLC_TRUE
+      %assign reqBodyMethods.ModelInitializeFcn  = TLC_TRUE
+      %break
+    %default
+      %break
+  %endswitch
+
+  %return reqBodyMethods
+
+%endfunction %% FcnSetupRootBodyReqMths
+
+%function FcnParamsAreGlobalStruct() void
+  %switch CodeFormat
+    %case "RealTime"
+      %return TLC_TRUE
+      %break
+    %case "S-Function"
+      %return TLC_TRUE
+      %break
+    %case "Embedded-C"
+      %if ::CompiledModel.ParametersInRTMForMultiInstanceERT > 0
+        %return !MultiInstanceERTCode
+      %elseif GenerateClassInterface
+	%return TLC_TRUE 
+      %elseif (::CompiledModel.ParametersInRTMForMultiInstanceERT > 0) && isGRTMallocOnERT()
+        %return TLC_FALSE
+      %else
+        %return TLC_TRUE
+      %endif
+      %break
+    %default
+      %return TLC_FALSE
+      %break
+  %endswitch
+%endfunction
+
+
+%% Function: FcnSetupRootPrmHdrReqInstances ====================================
+%% Abstract:
+%%   Setup the required root parameter data instance vectors for the various
+%%   code formats
+%%
+%function FcnSetupRootPrmHdrReqInstances(rootSys) void
+
+  %<LibAddToCompiledModel("XQualifier",     IOQualifier)>
+  %<LibAddToCompiledModel("UQualifier",     IOQualifier)>
+  %<LibAddToCompiledModel("YQualifier",     IOQualifier)>
+  %<LibAddToCompiledModel("PQualifier",     IOQualifier)>
+  %<LibAddToCompiledModel("BQualifier",     IOQualifier)>
+  %<LibAddToCompiledModel("DWorkQualifier", IOQualifier)>
+  %<LibAddToCompiledModel("PrevZCQualifier",IOQualifier)>
+  %<LibAddToCompiledModel("ConstBQualifier",IOQualifier)>
+  %<LibAddToCompiledModel("ConstPQualifier",".")>
+
+  %%
+  %% Initialize the record to have no instances
+  %%
+
+  %createrecord reqPrmHdrInsts \
+     {\
+        GroupedCustomDataInst  TLC_FALSE;\
+	ParamsInst             TLC_FALSE;\
+	ConstBlockIOInst       TLC_FALSE;\
+	ConstParamInst         TLC_FALSE;\
+	ExpGlobalSigsInst      TLC_FALSE;\
+	ExpGlobalPrmsInst      TLC_FALSE;\
+	BlockIOInst            TLC_FALSE;\
+	ExpGlobalDworkInst     TLC_FALSE;\
+	ContStatesInst         TLC_FALSE;\
+	PeriodicContStatesInst TLC_FALSE;\
+        MassMatricesInst       TLC_FALSE;\
+	DworkInst              TLC_FALSE;\
+	PrevZCStatesInst       TLC_FALSE;\
+	ExtInpsInst            TLC_FALSE;\
+	ExtOutputsInst         TLC_FALSE;\
+	SimStructInst          TLC_FALSE;\
+	GlobalPrmDataCacheInst TLC_FALSE\
+      }
+
+  %switch CodeFormat
+    %case "RealTime"
+      %assign reqPrmHdrInsts.GroupedCustomDataInst  = TLC_TRUE
+      %assign reqPrmHdrInsts.ParamsInst             = FcnParamsAreGlobalStruct()
+      %assign reqPrmHdrInsts.ConstBlockIOInst       = TLC_TRUE
+      %assign reqPrmHdrInsts.ConstParamInst         = TLC_TRUE
+      %assign reqPrmHdrInsts.ExpGlobalSigsInst      = TLC_TRUE
+      %assign reqPrmHdrInsts.ExpGlobalPrmsInst      = TLC_TRUE
+      %assign reqPrmHdrInsts.BlockIOInst            = TLC_TRUE
+      %assign reqPrmHdrInsts.ExpGlobalDworkInst     = TLC_TRUE
+      %assign reqPrmHdrInsts.ContStatesInst         = TLC_TRUE
+      %assign reqPrmHdrInsts.PeriodicContStatesInst = TLC_TRUE
+      %assign reqPrmHdrInsts.MassMatricesInst       = TLC_TRUE
+      %assign reqPrmHdrInsts.DworkInst              = TLC_TRUE
+      %assign reqPrmHdrInsts.PrevZCStatesInst       = TLC_TRUE
+      %assign reqPrmHdrInsts.ExtInpsInst            = TLC_TRUE
+      %assign reqPrmHdrInsts.ExtOutputsInst         = TLC_TRUE
+      %assign reqPrmHdrInsts.SimStructInst          = TLC_TRUE
+      %assign reqPrmHdrInsts.GlobalPrmDataCacheInst = TLC_TRUE
+
+      %break
+    %case "S-Function"
+      %if Accelerator
+        %assign reqPrmHdrInsts.ParamsInst             = FcnParamsAreGlobalStruct()
+	%assign reqPrmHdrInsts.ConstBlockIOInst       = TLC_TRUE
+	%assign reqPrmHdrInsts.ConstParamInst         = TLC_TRUE
+	%assign reqPrmHdrInsts.GlobalPrmDataCacheInst = TLC_TRUE
+      %else
+        %assign reqPrmHdrInsts.ParamsInst             = FcnParamsAreGlobalStruct()
+	%assign reqPrmHdrInsts.ConstBlockIOInst   = TLC_TRUE
+	%assign reqPrmHdrInsts.ConstParamInst     = TLC_TRUE
+	%assign reqPrmHdrInsts.ExpGlobalSigsInst  = TLC_TRUE
+	%assign reqPrmHdrInsts.ExpGlobalPrmsInst  = TLC_TRUE
+      %endif
+      %break
+    %case "Embedded-C"
+      %assign mdlRef = IsModelReferenceTarget()
+      %assign multiOrMdlref = MultiInstanceERTCode || mdlRef
+
+      %% In what cases do we generate instantiation code for unstructured
+      %% global data as part of the body of the generated code?
+      %%
+      %% ---------------------------------------------------------------
+      %%                  MdlRef                       |       Not MdlRef
+      %% ---------------------------------------------------------------
+      %%   SIM  | Coder (SimStructBased) |  Coder      | SimStructBased | Other
+      %% ---------------------------------------------------------------
+      %%  No(1) |         No(2)            |  No(2)    |        Y       |   Y
+      %%
+      %% NOTE:
+      %% (1) Global data instances generated in model reference S-Fcn
+      %% (2) Global data instances generated by top model.
+      %assign genUnstrParamInsts = !mdlRef
+
+      %assign reqPrmHdrInsts.GroupedCustomDataInst  = TLC_TRUE
+      %assign reqPrmHdrInsts.ExpGlobalSigsInst      = TLC_TRUE
+      %assign reqPrmHdrInsts.ExpGlobalPrmsInst      = genUnstrParamInsts
+      %assign reqPrmHdrInsts.ExpGlobalDworkInst     = TLC_TRUE
+
+      %assign reqPrmHdrInsts.DworkInst              = !multiOrMdlref
+      %assign reqPrmHdrInsts.PrevZCStatesInst       = !multiOrMdlref
+      %assign reqPrmHdrInsts.ContStatesInst         = !multiOrMdlref
+      %assign reqPrmHdrInsts.PeriodicContStatesInst = !multiOrMdlref
+      %assign reqPrmHdrInsts.MassMatricesInst       = !multiOrMdlref
+      %assign reqPrmHdrInsts.BlockIOInst            = !multiOrMdlref
+      %assign reqPrmHdrInsts.ExtInpsInst            = !multiOrMdlref
+      %assign reqPrmHdrInsts.ExtOutputsInst         = !multiOrMdlref
+      %assign reqPrmHdrInsts.SimStructInst          = !multiOrMdlref
+
+      %assign reqPrmHdrInsts.ConstBlockIOInst       = TLC_TRUE
+      %assign reqPrmHdrInsts.ConstParamInst         = TLC_TRUE
+
+      %% Parameters result in a global structure except for multiERT
+      %assign reqPrmHdrInsts.ParamsInst = FcnParamsAreGlobalStruct()
+
+      %assign reqPrmHdrInsts.GlobalPrmDataCacheInst = TLC_TRUE
+
+      %if MultiInstanceERTCode
+	%assign ::CompiledModel.BQualifier      = "->"
+	%assign ::CompiledModel.PQualifier      = FcnParamsAreGlobalStruct() ? "." : "->"
+	%assign ::CompiledModel.DWorkQualifier  = "->"
+	%assign ::CompiledModel.XQualifier      = "->"
+	%assign ::CompiledModel.PrevZCQualifier = "->"
+	%if RootIOStructures
+          %if !GenerateClassInterface
+            %assign ::CompiledModel.UQualifier      = "->"
+            %assign ::CompiledModel.YQualifier      = "->"
+          %else
+            %assign ::CompiledModel.UQualifier      = "."
+            %assign ::CompiledModel.YQualifier      = "."
+          %endif
+	%else
+          %if SLibHasGlobalExternalInputsWithFPC()
+            %assign ::CompiledModel.UQualifier      = "->"
+          %else
+            %assign ::CompiledModel.UQualifier      = "_"
+          %endif
+	  %if SLibHasGlobalExternalOutputsWithFPC()
+            %assign ::CompiledModel.YQualifier      = "->"
+          %else
+            %assign ::CompiledModel.YQualifier      = "_"
+          %endif
+	%endif
+      %endif
+      %break
+    %default
+      %break
+  %endswitch
+
+  %<LibAddToSystem(rootSys, "ReqRootPrmHdrDataInsts", reqPrmHdrInsts)>
+
+%endfunction %% FcnSetupRootPrmHdrReqInstances
+
+
+%% Function: SLibRootSystemMethodProps =========================================
+%% Abstract:
+%%   Setup properties of the methods corresponding to the Root system
+%%
+%function SLibRootSystemMethodProps() void
+  %with ::CompiledModel
+    %assign rootIdx    = NumSystems-1
+    %assign rootSystem = System[rootIdx]
+
+    %%
+    %% Setup root body and header method property defaults
+    %%
+
+    %% Do we need "static" prefix for root body methods?
+    %assign rootBodyMthsStatic         = TLC_FALSE %% assume
+    %% Do we capitalize the start of root body methods names?
+    %assign rootBodyMthsCaps           = TLC_FALSE %% assume
+    %% Do we use the name of the model in the root methods names (ERT)?
+    %assign rootBodyMthUseMdlName      = TLC_FALSE %% assume
+    %% Do we call mdlInitialize and mdlEnable in mdlStart?
+    %assign rootBodyStartCallsInitEnab = TLC_FALSE %% assume
+    %% Do we need tid for the root body output, update methods?
+    %assign rootBodyTIDneeded          = TLC_FALSE %% assume
+    %% Do we need verbose comments in model header?
+    %assign rootHdrVerboseCmnts        = TLC_TRUE  %% assume
+    %% Do we need generic defines to be made in the header?
+    %assign rootHdrGenericDefines      = TLC_FALSE %% assume
+    %% Do we need to declare prm instances to be static?
+    %assign rootPrmHdrInstsStatic      = TLC_FALSE %% assume
+
+    %%
+    %% Setup root body and header method properties based on code format
+    %%
+    %switch CodeFormat
+      %case "RealTime"
+	%assign rootBodyMthsCaps           = TLC_TRUE
+	%assign rootBodyStartCallsInitEnab = TLC_TRUE
+	%assign rootBodyTIDneeded          = TLC_TRUE
+	%assign rootHdrGenericDefines      = TLC_TRUE
+	%break
+      %case "Embedded-C"
+        %assign rootBodyMthUseMdlName = TLC_TRUE
+        %assign tid01Eq = ISEQUAL(SolverType, "FixedStep") && ...
+          FixedStepOpts.TID01EQ
+        %if SLibFcnProtoCtrlActive() || ...
+          GenerateClassInterface
+          %assign rootBodyTIDneeded  = TLC_FALSE
+        %elseif GenerateGRTWrapper
+          %assign rootBodyTIDneeded = TLC_FALSE
+        %elseif NumRuntimeExportedRates == 1 
+          %% Single rate 
+          %assign rootBodyTIDneeded  = TLC_FALSE
+        %elseif NumRuntimeExportedRates == 2 && tid01Eq && ...
+          NumContStates == 0
+          %% tid01eq special case
+          %assign rootBodyTIDneeded  = TLC_FALSE
+        %elseif SLibSingleTasking() 
+          %% multirate single tasking model 
+          %assign rootBodyTIDneeded  = !ERTRemoveTidArgForSingleTaskingModel
+        %endif
+        %if UsingMalloc && isGRTMalloc
+           %assign rootPrmHdrInstsStatic      = TLC_TRUE
+           %% dumps /* Block Parameters (%<::AutoOrDefaultStorageClass> storage) */ to model.c
+        %endif
+        %break
+      %case "S-Function"
+	%assign rootBodyMthsStatic      = TLC_TRUE
+	%assign rootBodyTIDneeded       = TLC_TRUE
+	%if Accelerator
+	  %assign rootHdrVerboseCmnts = TLC_FALSE
+	%endif
+	%break
+      %case "Ada"
+      %default
+	%break
+    %endswitch
+
+    %%
+    %% Cache into global variables
+    %%
+    %assign ::RootBodyMthsStatic         = rootBodyMthsStatic
+    %assign ::RootBodyStartCallsInitEnab = rootBodyStartCallsInitEnab
+    %assign ::RootBodyTIDneeded          = rootBodyTIDneeded
+    %assign ::RootHdrVerboseCmnts        = rootHdrVerboseCmnts
+    %assign ::RootHdrGenericDefines      = rootHdrGenericDefines
+    %assign ::RootPrmHdrInstsStatic      = rootPrmHdrInstsStatic
+       
+    %with ::CompiledModel
+      %assign rootIdx    = NumSystems-1
+      %assign rootSystem = System[rootIdx]
+
+      %%
+      %% Setup which methods are to be generated in the body file
+      %% for each code format
+      %%
+      %assign reqMethods = FcnSetupRootBodyReqMths()
+
+      %%
+      %% Setup the names of the root methods
+      %%
+      %<FcnCacheRootBodyMthNames(rootSystem, rootBodyMthsCaps, ...
+	rootBodyMthUseMdlName, reqMethods)>
+
+      %%
+      %% Setup which data vector instances are setup in
+      %% the parameters section of model.c for the various code formats
+      %%
+      %<FcnSetupRootPrmHdrReqInstances(rootSystem)>
+
+    %endwith
+
+  %endwith
+%endfunction %% SLibRootSystemMethodProps
+
+%% Function: SLibSetupTLCvtable ============================================
+%% Abstract:
+%%   Setup TLC replacement v-table with defaults
+%%
+%function SLibSetupTLCvtable() void
+  %with ::CompiledModel
+  %%fixed-point Outputs function of Product block:
+  %if !EXISTS(productOutputsFixptType)
+    %assign productOutputsFixptType = "Product"
+    %<LibAddToCompiledModel("productOutputsFixptType",productOutputsFixptType)>
+  %endif
+
+  %if !EXISTS(productOutputsFixptFunc)
+    %assign productOutputsFixptFunc = "OutputsFixpt"
+    %<LibAddToCompiledModel("productOutputsFixptFunc",productOutputsFixptFunc)>
+  %endif
+
+  %%fixed-point Outputs function of Sum block:
+  %if !EXISTS(sumOutputsFixptType)
+    %assign sumOutputsFixptType = "Sum"
+    %<LibAddToCompiledModel("sumOutputsFixptType",sumOutputsFixptType)>
+  %endif
+
+  %if !EXISTS(sumOutputsFixptFunc)
+    %assign sumOutputsFixptFunc = "OutputsFixpt"
+    %<LibAddToCompiledModel("sumOutputsFixptFunc",sumOutputsFixptFunc)>
+  %endif
+
+  %%fixed-point Outputs function of Gain block:
+  %if !EXISTS(gainOutputsFixptType)
+    %assign gainOutputsFixptType = "Gain"
+    %<LibAddToCompiledModel("gainOutputsFixptType",gainOutputsFixptType)>
+  %endif
+
+  %if !EXISTS(gainOutputsFixptFunc)
+    %assign gainOutputsFixptFunc = "FixptOutputs"
+    %<LibAddToCompiledModel("gainOutputsFixptFunc",gainOutputsFixptFunc)>
+  %endif
+  %endwith
+%endfunction %% SLibSetupTLCvtable
+
+%function SLibSetupCustomCode() void
+  %with ConfigSet
+    %if EXISTS("CustomSourceCode")
+      %<LibSourceFileCustomCode(CustomSourceCode, "header")>
+    %endif
+
+    %if EXISTS("CustomHeaderCode")
+      %% RAccel main file is a .c file which can fail to compile if C++ custom 
+      %% header code is brought in.  Also, the raccel main file does not need 
+      %% the custom header since it is a fixed main.  Only the model.c can be 
+      %% customized and that will still bring in the custom header.
+      %if isRAccel
+      %assign CustomHeaderCodeRAccel = "#ifndef IN_RACCEL_MAIN\n%<CustomHeaderCode>\n#endif"
+      %<LibHeaderFileCustomCode(CustomHeaderCodeRAccel, "header")>
+      %else
+      %<LibHeaderFileCustomCode(CustomHeaderCode, "header")>
+      %endif
+    %endif
+
+    %if EXISTS("CustomInitializer")
+      %assign rootSys = ::CompiledModel.System[CompiledModel.NumSystems-1]
+      %if !WHITE_SPACE(CustomInitializer) 
+        %assign rootSys.InitializeMethodHasUserData = TLC_TRUE
+      %endif
+      %<LibSystemInitializeCustomCode(rootSys, CustomInitializer, "execution")>
+    %endif
+
+    %if EXISTS("CustomTerminator")
+      %with ::CompiledModel
+        %<LibMdlTerminateCustomCode(CustomTerminator, "execution")>
+      %endwith
+    %endif
+  %endwith
+%endfunction
+
+%% Function: SLibIsCPPEncapMdlRefBuild =============================
+%% Abstract:
+%%   Return whether the build is for C++ encapsulation MdlRef target.
+%%
+%function SLibIsCPPEncapMdlRefBuild() void
+   %return GenerateClassInterface && IsModelReferenceTarget()
+%endfunction %% SLibIsCPPEncapMdlRefBuild
+
+%% Function: SLibIsValidCoderContext ==========================================
+%% Abstract:
+%%   Returns true if the Simulink Coder context object can be utilized for
+%%   code generation.
+%%
+%function SLibIsValidCoderContext() void
+  %return 1 == ::SLCGUseRTWContext
+%endfunction
+
+%% Function: SLibCacheDataAlignmentFlags ==========================================
+%% Abstract:
+%%   Cache the registered data alignment flags.
+%%
+%function SLibCacheDataAlignmentFlags() void
+  %assign ::fieldDAFlag = FEVAL("rtwprivate", "da_support", ::CompiledModel.Name, "DATA_ALIGNMENT_STRUCT_FIELD")
+  %assign ::structDAFlag = FEVAL("rtwprivate", "da_support", ::CompiledModel.Name, "DATA_ALIGNMENT_WHOLE_STRUCT")
+  %assign ::localDAFlag = FEVAL("rtwprivate", "da_support", ::CompiledModel.Name, "DATA_ALIGNMENT_LOCAL_VAR")
+  %assign ::globalDAFlag = FEVAL("rtwprivate", "da_support", ::CompiledModel.Name, "DATA_ALIGNMENT_GLOBAL_VAR")
+  %assign ::fieldAlign = fieldDAFlag.supported
+  %assign ::structAlign = structDAFlag.supported
+  %assign ::localAlign = localDAFlag.supported
+
+%endfunction %% SLibCacheDataAlignmentFlags
+
+%% Function: SLibGetTypeLimitIdReplacementMap ====================================
+%% Abstract:
+%%   Returns an array value pair list, where the first element of the pair 
+%% is the original type ID and the second element of the pair is the 
+%% replacement ID. For the case where there is no replacement, the original 
+%% and replacement type ID's are equal.
+%%
+%function SLibGetTypeLimitIdReplacementMap() void
+    %assign typeLimitIdMap = []
+
+    %foreach dtidx = ::CompiledModel.DataTypes.NumDataTypes
+        %switch ::CompiledModel.DataTypes.DataType[dtidx].DTName
+            %case "int8"
+                %assign maxId = "MAX_int8_T"
+                %assign minId = "MIN_int8_T"
+                %break
+            %case "uint8"
+                %assign maxId = "MAX_uint8_T"
+                %assign minId = "MIN_uint8_T"
+                %break
+            %case "int16"
+                %assign maxId = "MAX_int16_T"
+                %assign minId = "MIN_int16_T"
+                %break
+            %case "uint16"
+                %assign maxId = "MAX_uint16_T"
+                %assign minId = "MIN_uint16_T"
+                %break
+            %case "int32"
+                %assign maxId = "MAX_int32_T"
+                %assign minId = "MIN_int32_T"
+                %break
+            %case "uint32"
+                %assign maxId = "MAX_uint32_T"
+                %assign minId = "MIN_uint32_T"
+                %break
+            %case "boolean"
+                %% Boolean type is handled differently; RTW type structure
+                %% uses different fields.
+                %assign maxId = ""
+                %assign minId = ""
+                %assign trueRep = ::CompiledModel.DataTypes.DataType[dtidx].BooleanTrueId
+                %assign falseRep = ::CompiledModel.DataTypes.DataType[dtidx].BooleanFalseId
+                %assign typeLimitIdMap = typeLimitIdMap + "true"
+                %assign typeLimitIdMap = typeLimitIdMap + trueRep
+                %assign typeLimitIdMap = typeLimitIdMap + "false"
+                %assign typeLimitIdMap = typeLimitIdMap + falseRep
+                %break
+            %default
+                %assign maxId = ""
+                %assign minId = ""
+                %break
+        %endswitch %% DataTypes switch
+
+        %if (maxId != "") && (minId != "")
+            %assign typeLimitIdMap = typeLimitIdMap + maxId
+            %assign typeLimitIdMap = typeLimitIdMap + ::CompiledModel.DataTypes.DataType[dtidx].TypeMaxId
+            %assign typeLimitIdMap = typeLimitIdMap + minId
+            %assign typeLimitIdMap = typeLimitIdMap + ::CompiledModel.DataTypes.DataType[dtidx].TypeMinId
+        %endif
+    %endforeach %% DataTypes foreach
+
+    %if SLibIsERTTarget()
+      %if (::CompiledModel.ConfigSet.MaxIdInt64 != "")
+        %assign typeLimitIdMap = typeLimitIdMap + "MAX_int64_T"
+        %assign typeLimitIdMap = typeLimitIdMap + ::CompiledModel.ConfigSet.MaxIdInt64
+      %endif
+  
+      %if (::CompiledModel.ConfigSet.MaxIdUint64 != "")
+        %assign typeLimitIdMap = typeLimitIdMap + "MAX_uint64_T"
+        %assign typeLimitIdMap = typeLimitIdMap + ::CompiledModel.ConfigSet.MaxIdUint64
+      %endif
+
+      %if (::CompiledModel.ConfigSet.MinIdInt64 != "")
+        %assign typeLimitIdMap = typeLimitIdMap + "MIN_int64_T"
+        %assign typeLimitIdMap = typeLimitIdMap + ::CompiledModel.ConfigSet.MinIdInt64   
+      %endif
+    %endif
+
+    %return typeLimitIdMap
+%endfunction %% SLibGetTypeLimitIdReplacementMap
+
+%function SLibSetupSimulinkFunctionFPC() void
+  %% Mirror enum defined in SlFcnCallCompArgInfo::PassByType
+  
+  %% NOTE: everything after POINTER should be pointer (see use in codeinfolib.tlc::AddSimulinkFunctionInfo)
+  %addtorecord ::CompiledModel  \
+  eSLFARG_PASSBYTYPE {          \
+    AUTO 0                      \
+    CONST_DATA 1                \
+    ARR_SIZEONE 2               \
+    CONST_ARR_SIZEONE 3         \
+    POINTER 4                   \  
+    POINTER_VOID 5              \
+    POINTER_CONST_DATA 6        \
+    POINTER_CONST_VOID 7        \
+    CONST_POINTER_CONST_DATA 8  \
+  }
+%endfunction
+
+%% Function: SLibGetMemorySectionForUUID ==========================================
+%% Abstract:
+%%   Return the memory section record given its UUID
+%%   NOTE: For legacy memory sections, the class name is returned
+%function SLibGetMemorySectionForUUID(msUUID) void
+  %assign ms = "Default" 
+  %if CGMODEL_ACCESS("MemorySection.IsLegacy", msUUID)
+    %assign ms = CGMODEL_ACCESS("MemorySection.ClassName", msUUID)
+  %else
+    %% New Memory Section
+    %% NOTE: STRING is used to escape characters like double-quotes
+    %assign comment = FcnSanitizeUserString(CGMODEL_ACCESS("MemorySection.Comment", msUUID))
+    %if !ISEMPTY(comment)
+      %assign comment = FEVAL("regexprep", comment, "\\\\n", FEVAL("newline"))
+    %endif
+    %assign preStatement = FcnSanitizeUserString(CGMODEL_ACCESS("MemorySection.PrePragma", msUUID))
+    %if !ISEMPTY(preStatement)
+      %assign preStatement = FEVAL("regexprep", preStatement, "\\\\n", FEVAL("newline"))
+    %endif
+    %assign postStatement = FcnSanitizeUserString(CGMODEL_ACCESS("MemorySection.PostPragma", msUUID)) 
+    %if !ISEMPTY(postStatement)
+      %assign postStatement = FEVAL("regexprep", postStatement, "\\\\n", FEVAL("newline"))
+    %endif
+    %createrecord ms { \
+      IsConst TLC_FALSE \
+      IsVolatile TLC_FALSE \
+      Qualifier "" \
+      Comment comment \
+      PrePragma preStatement \
+      PostPragma postStatement \
+      PragmaPerVar %<CGMODEL_ACCESS("MemorySection.PragmaPerVar", msUUID)>}
+  %endif    
+  
+  %return ms  
+%endfunction %% SLibGetMemorySectionForUUID
+
+%endif %% _SETUPLIB_
+
+%% [EOF] setuplib.tlc

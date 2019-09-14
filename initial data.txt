@@ -1,0 +1,102 @@
+smiData = struct;
+smiData.RigidTransform = struct;
+smiData.RigidTransform(1).translation = ...
+  [250 0 20];
+smiData.RigidTransform(1).angle = 3.1415926535897931;
+smiData.RigidTransform(1).axis = [1 0 0];
+smiData.RigidTransform(1).ID = 'B[Link1-1:-:Link2-1]';
+smiData.RigidTransform(2).translation = ...
+  [0 0 270];
+smiData.RigidTransform(2).angle = 3.1415926535897931;
+smiData.RigidTransform(2).axis = [1 0 0];
+smiData.RigidTransform(2).ID = 'F[Link1-1:-:Link2-1]';
+smiData.RigidTransform(3).translation = ...
+  [0 0 110];
+smiData.RigidTransform(3).angle = 0;
+smiData.RigidTransform(3).axis = [0 0 0];
+smiData.RigidTransform(3).ID = 'B[Base-1:-:Link1-1]';
+smiData.RigidTransform(4).translation = ...
+  [0 0 110];
+smiData.RigidTransform(4).angle = 3.1415926535897931;
+smiData.RigidTransform(4).axis = [1 0 0];
+smiData.RigidTransform(4).ID = 'F[Base-1:-:Link1-1]';
+smiData.RigidTransform(5).translation = ...
+  [142 8 20];
+smiData.RigidTransform(5).angle = 3.1415926535897931;
+smiData.RigidTransform(5).axis = [1 0 -0];
+smiData.RigidTransform(5).ID = 'B[Link2-1:-:Move-1]';
+smiData.RigidTransform(6).translation = ...
+  [-8 -8 320];
+smiData.RigidTransform(6).angle = 0;
+smiData.RigidTransform(6).axis = [0 0 1];
+smiData.RigidTransform(6).ID = 'F[Link2-1:-:Move-1]';
+smiData.RigidTransform(7).translation = ...
+  [0 0 300];
+smiData.RigidTransform(7).angle = 3.1415926535897931;
+smiData.RigidTransform(7).axis = [1 0 0];
+smiData.RigidTransform(7).ID = 'B[Move-1:-:Rot-1]';
+smiData.RigidTransform(8).translation = ...
+  [0 0 -300];
+smiData.RigidTransform(8).angle = 0;
+smiData.RigidTransform(8).axis = [0 0 0];
+smiData.RigidTransform(8).ID = 'F[Move-1:-:Rot-1]';
+smiData.RigidTransform(9).translation = ...
+  [0 0 123.5];
+smiData.RigidTransform(9).angle = 0;
+smiData.RigidTransform(9).axis = [0 0 0];
+smiData.RigidTransform(9).ID = 'RootGround[Base-1]';
+smiData.Solid = struct;
+smiData.Solid(1).mass = 2.8;
+smiData.Solid(1).CoM = [73.025162683071784 0 190];
+smiData.Solid(1).MoI = [16382.446541266419 29034.8171820669 21439.113308911012 ...
+                        ];
+smiData.Solid(1).PoI = [0 544.50418602656907 0];
+smiData.Solid(1).color = [0.8 0.3 0.3];
+smiData.Solid(1).opacity = 1;
+smiData.Solid(1).ID = 'Link2*:*默认';
+smiData.Solid(2).mass = 0.063882891924537208;
+smiData.Solid(2).CoM = [-0.11597715826376161 0 15.314735172082147];
+smiData.Solid(2).MoI = [16.304915698841146 16.116420870237757 22.985600319168313 ...
+                        ];
+smiData.Solid(2).PoI = [0 -0.0023318591256681659 0];
+smiData.Solid(2).color = [0.3 0.8 0.3];
+smiData.Solid(2).opacity = 1;
+smiData.Solid(2).ID = 'Rot*:*默认';
+smiData.Solid(3).mass = 7.5403773028631784;
+smiData.Solid(3).CoM = [0 -12.2090965752514 111.93924805374537];
+smiData.Solid(3).MoI = [67953.426036702163 46975.818815384373 47346.177763714739 ...
+                        ];
+smiData.Solid(3).PoI = [2150.0310569350936 0 0];
+smiData.Solid(3).color = [1 0.5 0.8];
+smiData.Solid(3).opacity = 1;
+smiData.Solid(3).ID = 'Base*:*默认';
+smiData.Solid(4).mass = 3.1293470286336462;
+smiData.Solid(4).CoM = [108.93738949451574 0 33.603791992084];
+smiData.Solid(4).MoI = [6548.1946729059173 37291.377962055936 40489.443062110135 ...
+                        ];
+smiData.Solid(4).PoI = [0 1640.9773959237298 0];
+smiData.Solid(4).color = [0.3 0.3 0.5];
+smiData.Solid(4).opacity = 1;
+smiData.Solid(4).ID = 'Link1*:*默认';
+smiData.Solid(5).mass = 0.065812385965949349;
+smiData.Solid(5).CoM = [0 0 158.34767944725138];
+smiData.Solid(5).MoI = [508.50906231784109 508.50906231784109 2.3790630175770464 ...
+                        ];
+smiData.Solid(5).PoI = [0 0 0];
+smiData.Solid(5).color = [1 0.3 0.3];
+smiData.Solid(5).opacity = 1;
+smiData.Solid(5).ID = 'Move*:*默认';
+smiData.PrismaticJoint = struct;
+smiData.PrismaticJoint.Pz = struct;
+smiData.PrismaticJoint.Pz.Pos = 0;
+smiData.PrismaticJoint.ID = '[Link2-1:-:Move-1]';
+smiData.RevoluteJoint = struct;
+smiData.RevoluteJoint(1).Rz = struct;
+smiData.RevoluteJoint(1).Rz.Pos = 90;
+smiData.RevoluteJoint(1).ID = '[Link1-1:-:Link2-1]';
+smiData.RevoluteJoint(2).Rz = struct;
+smiData.RevoluteJoint(2).Rz.Pos = 0;
+smiData.RevoluteJoint(2).ID = '[Base-1:-:Link1-1]';
+smiData.RevoluteJoint(3).Rz = struct;
+smiData.RevoluteJoint(3).Rz.Pos = 0;
+smiData.RevoluteJoint(3).ID = '[Move-1:-:Rot-1]';

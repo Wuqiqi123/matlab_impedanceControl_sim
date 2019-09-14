@@ -1,0 +1,192 @@
+%% ========================================================================
+%% Abstract:
+%%   This file caches general info in the binfo.mat file. If you need to 
+%%   stuff into binfo, please consider adding them using this file. We'd 
+%%   like to minimize the number of times we call out to MATLAB and write 
+%%   to binfo.
+%%
+%% Copyright 2011-2016 The MathWorks, Inc.
+%%
+
+%if EXISTS("_CACHEGENERALDATAINMATINFOFILE_") == 0
+%assign _CACHEGENERALDATAINMATINFOFILE_ = 1
+
+%% Function: cacheGeneralDataIntoMatInfoFile ==============================
+%% Abstract:
+%%     Cache general info in the mat file
+%function CacheGeneralDataIntoMatInfoFile() void
+  
+  %with ::CompiledModel
+
+    %createrecord GeneralDataToAddToBinfo { Name  "%<Name>"}
+   
+    %if SLibIsERTTarget()
+
+    %% Add RTMGetLoggingObject and RTMTPtrExpression. This information is 
+    %% required by SIL/PIL to support Matfile logging      
+    %if MatFileLogging==1 && GenRTModel
+      %addtorecord GeneralDataToAddToBinfo RTMLoggingObjectExpression RTMGetLoggingObject()        
+      %addtorecord GeneralDataToAddToBinfo RTMTPtrExpression RTMSpecAccsGetTPtr(RTMGetRTModelRecShell().TPtr,RTMGetModelSS())
+    %endif
+    
+    %% add number of Simulink Functions
+    %addtorecord GeneralDataToAddToBinfo NumSimulinkFunctions NumSimulinkFunctions
+    
+    %% add the set of data dictionaies used by this model and below
+    %if EXISTS(DataDictionarySet)
+      %addtorecord GeneralDataToAddToBinfo DataDictSet "%<DataDictionarySet>"
+    %else
+      %addtorecord GeneralDataToAddToBinfo DataDictSet ""
+    %endif
+    
+    %addtorecord GeneralDataToAddToBinfo StartTime "%<StartTime>"
+
+    %if !IsModelReferenceTarget()
+       %% Add information about inports
+       %foreach idx = ExternalInputs.NumExternalInputs
+          %assign extIn = ExternalInputs.ExternalInput[idx]
+          %assign locDataTypeIdx = LibGetRecordDataTypeId(extIn)
+          %assign locIsBus = LibDataTypeIsBus(locDataTypeIdx)
+          %assign locHasVarDims = ISFIELD(extIn, "HasVarDims")
+          %assign locDirectFeedthrough = extIn.DirectFeedThrough == "yes" ? 1 : 0
+          %addtorecord GeneralDataToAddToBinfo Inports { \      
+             IsBus locIsBus; \   
+             HasVarDims locHasVarDims \
+	     DirectFeedThrough locDirectFeedthrough \
+          }
+       %endforeach
+
+       %% Add information about outports
+       %foreach idx = ExternalOutputs.NumExternalOutputs
+          %assign extOut       = ExternalOutputs.ExternalOutput[idx]
+          %assign sysIdx       = extOut.Block[0]
+          %assign blkIdx       = extOut.Block[1]
+   	    %assign outportBlock = System[sysIdx].Block[blkIdx]
+          %with System[sysIdx]
+      	    %with outportBlock
+                %assign locOutStruct = LibBlockParamSetting("Outport", "OutputAsStructure")
+                %assign locBusObj = LibBlockParamSetting("Outport", "BusObject")
+                %assign locHasVarDims  = ISFIELD(extOut, "HasVarDims")
+                %assign locDataTypeIdx   = LibBlockInputSignalDataTypeId(0)
+                %assign locIsBus         = LibDataTypeIsBus(locDataTypeIdx)
+                %addtorecord GeneralDataToAddToBinfo Outports { \
+                   IsBus locIsBus; \
+                   OutputAsStructure locOutStruct; \
+                   BusObject locBusObj; \
+                   HasVarDims locHasVarDims \
+                }
+             %endwith
+         %endwith        
+      %endforeach
+   %endif %% !IsModelReferenceTarget
+
+   %% store DataType checksums
+   %foreach dtIdx = DataTypes.NumDataTypes
+     %assign dt = ::CompiledModel.DataTypes.DataType[dtIdx]
+     %if ISFIELD(dt, "Checksum")
+       %assign locName = LibGetDataTypeNameFromId(dtIdx)
+       %assign locChecksum = dt.Checksum
+       %addtorecord GeneralDataToAddToBinfo DataTypes { \
+          Name locName; \
+          Checksum locChecksum \
+       }
+     %endif
+   %endforeach
+
+   %% add information about Parameters
+   %with ModelParameters
+      %if NumParameters > 0
+         %foreach prmIdx = NumParameters
+            %assign mdlPrm = Parameter[prmIdx]
+            %assign dtIdx = mdlPrm.OriginalDataTypeIdx
+            %if ISFIELD(DataTypes.DataType[dtIdx], "StructDtChecksum")
+               %assign locStructDtChecksum = DataTypes.DataType[dtIdx].StructDtChecksum
+               %assign locName = mdlPrm.WorkspaceVarName
+               %addtorecord GeneralDataToAddToBinfo Parameters { \
+                 Name locName; \
+                 StructDtChecksum locStructDtChecksum \
+               }            
+            %endif
+         %endforeach         
+      %endif
+   %endwith
+
+   %if SLibAutosarActive()   
+      %% add information about AUTOSAR Per Instance Memory (PIM) data stores
+      %foreach dWorkIdx = ::CompiledModel.DWorks.NumDWorks
+       %assign dw = ::CompiledModel.DWorks.DWork[dWorkIdx]
+       %if dw.StorageClass == "Custom" && ISFIELD(dw, "AutosarPIMDSM")
+         %assign ca = LibGetCustomStorageAttributes(dw)
+         %assign locName = LibGetRecordIdentifier(dw) 
+         %assign locNeedsNVRAMAccess = ca.needsNVRAMAccess
+         %assign locIsArTypedPerInstanceMemory = ca.IsArTypedPerInstanceMemory
+         %addtorecord GeneralDataToAddToBinfo AutosarPIMDSM { \
+            Name locName; \
+            NeedsNVRAMAccess locNeedsNVRAMAccess; \
+            IsArTypedPerInstanceMemory locIsArTypedPerInstanceMemory \
+         }
+       %endif
+     %endforeach
+     %% add information about AUTOSAR Runnables
+     %% Add periodic runnables
+     %assign autosar = ::CompiledModel.RTWAutosar
+     %assign numAutosarRunnables = SIZE(autosar.AutosarRunnables.Runnable, 1)
+     %foreach rIdx = numAutosarRunnables
+       %assign runnable = autosar.AutosarRunnables.Runnable[rIdx]        
+       %assign locName = runnable.Name
+       %assign locSymbol = runnable.Symbol
+       %addtorecord GeneralDataToAddToBinfo AutosarPeriodicRunnables { \
+            Name locName; \
+            Symbol locSymbol \
+         }
+     %endforeach
+
+     %% Add initialize runnable
+     %assign initRunnable = ::CompiledModel.RTWAutosar.InitRunnables.Runnable
+     %assert(SIZE(initRunnable, 1) == 1)
+     %addtorecord GeneralDataToAddToBinfo AutosarInitRunnable {\
+            Name initRunnable.Name; \
+            Symbol initRunnable.Symbol \
+        }
+
+     %if IncludeMdlTerminateFcn
+       %assign termRunnable = ::CompiledModel.RTWAutosar.TerminateRunnables.Runnable
+       %assert(SIZE(termRunnable, 1) == 1)
+       %addtorecord GeneralDataToAddToBinfo AutosarTermRunnable {\
+              Name termRunnable.Name; \
+              Symbol termRunnable.Symbol \
+          }
+     %endif
+
+     %% Add Component Name
+     %assign autosarDataMap = FcnGetAutosarDataMap()
+     %addtorecord GeneralDataToAddToBinfo AutosarMainInterfaceName "%<autosarDataMap.MainInterfaceName>"
+
+   %endif  
+
+   %endif %% SLibIsERTTarget()
+  %endwith %% ::CompiledModel  
+
+  %<CacheDataInBinfoMatFile(Name, "addGeneralDataFromTLC", GeneralDataToAddToBinfo)>  
+
+%endfunction
+
+%% Function: CacheDataInMatInfoFile  =============================
+%% Abstract:
+%%      Store data in .mat file.
+
+%function CacheDataInBinfoMatFile(mdl, type, interface) void
+  
+  %if IsModelReferenceTarget()
+    %assign targetType = IsModelReferenceSimTarget() ? "SIM" : "RTW"
+  %else
+    %assign targetType = "NONE"
+  %endif  
+  %assign rtwinfomat = FEVAL("coder.internal.infoMATFileMgr", ...
+    type, "binfo", "%<mdl>", ...
+    "%<targetType>", interface)
+
+
+%endfunction
+
+%endif %% _CACHEGENERALDATAINMATINFOFILE_

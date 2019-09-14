@@ -1,0 +1,358 @@
+%% 
+%%  
+%% 
+%%
+%% Copyright 1994-2015 The MathWorks, Inc.
+%%
+%% Abstract: Custom code block
+
+%implements "custcode" "C"
+    
+%% Function: ProcessRTWdata ===================================================
+%% Abstract:
+%%      Insert the model and subsystem custom code accordingly.
+%%
+%function ProcessRTWdata(RTWdata, system) void
+
+  %assign rootSystem = ::CompiledModel.System[NumSystems-1]
+  %assign sysName    = GetSystemNameForStartOfComments(system)
+  %if SimulinkBlockComments
+    %assign ssNameInComment = "/* %<sysName> */"
+  %else
+    %assign ssNameInComment = ""
+  %endif
+  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  %%  
+  %% NOTE: DO NOT ADD CASES HERE WITHOUT ADDING THEM TO 
+  %% SRC/SIMULINK/SL_ENGIN/COMP_OPTMETHCFG.CPP AS NEW ENUMERATIONS
+  %%
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+    %switch Location
+      %% File level custom code blocks with 2 sections each
+      %case "Header File"
+      %case "Model Header" %% The updated name
+        %if EXISTS("Top")
+          %<LibHeaderFileCustomCode(ssNameInComment, "header")>
+          %<LibHeaderFileCustomCode(Top, "header")>
+        %endif
+	%if EXISTS("Bottom")
+	  %<LibHeaderFileCustomCode(ssNameInComment, "trailer")>
+	  %<LibHeaderFileCustomCode(Bottom, "trailer")>
+	%endif
+	%break
+      %case "Parameter File"
+	%if EXISTS("Top")
+	  %<LibPrmFileCustomCode(ssNameInComment, "header")>
+	  %<LibPrmFileCustomCode(Top, "header")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibPrmFileCustomCode(ssNameInComment, "trailer")>
+	  %<LibPrmFileCustomCode(Bottom, "trailer")>
+	%endif
+	%break
+      %case "Source File"
+      %case "Model Source" %% The updated name
+	%if EXISTS("Top")
+	  %<LibSourceFileCustomCode(ssNameInComment, "header")>
+	  %<LibSourceFileCustomCode(Top, "header")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibSourceFileCustomCode(ssNameInComment + "\n", "trailer")>
+	  %<LibSourceFileCustomCode(Bottom, "trailer")>
+	%endif
+	%break
+      %case "Registration File"
+	%if EXISTS("Top")
+	  %<LibRegFileCustomCode(ssNameInComment, "header")>
+	  %<LibRegFileCustomCode(Top, "header")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibRegFileCustomCode(ssNameInComment, "trailer")>
+	  %<LibRegFileCustomCode(Bottom, "trailer")>
+	%endif
+      %break
+
+      %% Function level custom code blocks with 3 sections each
+      %case "Registration Function"
+	%if EXISTS("Top")
+	  %<LibMdlRegCustomCode(ssNameInComment, "header")>
+	  %<LibMdlRegCustomCode(Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibMdlRegCustomCode(ssNameInComment, "execution")>
+	  %<LibMdlRegCustomCode(Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibMdlRegCustomCode(ssNameInComment, "trailer")>
+	  %<LibMdlRegCustomCode(Bottom, "trailer")>
+	%endif
+	%break
+      %case "Model Start Function"
+	%if EXISTS("Top")
+	  %<LibMdlStartCustomCode(ssNameInComment, "header")>
+	  %<LibMdlStartCustomCode(Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibMdlStartCustomCode(ssNameInComment, "execution")>
+	  %<LibMdlStartCustomCode(Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibMdlStartCustomCode(ssNameInComment, "trailer")>
+	  %<LibMdlStartCustomCode(Bottom, "trailer")>
+	%endif
+	%break
+      %case "Model Initialize Function"
+	%if EXISTS("Top")
+	  %<LibSystemInitializeCustomCode(rootSystem, ssNameInComment, "header")>
+	  %<LibSystemInitializeCustomCode(rootSystem, Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibSystemInitializeCustomCode(rootSystem, ssNameInComment, "execution")>
+	  %<LibSystemInitializeCustomCode(rootSystem, Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibSystemInitializeCustomCode(rootSystem, ssNameInComment, "trailer")>
+	  %<LibSystemInitializeCustomCode(rootSystem, Bottom, "trailer")>
+	%endif
+	%break
+      %case "Model Terminate Function"
+	%if EXISTS("Top")
+	  %<LibMdlTerminateCustomCode(ssNameInComment, "header")>
+	  %<LibMdlTerminateCustomCode(Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibMdlTerminateCustomCode(ssNameInComment, "execution")>
+	  %<LibMdlTerminateCustomCode(Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibMdlTerminateCustomCode(ssNameInComment, "trailer")>
+	  %<LibMdlTerminateCustomCode(Bottom, "trailer")>
+	%endif
+	%break
+      %case "Model Outputs Function"
+	%if EXISTS("Top")
+	  %<LibSystemOutputCustomCode(rootSystem, ssNameInComment, "header")>
+	  %<LibSystemOutputCustomCode(rootSystem, Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibSystemOutputCustomCode(rootSystem, ssNameInComment, "execution")>
+	  %<LibSystemOutputCustomCode(rootSystem, Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibSystemOutputCustomCode(rootSystem, ssNameInComment, "trailer")>
+	  %<LibSystemOutputCustomCode(rootSystem, Bottom, "trailer")>
+	%endif
+	%break
+      %case "Model Update Function"
+	%if EXISTS("Top")
+	  %<LibSystemUpdateCustomCode(rootSystem, ssNameInComment, "header")>
+	  %<LibSystemUpdateCustomCode(rootSystem, Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibSystemUpdateCustomCode(rootSystem, ssNameInComment, "execution")>
+	  %<LibSystemUpdateCustomCode(rootSystem, Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibSystemUpdateCustomCode(rootSystem, ssNameInComment, "trailer")>
+	  %<LibSystemUpdateCustomCode(rootSystem, Bottom, "trailer")>
+	%endif
+	%break
+      %case "Model Derivatives Function"
+	%if NumContStates < 1
+	  %assign errTxt = "Cannot add custom MdlDerivatives code since " \
+	  "there are no continuous states in the model"
+	  %break
+	%endif 
+	%if EXISTS("Top")
+	  %<LibSystemDerivativeCustomCode(rootSystem, ssNameInComment , "header")>
+	  %<LibSystemDerivativeCustomCode(rootSystem, Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibSystemDerivativeCustomCode(rootSystem, ssNameInComment, "execution")>
+	  %<LibSystemDerivativeCustomCode(rootSystem, Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibSystemDerivativeCustomCode(rootSystem, ssNameInComment, "trailer")>
+	  %<LibSystemDerivativeCustomCode(rootSystem, Bottom, "trailer")>
+	%endif
+	%break
+    
+      %% Subsystem Function level custom code blocks with 3 sections each
+      %case "Subsystem Start Function"
+      %case "System Start Function" %% The updated name
+	%% All subsystem start code is placed in models MdlStart function
+	%if EXISTS("Top")
+	  %<LibMdlStartCustomCode(ssNameInComment, "header")>
+	  %<LibMdlStartCustomCode(Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibMdlStartCustomCode(ssNameInComment, "execution")>
+	  %<LibMdlStartCustomCode(Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibMdlStartCustomCode(ssNameInComment, "trailer")>
+	  %<LibMdlStartCustomCode(Bottom, "trailer")>
+	%endif
+	%break
+      %case "Subsystem Outputs Function"
+      %case "System Outputs Function" %% The updated name
+	%if EXISTS("Top")
+	  %<LibSystemOutputCustomCode(system, ssNameInComment, "header")>
+	  %<LibSystemOutputCustomCode(system, Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibSystemOutputCustomCode(system, ssNameInComment, "execution")>
+	  %<LibSystemOutputCustomCode(system, Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibSystemOutputCustomCode(system, ssNameInComment, "trailer")>
+	  %<LibSystemOutputCustomCode(system, Bottom, "trailer")>
+	%endif
+	%break
+      %case "Subsystem Update Function"
+      %case "System Update Function" %% The updated name
+	%if EXISTS("Top")
+	  %<LibSystemUpdateCustomCode(system, ssNameInComment , "header")>
+	  %<LibSystemUpdateCustomCode(system, Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibSystemUpdateCustomCode(system, ssNameInComment , "execution")>
+	  %<LibSystemUpdateCustomCode(system, Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibSystemUpdateCustomCode(system, ssNameInComment, "trailer")>
+	  %<LibSystemUpdateCustomCode(system, Bottom, "trailer")>
+	%endif
+	%break
+      %case "Subsystem Terminate Function"
+      %case "System Terminate Function" %% The updated name
+	%% All subsystem terminate code is placed in models terminate function.
+	%if EXISTS("Top")
+	  %<LibMdlTerminateCustomCode(ssNameInComment, "header")>
+	  %<LibMdlTerminateCustomCode(Top, "header")>
+	%endif
+	%if EXISTS("Middle")
+	  %<LibMdlTerminateCustomCode(ssNameInComment, "execution")>
+	  %<LibMdlTerminateCustomCode(Middle, "execution")>
+	%endif
+	%if EXISTS("Bottom")
+	  %<LibMdlTerminateCustomCode(ssNameInComment, "trailer")>
+	  %<LibMdlTerminateCustomCode(Bottom, "trailer")>
+	%endif
+	%break
+      %case "Subsystem Initialize Function"
+      %case "System Initialize Function" %% The updated name
+	%% Cache the initialize code in the system if it has an
+	%% initialize function, otherwise cache in models start function.
+        %if EXISTS("system.SystemInitializeFcn") || ...
+          EXISTS("system.SystemResetFcn")
+          %if EXISTS("Top")
+            %<LibSystemInitializeCustomCode(system, ssNameInComment, "header")>
+            %<LibSystemInitializeCustomCode(system, Top, "header")>
+          %endif
+          %if EXISTS("Middle")
+            %<LibSystemInitializeCustomCode(system, ssNameInComment , "execution")>
+            %<LibSystemInitializeCustomCode(system, Middle, "execution")>
+          %endif
+          %if EXISTS("Bottom")
+            %<LibSystemInitializeCustomCode(system, ssNameInComment , "trailer")>
+            %<LibSystemInitializeCustomCode(system, Bottom, "trailer")>
+          %endif
+        %else
+          %if EXISTS("Top")
+            %<LibMdlStartCustomCode(ssNameInComment, "header")>
+            %<LibMdlStartCustomCode(Top, "header")>
+          %endif
+          %if EXISTS("Middle")
+            %<LibMdlStartCustomCode(ssNameInComment, "execution")>
+            %<LibMdlStartCustomCode(Middle, "execution")>
+          %endif
+          %if EXISTS("Bottom")
+            %<LibMdlStartCustomCode(ssNameInComment, "trailer")>
+            %<LibMdlStartCustomCode(Bottom, "trailer")>
+          %endif
+        %endif
+        %break
+      %case "Subsystem Derivatives Function"
+      %case "System Derivatives Function" %% The updated name
+	%% Only cache the derivatives code if the system has an
+	%% derivatives function.  Error out otherwise.
+	%if EXISTS("system.DerivativeFcn")
+	  %if EXISTS("Top")
+	    %<LibSystemDerivativeCustomCode(system, ssNameInComment, "header")>
+	    %<LibSystemDerivativeCustomCode(system, Top, "header")>
+	  %endif
+	  %if EXISTS("Middle")
+	    %<LibSystemDerivativeCustomCode(system, ssNameInComment , "execution")>
+	    %<LibSystemDerivativeCustomCode(system, Middle, "execution")>
+	  %endif
+	  %if EXISTS("Bottom")
+	    %<LibSystemDerivativeCustomCode(system, ssNameInComment , "trailer")>
+	    %<LibSystemDerivativeCustomCode(system, Bottom, "trailer")>
+	  %endif
+	%else
+	  %assign errTxt = "The System Derivatives custom code block "\
+	  "cannot be placed in %<ssNameInComment> because the system does not "\
+	  "have a derivatives function."
+	  %<LibReportError(errTxt)>
+	%endif
+	%break
+      %case "Subsystem Enable Function"
+      %case "System Enable Function" %% The updated name
+	%% Only cache the enable code if the system has an
+	%% enable function.  Error out otherwise.
+	%if EXISTS("system.EnableFcn")
+	  %if EXISTS("Top")
+	    %<LibSystemEnableCustomCode(system, ssNameInComment , "header")>
+	    %<LibSystemEnableCustomCode(system, Top, "header")>
+	  %endif
+	  %if EXISTS("Middle")
+	    %<LibSystemEnableCustomCode(system, ssNameInComment , "execution")>
+	    %<LibSystemEnableCustomCode(system, Middle, "execution")>
+	  %endif
+	  %if EXISTS("Bottom")
+	    %<LibSystemEnableCustomCode(system, ssNameInComment, "trailer")>
+	    %<LibSystemEnableCustomCode(system, Bottom, "trailer")>
+	  %endif
+	%else
+	  %assign errTxt = "The System Enable custom code block "\
+	  "cannot be placed in %<ssNameInComment> because the system does not "\
+	  "have an enable function."
+	  %<LibReportError(errTxt)>
+	%endif
+	%break
+      %case "Subsystem Disable Function"
+      %case "System Disable Function" %% The updated name
+	%% Only cache the disable code if the system has an
+	%% disable function.  Error out otherwise.
+	%if EXISTS("system.DisableFcn")
+	  %if EXISTS("Top")
+	    %<LibSystemDisableCustomCode(system, ssNameInComment, "header")>
+	    %<LibSystemDisableCustomCode(system, Top, "header")>
+	  %endif
+	  %if EXISTS("Middle")
+	    %<LibSystemDisableCustomCode(system, ssNameInComment , "execution")>
+	    %<LibSystemDisableCustomCode(system, Middle, "execution")>
+	  %endif
+	  %if EXISTS("Bottom")
+	    %<LibSystemDisableCustomCode(system, ssNameInComment , "trailer")>
+	    %<LibSystemDisableCustomCode(system, Bottom, "trailer")>
+	  %endif
+	%else
+	  %assign errTxt = "The System Disable custom code block " ...
+	  "cannot be placed in %<ssNameInComment> because the system does not " ...
+	  "have a disable function."
+	  %<LibReportError(errTxt)>
+	%endif
+	%break
+      %default
+	%assign errTxt = "Unknown custom code block: %<Location> " ...
+          "in %<ssNameInComment>"
+	%<LibReportError(errTxt)>
+	%break
+    %endswitch
+%endfunction
+
+%% [EOF] custcode.tlc

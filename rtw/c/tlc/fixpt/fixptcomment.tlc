@@ -1,0 +1,186 @@
+%% 
+%% 
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%%
+%% Utilities for generating comments
+
+%% Function: FixPt_ParameterBlockComment =================================
+%% Abstract:
+%%
+%function FixPt_ParameterBlockComment(param,label) Output
+    %%
+    %%
+    %assign curDT = FixPt_GetParameterDataTypeRec(param)
+    %%
+    %%  Header Comment
+    %%
+    * Parameter: %<label>
+    %%
+    %%
+    %if LibBlockParameterIsComplex(param)
+      %<FixPt_DataTypeComment(curDT, " Complex")>
+    %else
+      %<FixPt_DataTypeComment(curDT, " ")>
+    %endif
+    %%
+    %% end block comment
+    %%
+    %return " *"
+    %%
+%endfunction %% FixPt_ParameterBlockComment
+
+
+
+%% Function: FixPt_DataTypeComment ======================================
+%%
+%% Abstract:
+%%   Create a string that is a standardized comment about a signal or
+%%   parameters data type.
+%%
+%% Synopsis:
+%%      outStr = FixPt_DataTypeComment(curDT, inStr)
+%%
+%function FixPt_DataTypeComment(curDT, inStr) void
+    %%
+    %% supports floating point including doubles override
+    %%
+    %if ISEMPTY(curDT)
+      %%
+      %return "Output port is not a data port."
+      %%
+    %else
+      %%
+      %if FixPt_DataTypeIsFloat(curDT)
+        %assign storeType = curDT.NativeType
+        %assign dtClass   = "Floating Point "
+      %else
+        %if FixPt_DataTypeIsBoolean(curDT)
+          %assign dtClass = "Boolean        "
+        %elseif (curDT.FixedExp == 0.0) && (curDT.FracSlope == 1.0) && (curDT.Bias == 0.0)
+          %assign dtClass = "Integer        "
+        %else
+          %assign dtClass = "Fixed Point    "
+        %endif
+        %if curDT.IsSigned
+          %assign storeType = "S"
+        %else
+          %assign storeType = "U"
+        %endif
+        %assign storeType = storeType + STRING(curDT.RequiredBits)
+      %endif
+      %%
+      %assign outStr = "* "+STRING(inStr)+" Data Type:  "+dtClass+storeType
+      %%
+      %if (curDT.FixedExp != 0.0)
+        %assign outStr = outStr+"  2^"+STRING(curDT.FixedExp)
+      %endif
+      %%
+      %if (curDT.FracSlope != 1.0)
+        %assign outStr = outStr+"  FSlope "+STRING(curDT.FracSlope)
+      %endif
+      %%
+      %if (curDT.Bias != 0.0)
+        %assign outStr = outStr+"  Bias "+STRING(curDT.Bias)
+      %endif
+      %%
+      %return outStr
+      %%
+    %endif
+    %%
+%endfunction %% FixPt_DataTypeComment
+
+
+
+%% Function: FixPt_GeneralComments ======================================
+%%
+%% Abstract:
+%%   Output general comments about data types of inputs, outputs, gain, and
+%%   rounding and saturation modes.
+%%
+%% Synopsis:
+%%      FixPt_GeneralComments()
+%%
+%function FixPt_GeneralComments() Output
+    %%
+    %% determine if any input or output ports are complex
+    %%
+    %assign anyComplex = 0
+    %%
+    %foreach portIdx = NumDataOutputPorts
+        %if LibBlockOutputSignalIsComplex(portIdx)
+            %assign anyComplex = 1
+            %break
+        %endif
+    %endforeach
+    %if !anyComplex
+        %foreach portIdx = NumDataInputPorts
+            %if LibBlockInputSignalIsComplex(portIdx)
+                %assign anyComplex = 1
+                %break
+            %endif
+        %endforeach
+    %endif
+    %%
+    %% comment on input data type
+    %%
+    %foreach portIdx = NumDataInputPorts
+        %%
+        %% Get input data type
+        %%
+        %assign portDT  = FixPt_GetInputDataType(portIdx)
+        %%
+        %if anyComplex
+            %if LibBlockInputSignalIsComplex(portIdx)
+                %<FixPt_DataTypeComment(portDT, "Input%<portIdx>  Complex")>
+            %else
+                %<FixPt_DataTypeComment(portDT, "Input%<portIdx>  Real   ")>
+            %endif
+        %else
+            %<FixPt_DataTypeComment(portDT, "Input%<portIdx> ")>
+        %endif
+        %%
+    %endforeach
+    %%
+    %% comment on output data type
+    %%
+    %foreach portIdx = NumDataOutputPorts
+        %if !LibBlockOutputSignalIsValidLValue(portIdx)
+            %%
+            %% Port must have a data type
+            %%
+            %<FixPt_DataTypeComment(portDT, "Output"+STRING(portIdx)+" Not data")>
+        %else
+           %%
+           %% Get input data type
+           %%
+           %assign portDT  = FixPt_GetOutputDataType(portIdx)
+           %%
+           %if anyComplex
+               %if LibBlockOutputSignalIsComplex(portIdx)
+                   %<FixPt_DataTypeComment(portDT, "Output"+STRING(portIdx)+" Complex")>
+               %else
+                   %<FixPt_DataTypeComment(portDT, "Output"+STRING(portIdx)+" Real   ")>
+               %endif
+           %else
+               %<FixPt_DataTypeComment(portDT, "Output"+STRING(portIdx) )>
+           %endif
+        %endif
+        %%
+    %endforeach
+    %%
+    %% comment on modes
+    %%
+    %if EXISTS("FixPtRoundingMode")
+      %if FixPtRoundingMode != "Floor"
+        * Round Mode: %<FixPtRoundingMode>
+      %endif
+    %endif
+    %%
+    %if EXISTS("FixPtSaturationMode")
+      %if FixPtSaturationMode != "Wrap"
+         * Saturation Mode: %<FixPtSaturationMode>
+       %endif
+    %endif
+    %%
+%endfunction %% FixPt_GeneralComments

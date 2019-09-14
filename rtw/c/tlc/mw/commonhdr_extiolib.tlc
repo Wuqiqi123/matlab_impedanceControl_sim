@@ -1,0 +1,1078 @@
+%% ============================================================================
+%% File : commonhdr_extiolib.tlc
+%%
+%% Abstract:
+%%   This system TLC library file contains functions that are common
+%%   between the different code generators for producing the the model's
+%%   external IO definition.
+%%
+%%  
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+%% ============================================================================
+
+%if EXISTS("_COMMONHDR_EXTIOLIB_") == 0
+%assign _COMMONHDR_EXTIOLIB_ = 1
+
+%% ============================================================================
+%% Create global cache variables to hold each structure definition
+%% ============================================================================
+
+%<LibAddToCompiledModel("ExportedGlobalSignalsDefn", 0)>
+%<LibAddToCompiledModel("CustomReusableSignalsDefn", 0)>
+%<LibAddToCompiledModel("ImportedExternSignalsDefn", 0)>
+%<LibAddToCompiledModel("ImportedExternPointerSignalsDefn", 0)>
+%<LibAddToCompiledModel("ExportedGlobalDWorkDefn", 0)>
+%<LibAddToCompiledModel("ImportedExternDWorkDefn", 0)>
+%<LibAddToCompiledModel("ImportedExternPointerDWorkDefn", 0)>
+%<LibAddToCompiledModel("ExternalInputsStructDefn", 0)>
+%<LibAddToCompiledModel("ExternalOutputsStructDefn", 0)> 
+%<LibAddToCompiledModel("ExternalInputSizesStructDefn", 0)>
+%<LibAddToCompiledModel("ExternalOutputSizesStructDefn", 0)> 
+
+%% Function: SLibGetTypeNameForExternalSignalDefinition =======================
+%% This function returns the typename for a given data record
+%% representing external signal definition. Handles AUTOSAR multi-instance
+%% use-case
+%function SLibGetTypeNameForExternalSignalDefinition(rec) void  
+  %if LibCGTypeIsEnum(SLibGetRecordOriginalCGTypeIdx(rec))
+     %assign cgTypeIdx = SLibGetRecordOriginalCGTypeIdx(rec)
+  %else
+     %assign cgTypeIdx = SLibGetRecordContainerCGTypeIdx(rec)
+  %endif
+
+  %if (SLibAutosarActive() && MultiInstanceERTCode)
+    %return SLibGetTypeNameForMultiInstanceAUTOSAR(cgTypeIdx)
+  %else
+    %return LibCGTypeName(cgTypeIdx)
+  %endif
+%endfunction
+
+%% Function: FcnGenerateBlockIOExternalSignalDefinition =======================
+%% Abstract:
+%%   Generate the definition of an external signal from block io
+%%
+%function FcnGenerateBlockIOExternalSignalDefinition(bo) void
+  %openfile tmpFcnBuf
+  %with bo
+    %assert !ISEMPTY(SigSrc)
+    %assign blkName = SLibReferencedBy(bo)
+    %assign descStr = SLibGetDescriptionForData(bo)
+    %assign descStr = ISEMPTY(descStr) ? "" : "\n* " + descStr + "\n"
+
+    %assign comment  = "/* " + blkName + descStr + " */"
+    %assign dataType = SLibGetTypeNameForExternalSignalDefinition(bo)
+    %assign star = (bo.StorageClass == "ImportedExternPointer") ? "*" : ""
+    %assign isPointer = ISEMPTY(star) ? TLC_FALSE : TLC_TRUE
+    %assign optDims = (bo.StorageClass == "ImportedExternPointer") ? ...
+      "" : LibGetRecordVectorDims(bo)
+    %assign ppStuff = SLibDataPreprocessorStuff(bo)
+    %assign ppIf = ppStuff[0]
+    %assign ppFi = ppStuff[1]
+    %assign id = LibGetRecordIdentifier(bo)
+    %<ppIf>
+    %openfile decls
+      %assign traceMarker = SLibAddTrace("ModelDataSource", "%<id>")
+      %<SLibTraceBegin(traceMarker)>
+      %assign traceMarker2 = SLibAddTrace2("BlockName", blkName, "ModelElemCategory", "%<SLibGetModelElemCategoryForIndividualMapping(bo)>")
+      %<SLibTraceBegin(traceMarker2)>
+      %if SLibAutosarCompilerAbstractionRequired()
+        extern %<bo.StorageTypeQualifier> ...
+          %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, dataType, isPointer, TLC_FALSE, "%<id>%<optDims>", "DataGlobal")>; ...
+          %<comment>
+      %else
+        extern %<bo.StorageTypeQualifier> %<dataType> ...
+          %<star>%<id>%<optDims>; %<comment>
+      %endif
+      %<SLibTraceEnd(traceMarker2)>
+      %<SLibTraceEnd(traceMarker)>
+    %closefile decls
+    %<decls>
+    %<ppFi>
+  %endwith
+  %closefile tmpFcnBuf
+  %return tmpFcnBuf
+%endfunction
+
+%% Function: IsAuxVarForAutosarIOReuse ==========================================
+%% Abstract:
+%%   Checks if the external record is an auxiliary buffer generated for Autosar
+%%   IO reuse
+%%
+%function IsAuxVarForAutosarIOReuse(eio) void
+  %return ISFIELD(eio, "AutosarPRPortVarIdx") && ...
+          ISFIELD(eio, "ReuseBufferName")
+%endfunction
+        
+%% Function: FcnGenerateRootInportExternalSignalDefinition ====================
+%% Abstract:
+%%   Generate the definition of an external signal from the root inports
+%%
+%function FcnGenerateRootInportExternalSignalDefinition(ei, portNum) void
+  %openfile tmpFcnBuf
+  %with ei
+    %assign descStr = SLibGetDescriptionForData(ei)
+    %assign descStr = ISEMPTY(descStr) ? "" : "\n* " + descStr + "\n"
+    %assign comment = "/* '%<ei.BlockName>'%<descStr> */"
+    %assign dataType = SLibGetTypeNameForExternalSignalDefinition(ei)
+    %assign id = LibGetRecordIdentifier(ei)
+    %assign star = (ei.StorageClass == "ImportedExternPointer") ? "*" : ""
+    %assign isPointer = ISEMPTY(star) ? TLC_FALSE : TLC_TRUE
+    %assign optDims = (ei.StorageClass == "ImportedExternPointer") ? ...
+      "" : LibGetRecordVectorDims(ei)    
+    %openfile decls
+      %assign traceMarker = SLibAddTrace("ModelDataSource", "%<id>")
+      %<SLibTraceBegin(traceMarker)>
+      %assign traceMarker2 = SLibAddTrace2("BlockName", "%<ei.BlockName>", "ModelElemCategory", "%<SLibGetModelElemCategoryForIndividualMapping(ei)>")
+      %<SLibTraceBegin(traceMarker2)>
+      %if SLibAutosarCompilerAbstractionRequired() && ...
+        !IsAuxVarForAutosarIOReuse(ei)
+        extern %<ei.StorageTypeQualifier> ...
+          %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, dataType, isPointer, TLC_FALSE, "%<id>%<optDims>", "DataGlobal")>; ...
+          %<comment>
+      %else
+        extern %<ei.StorageTypeQualifier> %<dataType> ...
+          %<star>%<id>%<optDims>; %<comment>
+      %endif
+      %<SLibTraceEnd(traceMarker2)>
+      %<SLibTraceEnd(traceMarker)>
+    %closefile decls
+    %<decls>
+  %endwith
+  %closefile tmpFcnBuf
+  %return tmpFcnBuf
+%endfunction
+
+%% Function: FcnGenerateRootOutportExternalSignalDefinition ====================
+%% Abstract:
+%%   Generate the definition of an external signal from the root outports
+%%
+%function FcnGenerateRootOutportExternalSignalDefinitionForReuseBufferName(ei) void
+  %openfile tmpFcnBuf
+  %with ei
+    %assign descStr = SLibGetDescriptionForData(ei)
+    %assign descStr = ISEMPTY(descStr) ? "" : "\n* " + descStr + "\n"
+    %assign comment = "/* '%<ei.BlockName>'%<descStr> */"
+    %assign dataType = SLibGetTypeNameForExternalSignalDefinition(ei)
+    %assign id = ei.ReuseBufferName
+    %assign optWidth = LibOptionalVectorWidth(LibGetRecordWidth(ei))
+    %openfile decls
+      %assign traceMarker = SLibAddTrace("ModelDataSource", "%<id>")
+      %<SLibTraceBegin(traceMarker)>
+      %assign traceMarker2 = SLibAddTrace2("BlockName", "%<ei.BlockName>", "ModelElemCategory", "%<SLibGetModelElemCategoryForIndividualMapping(ei)>")
+      %<SLibTraceBegin(traceMarker2)>
+      %if SLibAutosarCompilerAbstractionRequired() && ...
+        !IsAuxVarForAutosarIOReuse(ei)
+        extern %<ei.StorageTypeQualifier> ...
+          %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, dataType, TLC_FALSE, TLC_FALSE, "%<id>%<optWidth>", "DataGlobal")>; ...
+          %<comment>
+      %else
+        extern %<ei.StorageTypeQualifier> %<dataType> ...
+          %<id>%<optWidth>; %<comment>
+      %endif
+      %<SLibTraceEnd(traceMarker2)>
+      %<SLibTraceEnd(traceMarker)>
+    %closefile decls
+    %<decls>
+  %endwith
+  %closefile tmpFcnBuf
+  %return tmpFcnBuf
+%endfunction
+
+
+%% Function: FcnGenerateRootOutportExternalSignalDefinition ====================
+%% Abstract:
+%%   Generate the definition of an external signal from the root outports
+%%
+%function FcnGenerateRootOutportExternalSignalDefinition(eo) void
+  %openfile tmpFcnBuf
+  %with eo
+    %assign descStr = SLibGetDescriptionForData(eo)
+    %assign descStr = ISEMPTY(descStr) ? "" : "\n* " + descStr + "\n"
+    %assign comment = "/* '%<eo.BlockName>'%<descStr> */"
+    %assign dataType = SLibGetTypeNameForExternalSignalDefinition(eo)
+    %assign id = LibGetRecordIdentifier(eo)
+    %assign star = (eo.StorageClass == "ImportedExternPointer") ? "*" : ""
+    %assign isPointer = ISEMPTY(star) ? TLC_FALSE : TLC_TRUE
+    %assign optDims = (eo.StorageClass == "ImportedExternPointer") ? ...
+      "" : LibGetRecordVectorDims(eo)    
+    %openfile decls
+      %assign traceMarker = SLibAddTrace("ModelDataSource", "%<id>")
+      %<SLibTraceBegin(traceMarker)>
+      %assign traceMarker2 = SLibAddTrace2("BlockName", "%<eo.BlockName>", "ModelElemCategory", "%<SLibGetModelElemCategoryForIndividualMapping(eo)>")
+      %<SLibTraceBegin(traceMarker2)>
+      %assign TypeQualifier = eo.Object.ObjectProperties.CoderInfo.Object.ObjectProperties.TypeQualifier
+      %if SLibAutosarCompilerAbstractionRequired() && ...
+        !IsAuxVarForAutosarIOReuse(eo)
+        extern %<TypeQualifier> ...
+          %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, dataType, isPointer, TLC_FALSE, "%<id>%<optDims>", "DataGlobal")>; ...
+          %<comment>
+      %else
+        extern %<TypeQualifier> %<dataType> ...
+          %<star>%<id>%<optDims>; %<comment>
+      %endif
+      %<SLibTraceEnd(traceMarker2)>
+      %<SLibTraceEnd(traceMarker)>
+    %closefile decls
+    %<decls>
+  %endwith
+  %closefile tmpFcnBuf
+  %return tmpFcnBuf
+%endfunction
+
+%% Function: FcnAlwaysGenerateBlockDWorkExternalDefinition ======================
+%% Abstract:
+%%   Generate the definition of an external dwork for a block
+%%
+%function FcnAlwaysGenerateBlockDWorkExternalDefinition(dwRec) void
+  %openfile tmpFcnBuf
+  %with dwRec
+    %assign descStr = SLibGetDescriptionForData(dwRec)
+    %assign descStr = ISEMPTY(descStr) ? "" : "\n* " + descStr + "\n"
+    
+    %assign comment = "/* " + SLibReferencedBy(dwRec) + descStr + " */"
+    %assign dataType = SLibGetTypeNameForExternalSignalDefinition(dwRec)
+    %assign star = (dwRec.StorageClass == "ImportedExternPointer") ? ...
+      "*" : ""
+    %assign isPointer = ISEMPTY(star) ? TLC_FALSE : TLC_TRUE
+    %assign optDims = (dwRec.StorageClass == "ImportedExternPointer") ? ...
+      "" : LibGetRecordVectorDims(dwRec)
+    %assign typeQualifier = dwRec.StorageTypeQualifier
+    %assign id = LibGetRecordIdentifier(dwRec)
+    %assign ppIf = ""
+    %assign ppFi = ""
+    %if FcnDataStoreMemoryNonAutoData(dwRec)
+      %assign condition = FcnDataStoreMemoryVariantCondition(dwRec)
+      %if !ISEMPTY(condition)
+        %assign ppIf = "#if " + condition
+        %assign ppFi = "#endif "
+      %endif
+    %elseif SLibGraphicalBlockExist(dwRec)
+      %assign sysIdx = BlockHierarchyMap.Subsystem[GrSrc[0]].NVOwnerSysIdx
+      %assign ppIf = SLibIfSystemPreprocessorCondition(::CompiledModel.System[sysIdx])
+      %assign ppFi = SLibEndIfSystemPreprocessorCondition(::CompiledModel.System[sysIdx])
+    %endif
+    %<ppIf>
+    %openfile decls
+      %assign traceMarker = SLibAddTrace2("ModelDataSource", "%<id>", "StorageClassSource", "Individual")
+      %<SLibTraceBegin(traceMarker)>
+      %assign blockTraceMarker = ""
+      %if SLibGraphicalBlockExist(dwRec)
+        %assign blockTraceMarker = SLibAddTrace("BlockName", "%<SLibGrBlockName(dwRec.GrSrc)>")
+        %<SLibTraceBegin(blockTraceMarker)>
+      %endif
+      %assign traceMarker2 = SLibAddTrace2("ModelElemCategory", "%<SLibGetModelElemCategoryForIndividualMapping(dwRec)>", "StorageClass", "%<dwRec.StorageClass>")
+      %<SLibTraceBegin(traceMarker2)>
+      %if SLibAutosarCompilerAbstractionRequired()
+        extern %<typeQualifier> ...
+          %<SLibAutosarCompilerAbstractionForDataDecl(TLC_FALSE, dataType, isPointer, TLC_FALSE, "%<id>%<optDims>", "DataGlobal")>; ...
+          %<comment>
+      %else
+        extern %<typeQualifier> %<dataType> %<star>%<id>%<optDims>; %<comment>
+      %endif
+      %<SLibTraceEnd(traceMarker2)>
+      %<SLibTraceEnd(blockTraceMarker)>
+      %<SLibTraceEnd(traceMarker)>
+    %closefile decls
+    %<decls>
+    %<ppFi>
+  %endwith
+  %closefile tmpFcnBuf
+  %return tmpFcnBuf
+%endfunction
+
+%% Function: FcnGenerateBlockDWorkExternalDefinition =======================
+%% Abstract:
+%%   Generate the definition of an external non-Custom dwork for a block
+%%
+%function FcnGenerateBlockDWorkExternalDefinition(dwRec) void
+  %if dwRec.StorageClass == "Custom"
+    %% do nothing
+  %else
+    %return FcnAlwaysGenerateBlockDWorkExternalDefinition(dwRec)
+  %endif
+%endfunction
+
+%% Function: LibCacheExportedGlobalSignalsDefinition ==========================
+%% Abstract:
+%%      Cache the exported global signals
+%%
+%function LibCacheExportedGlobalSignalsDefinition() void
+  %if ::CompiledModel.NumExportedGlobalSignals > 0
+    %openfile tmpFcnBuffer
+    %if ::CompiledModel.Name == "mextsignals"
+      %% Required for internal testing of textsignals model in simulink
+      %% engine directory.
+      #define myqual
+    %endif
+    %assign traceMarker = SLibAddTrace2("StorageClass", "ExportedGlobal", "StorageClassSource", "Individual")
+    %<SLibTraceBegin(traceMarker)>
+    %% external root inport signals
+    %if ExternalInputs.NumExportedGlobalSignals > 0
+      %foreach idx = ExternalInputs.NumExternalInputs
+	%assign extInp = ExternalInputs.ExternalInput[idx]
+	%if extInp.StorageClass == "ExportedGlobal"
+          %<FcnGenerateRootInportExternalSignalDefinition(extInp, idx+1)>\
+	%endif
+      %endforeach
+    %endif
+    %% external root outports signals
+    %if ExternalOutputs.NumExportedGlobalSignals > 0
+      %foreach idx = ExternalOutputs.NumExternalOutputs
+	%assign extOutp = ExternalOutputs.ExternalOutput[idx]
+	%if extOutp.StorageClass == "ExportedGlobal"
+          %<FcnGenerateRootOutportExternalSignalDefinition(extOutp)>\
+	%endif
+      %endforeach
+    %endif    
+    %% external block io signals
+    %if BlockOutputs.NumExportedGlobalSignals > 0
+      %foreach boIdx = BlockOutputs.NumExternalBlockOutputs
+	%assign bo = BlockOutputs.ExternalBlockOutput[boIdx]
+	%if bo.StorageClass == "ExportedGlobal"
+          %<FcnGenerateBlockIOExternalSignalDefinition(bo)>\
+	%endif
+      %endforeach
+    %endif
+    %<SLibTraceEnd(traceMarker)>
+    %closefile tmpFcnBuffer
+    %assign ::CompiledModel.ExportedGlobalSignalsDefn = tmpFcnBuffer
+  %else
+    %assign ::CompiledModel.ExportedGlobalSignalsDefn = ""
+  %endif
+%endfunction %% LibCacheExportedGlobalSignalsDefinition
+
+%% Function: LibCacheCustomReusableSignalsDefinition ==========================
+%% Abstract:
+%%      Cache the custom reusable global signals same way as the exported global signals
+%%
+%function LibCacheCustomReusableSignalsDefinition() void
+  %if ::CompiledModel.NumInPlaceOPTSignals > 0 || ...
+    ::CompiledModel.NumCustomDWork > 0
+    %openfile tmpFcnBuffer
+    %% external root inport signals
+    %if ExternalInputs.NumInPlaceOPTSignals > 0
+      %foreach idx = ExternalInputs.NumExternalInputs
+        %assign extInp = ExternalInputs.ExternalInput[idx]
+        %if SLibIsAuxBufferForReusableCSCOrAutoSar(extInp)
+          %assign tempid = extInp.Identifier
+          %assign extInp.Identifier = extInp.ReuseBufferName
+          %<FcnGenerateRootInportExternalSignalDefinition(extInp, idx+1)>\
+          %assign extInp.Identifier = tempid
+        %endif
+      %endforeach
+    %endif
+    %% external root outport signals for AUTOSAR
+    %foreach idx = ExternalOutputs.NumExternalOutputs
+      %assign ei = ExternalOutputs.ExternalOutput[idx]
+      %if (ISFIELD(ei, "AutosarPRPortVarIdx") && ...
+        ISFIELD(ei, "ReuseBufferName") && ...
+        ei.ReuseBufferName != ei.Identifier && ...
+        SLibWriteOutInstForSignalRec(ei))
+        %<FcnGenerateRootOutportExternalSignalDefinitionForReuseBufferName(ei)>\
+      %endif
+    %endforeach
+    %% external block io signals
+    %if BlockOutputs.NumInPlaceOPTSignals > 0
+      %foreach boIdx = BlockOutputs.NumExternalBlockOutputs
+        %assign bo = BlockOutputs.ExternalBlockOutput[boIdx]
+        %if SLibIsAuxBufferForReusableCSCOrAutoSar(bo)
+          %assign tempid = bo.Identifier
+          %assign bo.Identifier = bo.ReuseBufferName
+          %<FcnGenerateBlockIOExternalSignalDefinition(bo)>\
+          %assign bo.Identifier = tempid
+        %endif
+      %endforeach
+    %endif
+    %% dwork
+    %if ::CompiledModel.NumCustomDWork > 0
+      %foreach idx = ::CompiledModel.DWorks.NumDWorks
+        %assign dw = ::CompiledModel.DWorks.DWork[idx]
+        %if SLibIsAuxBufferForReusableCSCOrAutoSar(dw)
+          %assign tempid = dw.Identifier
+          %assign dw.Identifier = dw.ReuseBufferName
+          %<FcnAlwaysGenerateBlockDWorkExternalDefinition(dw)>\
+          %assign dw.Identifier = tempid
+        %endif
+      %endforeach
+    %endif
+    %closefile tmpFcnBuffer
+    %assign ::CompiledModel.CustomReusableSignalsDefn = tmpFcnBuffer
+  %else
+    %assign ::CompiledModel.CustomReusableSignalsDefn = ""
+  %endif
+%endfunction %% LibCacheCustomReusableSignalsDefinition
+
+	  
+	  
+%% Function: LibCacheImportedExternSignalsDefinition ==========================
+%% Abstract:
+%%      Cache the imported extern signals
+%%
+%function LibCacheImportedExternSignalsDefinition() void
+  %if ::CompiledModel.NumImportedExternSignals > 0
+    %openfile tmpFcnBuffer
+    %assign traceMarker = SLibAddTrace2("StorageClass", "ImportedExtern", "StorageClassSource", "Individual")
+    %<SLibTraceBegin(traceMarker)>
+    %% external block io signals
+    %if BlockOutputs.NumImportedExternSignals > 0
+      %foreach boIdx = BlockOutputs.NumExternalBlockOutputs
+	%assign bo = BlockOutputs.ExternalBlockOutput[boIdx]
+	%if bo.StorageClass == "ImportedExtern"
+	  %<FcnGenerateBlockIOExternalSignalDefinition(bo)>\
+	%endif
+      %endforeach
+    %endif
+    %% external root inport signals
+    %if ExternalInputs.NumImportedExternSignals > 0
+      %foreach idx = ExternalInputs.NumExternalInputs
+	%assign extInp = ExternalInputs.ExternalInput[idx]
+	%if extInp.StorageClass == "ImportedExtern"
+	  %<FcnGenerateRootInportExternalSignalDefinition(extInp, idx+1)>\
+	%endif
+      %endforeach
+    %endif   
+    %% external root outport signals
+    %if ExternalOutputs.NumImportedExternSignals > 0
+      %foreach idx = ExternalOutputs.NumExternalOutputs
+	%assign extOutp = ExternalOutputs.ExternalOutput[idx]
+	%if extOutp.StorageClass == "ImportedExtern"
+	  %<FcnGenerateRootOutportExternalSignalDefinition(extOutp)>\
+	%endif
+      %endforeach
+    %endif    
+    %<SLibTraceEnd(traceMarker)>
+    %closefile tmpFcnBuffer
+    %assign ::CompiledModel.ImportedExternSignalsDefn = tmpFcnBuffer
+  %else
+    %assign ::CompiledModel.ImportedExternSignalsDefn = ""
+  %endif
+%endfunction
+
+
+%% Function: LibCacheImportedExternPointerSignalsDefinition ===================
+%% Abstract:
+%%      Cache the imported extern pointer signals
+%%
+%function LibCacheImportedExternPointerSignalsDefinition() void
+  %if ::CompiledModel.NumImportedExternPointerSignals > 0
+    %openfile tmpFcnBuffer
+    %assign traceMarker = SLibAddTrace2("StorageClass", "ImportedExternPointer", "StorageClassSource", "Individual")
+    %<SLibTraceBegin(traceMarker)>
+    %% external block io signals
+    %if BlockOutputs.NumImportedExternPointerSignals > 0
+      %foreach boIdx = BlockOutputs.NumExternalBlockOutputs
+	%assign bo = BlockOutputs.ExternalBlockOutput[boIdx]
+	%if bo.StorageClass == "ImportedExternPointer"
+	  %<FcnGenerateBlockIOExternalSignalDefinition(bo)>\
+	%endif
+      %endforeach
+    %endif
+    %% external root inport signals
+    %if ExternalInputs.NumImportedExternPointerSignals > 0
+      %foreach idx = ExternalInputs.NumExternalInputs
+	%assign extInp = ExternalInputs.ExternalInput[idx]
+	%if extInp.StorageClass == "ImportedExternPointer"
+	  %<FcnGenerateRootInportExternalSignalDefinition(extInp, idx+1)>\
+	%endif
+      %endforeach
+    %endif
+    %% external root outport signals
+    %if ExternalOutputs.NumImportedExternPointerSignals > 0
+      %foreach idx = ExternalOutputs.NumExternalOutputs
+	%assign extOutp = ExternalOutputs.ExternalOutput[idx]
+	%if extOutp.StorageClass == "ImportedExternPointer"
+	  %<FcnGenerateRootOutportExternalSignalDefinition(extOutp)>\
+	%endif
+      %endforeach
+    %endif    
+    %<SLibTraceEnd(traceMarker)>
+    %closefile tmpFcnBuffer
+    %assign ::CompiledModel.ImportedExternPointerSignalsDefn = tmpFcnBuffer
+  %else
+    %assign ::CompiledModel.ImportedExternPointerSignalsDefn = ""
+  %endif
+%endfunction
+
+
+%% Function: LibCacheExternalInputsStructDefinitionByVarGroup ===========================
+%% Abstract:
+%%   Cache the external inputs struct definitions in to a buffer that will be
+%%   sent to the output stream latter. This version gets all information from
+%%   vargroups.
+%function LibCacheExternalInputsStructDefinitionByVarGroup() void
+  %% Look up root system record to see if there is any external input
+  %% NOTE: we're on an assumption that root System exists, and it has only one vargroup for ExternalInput
+  %assign rootSystem = ::CompiledModel.System[::CompiledModel.NumSystems-1]
+  %assign externalInputVarGroupIdx = FcnSysVarGroupIndex(rootSystem,"ExternalInput",0)
+  %% If there is no external input, just return
+  %if externalInputVarGroupIdx < 0
+    %assign ::CompiledModel.ExternalInputsStructDefn = ""
+    %return
+  %endif
+  %openfile tmpFcnBuffer
+  %assign externalInputVarGroup = VarGroups.VarGroup[externalInputVarGroupIdx]
+  %assign hasElement = externalInputVarGroup.HasElement
+  %assign dummyElementName = "_rt_unused"
+  %assign hasUnconditionalElement = TLC_FALSE
+  %assign needed = TLC_FALSE
+  %assign uIdx = -1
+  %foreach idx = externalInputVarGroup.NumVarGroupElements
+    %% TODO: Here we are on an assumption that all info are in CGType "ExternalInputs_Model"
+    %% NOTE: Here we assume that all inports are at root level.
+    %assign id = LibCGTypeMemberName(externalInputVarGroup.CGTypeIdx, idx)
+    %assign memberTypeIdx = LibCGTypeMemberCGTypeIdx(externalInputVarGroup.CGTypeIdx, idx)
+    %assign idNum = IDNUM(externalInputVarGroup.VarGroupElements[idx])
+    %assign recType = idNum[0]
+    %assign recIdx = idNum[1]
+    %assign dataType = LibCGTypeName(memberTypeIdx)
+ 
+    %% if it is a padding field, just generate it as a char array
+    %if recType == "PD"
+      %assign width = LibOptionalVectorWidth(recIdx)
+      char %<id>%<width>;
+      %continue
+    %endif
+    
+    %if recType == "U"
+      %% index for external inputs only
+      %assign uIdx = uIdx + 1
+    %endif
+    
+    %% Don't generate anything for data types with size 0.  
+    %assign slBaseTypeIdx  = LibCGTypeSLBaseType(memberTypeIdx)
+    %assign slBaseTypeSize = LibGetDataTypeSLSizeFromId(slBaseTypeIdx)
+    %if slBaseTypeSize == 0
+      %continue
+    %endif
+    
+    %assert (recType == "U")
+    %assign ExternalIn = ::CompiledModel.ExternalInputs.ExternalInput[recIdx]
+    %% ignore inactive port; note that the Inactive field is there that means it is inactive: no need to check its value
+    %if (ISFIELD(ExternalIn, "Inactive"))
+      %continue
+    %endif
+
+    %% ignore external port that is accessed by an access function
+    %if (ISFIELD(ExternalIn, "UseAccessFunctions")   && ExternalIn.UseAccessFunctions == 1) 
+      %continue
+    %endif
+    %assign ifCond = SLibIfVariantCondition16b(ExternalIn)
+    %assign ifEndCond = SLibEndIfVariantCondition16b(ExternalIn)
+    %assign firstSubSys = ::CompiledModel.BlockHierarchyMap.Subsystem[0]
+    %assert (firstSubSys.Type == "root")
+
+    %% If the current block digram does not include this inport block.
+    %if recIdx >= firstSubSys.NumInportBlocks
+      %assign blkName = "'<Root>/B_%<firstSubSys.SubsystemBlockIndex[0]>_%<firstSubSys.SubsystemBlockIndex[1]>'"
+    %else
+      %assign GrSrc = [0, %<recIdx>]
+      %assign blkName = SLibGrBlockCommentName(GrSrc)
+    %endif
+    %assign optDims = SLibGetVectorDimsForCGType(memberTypeIdx)
+    %assign align = ""
+    %assign cgType = ::CompiledModel.CGTypes.CGType[memberTypeIdx]
+    %assign isComplex = LibCGTypeIsComplex(memberTypeIdx)
+    %assign memberAlignment = LibCGTypeMemberAlignment(externalInputVarGroup.CGTypeIdx, idx)
+    %if !LibCGTypeIsStruct(memberTypeIdx) && !isComplex && ...
+        memberAlignment > 0 && fieldAlign
+       %assign align = SLibGetAlignmentSyntax(::CompiledModel.Name, id, dataType, ...
+                                              memberAlignment, "DATA_ALIGNMENT_STRUCT_FIELD")
+    %endif
+    %assign needed = TLC_TRUE
+    %<ifCond>
+    %assign traceMarker = SLibAddTrace("BlockName", "%<blkName>")
+    %<SLibTraceBegin(traceMarker)>
+    %assign traceMarker2 = SLibAddTrace2("StorageClass", SLibGetVarGroupStorageClass(externalInputVarGroup), "ModelElemCategory", "Inports")
+    %<SLibTraceBegin(traceMarker2)>
+    %if CodeFormat == "S-Function" && !Accelerator
+       %<dataType> *%<id>%<optDims>;  \
+    %else
+       %<align> %<dataType> %<id>%<optDims>;  \
+   %endif
+    /* %<blkName> */
+    %<SLibTraceEnd(traceMarker2)>
+    %<SLibTraceEnd(traceMarker)>
+    %if ISEMPTY(ifCond)
+	  %assign hasUnconditionalElement = TLC_TRUE
+    %else       
+      #define %<hasElement>
+    %endif
+    %<ifEndCond>
+ %endforeach
+ %if (!hasUnconditionalElement && needed)
+   #ifndef %<hasElement>
+     char %<dummyElementName>;
+   #endif
+ %endif      
+ %closefile tmpFcnBuffer
+ %assign ::CompiledModel.ExternalInputsStructDefn = tmpFcnBuffer
+%endfunction
+
+
+
+%% cache the directive that aligns the whole structure.
+%function LibDumpExternalIOStructAlignment(aStructType, structAlign)
+  %assign align = ""
+  %if structAlign > 0
+    %assign align = SLibGetAlignmentSyntax(::CompiledModel.Name, aStructType, "", ...
+                                           structAlign, "DATA_ALIGNMENT_WHOLE_STRUCT")
+  %endif
+  %return align
+%endfunction
+
+%% this is not needed for model reference target.
+%% not needed for generated S-Fcn target and accelerator, (rapid accelerator target?).
+%% it is needed for other targets, including normal GRT, ERT build.
+%function LibCacheExternalInputSizesStructDefinition() void
+  %if NumModelInputs > 0
+    %openfile tmpFcnBuffer
+    %foreach idx = ExternalInputs.NumExternalInputs
+      %assign extInp = ExternalInputs.ExternalInput[idx]
+      %if extInp.StorageClass != "Auto"
+        %continue
+      %endif
+      %if ISFIELD(extInp, "SizeVarGroupIdx")
+        %assign traceMarker = SLibAddTrace2("StorageClass", extInp.StorageClass, "ModelElemCategory", "Inports")
+        %<SLibTraceBegin(traceMarker)>
+        %assign blockTraceMarker = SLibAddTrace("BlockName", "%<extInp.BlockName>")
+        %<SLibTraceBegin(blockTraceMarker)>
+        %assert ISFIELD(extInp, "HasVarDims")
+        %assign sizeTypeIdx = SLibCGVarGroupMemberCGTypeIdx(...
+          extInp.SizeVarGroupIdx[0], extInp.SizeVarGroupIdx[1])
+        %assign dataType = LibCGTypeName(sizeTypeIdx)
+        %assign optWidth = LibOptionalVectorWidth(LibCGTypeWidth(sizeTypeIdx))
+        %assign cgTypeName = FcnSLibCGIRGetVarGroupMemberName(extInp.SizeVarGroupIdx[0], extInp.SizeVarGroupIdx[1])
+        %<dataType>  %<cgTypeName>%<optWidth>; \
+        /* '%<extInp.BlockName>' */
+        %<SLibTraceEnd(blockTraceMarker)>
+        %<SLibTraceEnd(traceMarker)>
+      %endif
+    %endforeach
+    %closefile tmpFcnBuffer
+    %assign ::CompiledModel.ExternalInputSizesStructDefn = tmpFcnBuffer
+  %else
+    %assign ::CompiledModel.ExternalInputSizesStructDefn = ""
+  %endif
+%endfunction
+
+%% Function: LibCacheExternalOutputsStructDefinitionByVarGroup ==========================
+%% Abstract:
+%%   Cache the external outputs struct definitions in to a buffer that will be 
+%%   sent to the output stream latter.
+%%
+%function LibCacheExternalOutputsStructDefinitionByVarGroup() void
+  %% Look up root system record to see if there is any external output
+  %% NOTE: we're on an assumption that root System exists, and it has only one vargroup for ExternalInput
+  %assign rootSystem = ::CompiledModel.System[::CompiledModel.NumSystems-1]
+  %assign externalOutputVarGroupIdx = FcnSysVarGroupIndex(rootSystem,"ExternalOutput",0)
+
+  %% If there is no external output, just return
+  %if externalOutputVarGroupIdx < 0
+    %assign ::CompiledModel.ExternalOutputsStructDefn = ""
+    %return
+  %endif
+
+  %openfile tmpFcnBuffer
+  %assign externalOutputVarGroup = VarGroups.VarGroup[externalOutputVarGroupIdx]
+  %assign hasElement = externalOutputVarGroup.HasElement
+  %assign dummyElementName = "_rt_unused"
+  %assign hasUnconditionalElement = TLC_FALSE
+  %assign needed = TLC_FALSE
+  %foreach idx = externalOutputVarGroup.NumVarGroupElements
+    %% TODO: Here we are on an assumption that all info are in CGType "ExternalInputs_Model"
+    %assign idNum = IDNUM(externalOutputVarGroup.VarGroupElements[idx])
+    %assign recType = idNum[0]
+    %assign recIdx = idNum[1]
+    %% if it is a padding field, just generate it without asking for its type
+    %if recType == "PD"
+      %assign width = LibOptionalVectorWidth(recIdx)
+      char pad_%<id>%<width>;
+    %continue
+    %endif
+    
+    %assign extOut  = ExternalOutputs.ExternalOutput[recIdx]
+
+    %%Get Block from the External Output record
+    %assign sysIdx = extOut.Block[0]
+    %assign blkIdx = extOut.Block[1]
+    %assign ExternalOutBlk = ::CompiledModel.System[sysIdx].Block[blkIdx]
+    %% ignore inactive port; note that the Inactive field is there that means it is inactive: no need to check its value
+    %if (ISFIELD(ExternalOutBlk, "Inactive"))
+	  %continue
+    %endif
+
+    %% ignore external port that is accessed by an access function
+    %if (ISFIELD(extOut, "UseAccessFunctions")   && extOut.UseAccessFunctions == 1) 
+      %continue
+    %endif
+    %assign ifCond = SLibIfVariantCondition16b(ExternalOutBlk)
+    %assign ifEndCond = SLibEndIfVariantCondition16b(ExternalOutBlk)
+    %assign memberTypeIdx = LibCGTypeMemberCGTypeIdx(externalOutputVarGroup.CGTypeIdx, idx)
+    %assign cgType = ::CompiledModel.CGTypes.CGType[memberTypeIdx]
+    %assign id = LibCGTypeMemberName(externalOutputVarGroup.CGTypeIdx, idx)
+
+    %assign memberAlignment = LibCGTypeMemberAlignment(externalOutputVarGroup.CGTypeIdx, idx)
+    %assign align=""
+    %assign dataType = LibCGTypeName(memberTypeIdx)
+    
+    %if !LibCGTypeIsStruct(memberTypeIdx) && !LibCGTypeIsComplex(memberTypeIdx) && ...
+        memberAlignment > 0 && fieldAlign
+      %assign align = SLibGetAlignmentSyntax(::CompiledModel.Name, id, dataType, ...
+                                               memberAlignment, "DATA_ALIGNMENT_STRUCT_FIELD")
+    %endif
+    %assign optDims = SLibGetVectorDimsForCGType(memberTypeIdx)
+    %assign needed = TLC_TRUE
+    %<ifCond>
+    %assign referencedBy = SLibReferencedBy(extOut)
+    %assign blocktraceMarker = SLibAddTrace("BlockName", "%<referencedBy>")
+    %<SLibTraceBegin(blocktraceMarker)>
+    %assign traceMarker2 = SLibAddTrace2("StorageClass", SLibGetVarGroupStorageClass(externalOutputVarGroup), "ModelElemCategory", "Outports")
+    %<SLibTraceBegin(traceMarker2)>
+    %if CodeFormat == "S-Function"
+      %<dataType> *%<id>%<optDims>; \
+    %else
+      %<align> %<dataType> %<id>%<optDims>; \
+    %endif    
+    /* %<SLibReferencedBy(extOut)> */
+    %<SLibTraceEnd(traceMarker2)>
+    %<SLibTraceEnd(blocktraceMarker)>
+    %if ISEMPTY(ifCond)
+        %assign hasUnconditionalElement = TLC_TRUE
+    %else
+       #define %<hasElement>
+    %endif
+    %<ifEndCond> 
+  %endforeach
+  %if (!hasUnconditionalElement && needed)
+    #ifndef %<hasElement>
+      char %<dummyElementName>;
+    #endif
+  %endif
+  %closefile tmpFcnBuffer
+  %assign ::CompiledModel.ExternalOutputsStructDefn = tmpFcnBuffer
+%endfunction
+  
+
+%function LibCacheExternalOutputSizesStructDefinition() void
+  %if NumModelOutputs > 0
+    %openfile tmpFcnBuffer
+    %foreach idx = ExternalOutputs.NumExternalOutputs
+      %assign extOut       = ExternalOutputs.ExternalOutput[idx]
+      %assign sysIdx       = extOut.Block[0]
+      %assign blkIdx       = extOut.Block[1]
+      %assign outportBlock = System[sysIdx].Block[blkIdx]
+      %if SLibExternalOutputIsVirtual(outportBlock)
+        %continue
+      %endif
+      %if ISFIELD(extOut, "HasVarDims")
+        %assign traceMarker = SLibAddTrace2("StorageClass", "ExportedGlobal", "StorageClassSource", "Individual")
+        %<SLibTraceBegin(traceMarker)>
+        %assign blockTraceMarker = SLibAddTrace("BlockName", "%<outportBlock.Name>")
+        %<SLibTraceBegin(blockTraceMarker)>
+        %assign sizeTypeIdx = SLibCGVarGroupMemberCGTypeIdx(...
+          extOut.SizeVarGroupIdx[0], extOut.SizeVarGroupIdx[1])
+        %assign dataType = LibCGTypeName(sizeTypeIdx)
+        %assign optWidth = LibOptionalVectorWidth(LibCGTypeWidth(sizeTypeIdx))
+        %assign cgTypeName = FcnSLibCGIRGetVarGroupMemberName(extOut.SizeVarGroupIdx[0], extOut.SizeVarGroupIdx[1])
+        %<dataType>  %<cgTypeName>%<optWidth>; \
+        /* '%<outportBlock.Name>' */
+        %<SLibTraceEnd(blockTraceMarker)>
+        %<SLibTraceEnd(traceMarker)>
+      %endif
+    %endforeach
+    %closefile tmpFcnBuffer
+    %assign ::CompiledModel.ExternalOutputSizesStructDefn = tmpFcnBuffer
+  %else
+    %assign ::CompiledModel.ExternalOutputSizesStructDefn = ""
+  %endif
+%endfunction
+
+%% Function: SLibExportedGlobalSignalsIsEmpty =================================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibExportedGlobalSignalsIsEmpty() void
+  %<LibTrapCacheAssert(ExportedGlobalSignalsDefn)>
+  %return WHITE_SPACE(ExportedGlobalSignalsDefn)
+%endfunction
+
+
+%% Function: SLibDumpExportedGlobalSignalsDefinition ==========================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibDumpExportedGlobalSignalsDefinition() void
+  %<LibTrapCacheAssert(ExportedGlobalSignalsDefn)>
+  %assign retVal = ExportedGlobalSignalsDefn
+  %<SLibResetTLCGlobal("ExportedGlobalSignalsDefn")>
+  %return retVal
+%endfunction
+
+%% Function: SLibCustomReusableSignalsIsEmpty =================================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibCustomReusableSignalsIsEmpty() void
+  %<LibTrapCacheAssert(CustomReusableSignalsDefn)>
+  %return WHITE_SPACE(CustomReusableSignalsDefn)
+%endfunction
+
+
+%% Function: SLibDumpCustomReusableSignalsDefinition ==========================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibDumpCustomReusableSignalsDefinition() void
+  %<LibTrapCacheAssert(CustomReusableSignalsDefn)>
+  %assign retVal = CustomReusableSignalsDefn
+  %<SLibResetTLCGlobal("CustomReusableSignalsDefn")>
+  %return retVal
+%endfunction
+
+
+%% Function: SLibImportedExternSignalsIsEmpty =================================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibImportedExternSignalsIsEmpty() void
+  %<LibTrapCacheAssert(ImportedExternSignalsDefn)>
+  %return WHITE_SPACE(ImportedExternSignalsDefn)
+%endfunction
+
+
+%% Function: SLibDumpImportedExternSignalsDefinition ==========================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibDumpImportedExternSignalsDefinition() void
+  %<LibTrapCacheAssert(ImportedExternSignalsDefn)>
+  %assign retVal = ImportedExternSignalsDefn
+  %<SLibResetTLCGlobal("ImportedExternSignalsDefn")>
+  %return retVal
+%endfunction
+
+
+%% Function: SLibImportedExternPointerSignalsIsEmpty ==========================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibImportedExternPointerSignalsIsEmpty() void
+  %<LibTrapCacheAssert(ImportedExternPointerSignalsDefn)>
+  %return WHITE_SPACE(ImportedExternPointerSignalsDefn)
+%endfunction
+
+
+%% Function: SLibDumpImportedExternPointerSignalsDefinition ===================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibDumpImportedExternPointerSignalsDefinition() void
+  %<LibTrapCacheAssert(ImportedExternPointerSignalsDefn)>
+  %assign retVal = ImportedExternPointerSignalsDefn
+  %<SLibResetTLCGlobal("ImportedExternPointerSignalsDefn")>
+  %return retVal
+%endfunction
+
+
+%% Function: SLibExportedGlobalDWorkIsEmpty =================================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibExportedGlobalDWorkIsEmpty() void
+  %<LibTrapCacheAssert(ExportedGlobalDWorkDefn)>
+  %return WHITE_SPACE(ExportedGlobalDWorkDefn)
+%endfunction
+
+
+%% Function: SLibDumpExportedGlobalDWorkDefinition ==========================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibDumpExportedGlobalDWorkDefinition() void
+  %<LibTrapCacheAssert(ExportedGlobalDWorkDefn)>
+  %assign retVal = ExportedGlobalDWorkDefn
+  %<SLibResetTLCGlobal("ExportedGlobalDWorkDefn")>
+  %return retVal
+%endfunction
+
+
+%% Function: SLibImportedExternDWorkIsEmpty =================================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibImportedExternDWorkIsEmpty() void
+  %<LibTrapCacheAssert(ImportedExternDWorkDefn)>
+  %return WHITE_SPACE(ImportedExternDWorkDefn)
+%endfunction
+
+
+%% Function: SLibDumpImportedExternDWorkDefinition ==========================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibDumpImportedExternDWorkDefinition() void
+  %<LibTrapCacheAssert(ImportedExternDWorkDefn)>
+  %assign retVal = ImportedExternDWorkDefn
+  %<SLibResetTLCGlobal("ImportedExternDWorkDefn")>
+  %return retVal
+%endfunction
+
+
+%% Function: SLibImportedExternPointerDWorkIsEmpty ==========================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibImportedExternPointerDWorkIsEmpty() void
+  %<LibTrapCacheAssert(ImportedExternPointerDWorkDefn)>
+  %return WHITE_SPACE(ImportedExternPointerDWorkDefn)
+%endfunction
+
+
+%% Function: SLibDumpImportedExternPointerDWorkDefinition ===================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function SLibDumpImportedExternPointerDWorkDefinition() void
+  %<LibTrapCacheAssert(ImportedExternPointerDWorkDefn)>
+  %assign retVal = ImportedExternPointerDWorkDefn
+  %<SLibResetTLCGlobal("ImportedExternPointerDWorkDefn")>
+  %return retVal
+%endfunction
+
+
+%% Function: LibExternalInputsStructIsEmpty ===================================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function LibExternalInputsStructIsEmpty() void
+  %if SLibAutosarActive()
+    %return TLC_TRUE
+  %else
+    %<LibTrapCacheAssert(ExternalInputsStructDefn)>
+    %return WHITE_SPACE(ExternalInputsStructDefn)
+  %endif
+%endfunction
+
+
+%% Function: LibDumpExternalInputsStructDefinition ============================
+%% Abstract:
+%%   dump external inputs struct definition.
+%%
+%function LibDumpExternalInputsStructDefinition() void
+  %<LibTrapCacheAssert(ExternalInputsStructDefn)>
+  %assign retVal = ExternalInputsStructDefn
+  %<SLibResetTLCGlobal("ExternalInputsStructDefn")>
+  %return retVal
+%endfunction
+
+
+%% Function: LibExternalOutputsStructIsEmpty ==================================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function LibExternalOutputsStructIsEmpty() void
+  %if SLibAutosarActive()
+    %return TLC_TRUE
+  %else
+    %<LibTrapCacheAssert(ExternalOutputsStructDefn)>
+    %return WHITE_SPACE(ExternalOutputsStructDefn)
+  %endif
+%endfunction
+
+
+%% Function: LibDumpExternalOutputsStructDefinition ===========================
+%% Abstract:
+%%   dump external outputs struct definition.
+%function LibDumpExternalOutputsStructDefinition() void
+  %<LibTrapCacheAssert(ExternalOutputsStructDefn)>
+  %assign retVal = ExternalOutputsStructDefn
+  %<SLibResetTLCGlobal("ExternalOutputsStructDefn")>
+  %return retVal
+%endfunction
+
+%% Function: LibExternalInputSizesStructIsEmpty ==============================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function LibExternalInputSizesStructIsEmpty() void
+  %if SLibAutosarActive()
+    %return TLC_TRUE
+  %else
+    %<LibTrapCacheAssert(ExternalInputSizesStructDefn)>
+    %return WHITE_SPACE(ExternalInputSizesStructDefn)
+  %endif
+%endfunction
+
+%function LibDumpExternalInputSizesStructDefinition() void
+  %<LibTrapCacheAssert(ExternalInputSizesStructDefn)>
+  %assign retVal = ExternalInputSizesStructDefn
+  %<SLibResetTLCGlobal("ExternalInputSizesStructDefn")>
+  %return retVal
+%endfunction
+
+%% Function: LibExternalOutputSizesStructIsEmpty ==============================
+%% Abstract:
+%%   Is the cache empty?
+%%
+%function LibExternalOutputSizesStructIsEmpty() void
+  %if SLibAutosarActive()
+    %return TLC_TRUE
+  %else
+    %<LibTrapCacheAssert(ExternalOutputSizesStructDefn)>
+    %return WHITE_SPACE(ExternalOutputSizesStructDefn)
+  %endif
+%endfunction
+
+%function LibDumpExternalOutputSizesStructDefinition() void
+  %<LibTrapCacheAssert(ExternalOutputSizesStructDefn)>
+  %assign retVal = ExternalOutputSizesStructDefn
+  %<SLibResetTLCGlobal("ExternalOutputSizesStructDefn")>
+  %return retVal
+%endfunction
+
+%% Function: SLibHasGlobalExternalInputsWithFPC =======================================
+%% Abstract:
+%%   Is there any ExternalInput that requires global access
+%%
+%function SLibHasGlobalExternalInputsWithFPC() void
+  %if !EXISTS(::hasGlobalExternalInputsWithFPC)
+    %% Cache the result
+    %assign hasGlobal = TLC_FALSE
+    %if MultiInstanceERTCode && SLibFcnProtoCtrlActive()
+      %foreach idx = ExternalInputs.NumExternalInputs
+        %if ExternalInputs.ExternalInput[idx].RequiresGlobalAccess == "yes"
+          %assign hasGlobal = TLC_TRUE
+          %break
+        %endif
+      %endforeach
+    %endif
+    %assign ::hasGlobalExternalInputsWithFPC = hasGlobal
+  %endif
+  %return ::hasGlobalExternalInputsWithFPC
+%endfunction
+
+
+%% Function: SLibHasGlobalExternalOutputsWithFPC ======================================
+%% Abstract:
+%%   Is there any ExternalOutput that requires global access
+%%
+%function SLibHasGlobalExternalOutputsWithFPC() void
+  %if !EXISTS(::hasGlobalExternalOutputsWithFPC)
+    %% Cache the result
+    %assign hasGlobal = TLC_FALSE
+    %if MultiInstanceERTCode && SLibFcnProtoCtrlActive()
+      %foreach idx = ExternalOutputs.NumExternalOutputs
+        %if ExternalOutputs.ExternalOutput[idx].RequiresGlobalAccess == "yes"
+          %assign hasGlobal = TLC_TRUE
+          %break
+        %endif
+      %endforeach
+    %endif
+    %assign ::hasGlobalExternalOutputsWithFPC = hasGlobal
+  %endif
+  %return ::hasGlobalExternalOutputsWithFPC
+%endfunction
+
+
+%endif %% _COMMONHDR_EXTIOLIB_

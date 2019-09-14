@@ -1,0 +1,58 @@
+%% 
+%% 
+%% 
+%%
+%% Author:
+%%   Pete Szpak
+%% Date:
+%%   July 18, 1997
+%% Abstract:
+%%   TLC libraray for VxWorks blocks.
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+
+%assign stf = FEVAL("get_param", CompiledModel.Name, "SystemTargetFile")
+%if stf == "idelink_ert.tlc" || stf == "idelink_grt.tlc" 
+  %<LibReportError("VxWork Lib blocks cannot be used with IDE Link component of the Embedded Coder product.")>
+%endif
+
+%if !EXISTS("_VXLIB_")
+  %assign ::_VXLIB_ = 1
+  
+  %%
+  %% Need VxWorks include files
+  %%
+  
+  %openfile buffer
+  
+  /* include header files for VxWorks O/S calls */
+  #include <vxWorks.h>
+  #include <sysLib.h>
+  #include <intLib.h>
+  #include <iv.h>
+  #include <fppLib.h>
+  #include <logLib.h>
+  
+  %closefile buffer
+  %<LibCacheDefine(buffer)>
+  
+%endif  %% _VXLIB_
+
+%% [EOF] vxlib.tlc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

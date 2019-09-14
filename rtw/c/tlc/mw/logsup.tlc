@@ -1,0 +1,235 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+%% Abstract:
+%%      Library with support for logging
+%%
+
+%if EXISTS("_LOGSUP_") == 0
+%assign _LOGSUP_ = 1
+
+%% Function: SLibGenLogVarCreate ===============================================
+%% Abstract:
+%%   Generate code for creating a log variable
+%%
+%function SLibGenLogVarCreate(lv, name, dType, log, cmplx, frame, nCols, ...
+  nDims, dims, logValDimsStat, currSigDims, currSigDimsSize, maxRows, ...
+  decim, ts, appendToLogVarsList) Output
+  %%
+  %assert(!IsModelReferenceTarget())
+  
+  %assign tstart = 0.0
+  %if isRSimWithSolverModule
+    %assign tstart = RTMGet("TStart")
+  %endif
+  
+  %assign stepSize = 0.0
+  %if !isRSimWithSolverModule %% assert !IsModelReferenceTarget
+    %if SLibIsERTCodeFormat()
+      %assign stepSize = RTMGet("StepSize0")
+    %else
+      %assign stepSize = RTMGet("StepSize")
+    %endif
+  %endif
+  %%
+  %<lv> = %<tCreateLogVar>(
+             %<RTMGetLoggingObject()>,
+             %<tstart>,
+             %<RTMGet("TFinal")>,
+             %<stepSize>,
+             %<GetRTMErrorStatusPtr()>,
+             "%<name>",
+             %<dType>,
+             %<log>,
+             %<cmplx>,
+             %<frame>,
+             %<nCols>,
+             %<nDims>,
+             %<dims>,
+             %<logValDimsStat>,             
+             %<currSigDims>,
+             %<currSigDimsSize>,
+             %<maxRows>,
+             %<decim>,
+             %<ts>,
+             %<appendToLogVarsList>);
+  %%
+%endfunction %% SLibGenLogVarCreate
+
+
+%function SLibGenLogVarCreateWithConvert(lv, name, dType, convert, log, cmplx, frame, nCols, ...
+  nDims, dims, logValDimsStat, currSigDims, currSigDimsSize, maxRows, decim, ts, ...
+  appendToLogVarsList) Output
+  %%
+  %assert(!IsModelReferenceTarget())
+  
+  %assign tstart = 0.0
+  %if isRSimWithSolverModule
+    %assign tstart = RTMGet("TStart")
+  %endif
+  
+  %assign stepSize = 0.0
+  %if !isRSimWithSolverModule %% assert !IsModelReferenceTarget
+    %if SLibIsERTCodeFormat()
+      %assign stepSize = RTMGet("StepSize0")
+    %else
+      %assign stepSize = RTMGet("StepSize")
+    %endif
+  %endif
+  %%
+  %<lv> = %<tCreateLogVarWithConvert>(
+             %<RTMGetLoggingObject()>,
+             %<tstart>,
+             %<RTMGet("TFinal")>,
+             %<stepSize>,
+             %<GetRTMErrorStatusPtr()>,
+             "%<name>",
+             %<dType>,
+             %<convert>,
+             %<log>,
+             %<cmplx>,
+             %<frame>,
+             %<nCols>,
+             %<nDims>,
+             %<dims>,
+             %<logValDimsStat>,             
+             %<currSigDims>,
+             %<currSigDimsSize>,
+             %<maxRows>,
+             %<decim>,
+             %<ts>,
+             %<appendToLogVarsList>);
+  %%
+%endfunction %% SLibGenLogVarCreateWithConvert
+
+
+%% Function: SLibGenStructLogVarCreate =========================================
+%% Abstract:
+%%   Generate code for creating a struct log variable
+%%
+%function SLibGenStructLogVarCreate(lv, name, logTime, maxRows, decim, ts, ...
+  sigInfo, bName) Output
+  %%
+  %assert(!IsModelReferenceTarget())
+  
+  %assign tstart = 0.0
+  %if isRSimWithSolverModule
+    %assign tstart = RTMGet("TStart")
+  %endif
+
+  %assign stepSize = 0.0
+  %if !isRSimWithSolverModule  %% assert !IsModelReferenceTarget
+    %if SLibIsERTCodeFormat()
+      %assign stepSize = RTMGet("StepSize0")
+    %else
+      %assign stepSize = RTMGet("StepSize")
+    %endif
+  %endif
+  %%
+  %<lv> = %<tCreateStructLogVar>(
+               %<RTMGetLoggingObject()>,
+               %<tstart>,
+               %<RTMGet("TFinal")>, 
+               %<stepSize>, 
+               %<GetRTMErrorStatusPtr()>, 
+               "%<name>", 
+               %<logTime>, 
+               %<maxRows>, 
+               %<decim>, 
+               %<ts>,
+               %<sigInfo>, 
+               %<bName>);
+  %%
+%endfunction %% SLibGenStructLogVarCreate
+
+
+%% Function: SLibGenLogVarUpdate ===============================================
+%% Abstract:
+%%   Generate code for updating an log variable
+%%
+%function SLibGenLogVarUpdate(logVar, inpPtr, isVarDims) Output
+  %%
+  %<tUpdateLogVar>((LogVar *)%<logVar>, %<inpPtr>, %<isVarDims>);
+  %%
+%endfunction %% SLibGenLogVarUpdate
+
+
+%% Function: SLibGenStructLogVarUpdate =========================================
+%% Abstract:
+%%   Generate code for updating an log variable
+%%
+%function SLibGenStructLogVarUpdate(logVar, tPtr, inpPtr) Output
+  %%
+  %<tUpdateStructLogVar>((StructLogVar *)%<logVar>, %<tPtr>, %<inpPtr>);
+  %%
+%endfunction %% SLibGenStructLogVarUpdate
+
+
+%% Function: SLibGenTXYLogVarUpdate ============================================
+%% Abstract:
+%%   Generate code for updating an log variable
+%%
+%function SLibGenTXYLogVarUpdate() Output
+  %%
+  %% For separate output/update functions case, rt_UpdateTXYLogVars call will be
+  %% made in main.c(or .cpp). So for C++ Encapsulated code generation, the main
+  %% program must access rtwLogInfo field of RTM via C++ object's member function.
+  %if GenerateClassInterface && !::IncludeLoggingInstrumentation
+    %assign loggingObject = "%<CPPObjectName>.getRTM()->rtwLogInfo"
+  %else
+    %assign loggingObject = "%<RTMGetLoggingObject()>"
+  %endif
+  %assign tPtr = RTMSpecAccsGetTPtr(RTMGetRTModelRecShell().TPtr,RTMGetModelSS())
+  rt_UpdateTXYLogVars(%<loggingObject>, %<tPtr>);
+  %%
+%endfunction %% SLibGenTXYLogVarUpdate
+
+
+%% Function: SLibGenLoggingStart ===============================================
+%% Abstract:
+%%   Generate code for starting logging
+%%
+%function SLibGenLoggingStart() Output
+  %%
+  %if ::CompiledModel.RTWStatesLogging
+    rt_FillStateSigInfoFromMMI(%<RTMGetLoggingObject()>,%<GetRTMErrorStatusPtr()>);
+  %endif
+  
+  %assign tstart = 0.0
+  %if isRSimWithSolverModule
+    %assign tstart = RTMGet("TStart")
+  %endif
+  rt_StartDataLoggingWithStartTime(%<RTMGetLoggingObject()>, ...
+    %<tstart>, %<RTMGet("TFinal")>, %<RTMGet("StepSize0")>, %<GetRTMErrorStatusPtr()>);
+  %%
+%endfunction %% SLibGenLoggingStart
+
+
+%% Function: SLibGenLoggingStop ================================================
+%% Abstract:
+%%   Generate code for stopping logging
+%%
+%function SLibGenLoggingStop(file) Output
+  %%
+  %% rt_CleanUpForStateLogWithMMI, rt_CleanUpForSigLogWithMMI and rt_StopDataLogging
+  %% calls will be made in main.c(or .cpp). So for C++ Encapsulated code generation, 
+  %% the main program must access rtwLogInfo field of RTM via C++ object's member 
+  %% function.
+  %if GenerateClassInterface
+    %assign loggingObject = "%<CPPObjectName>.getRTM()->rtwLogInfo"
+  %else
+    %assign loggingObject = "%<RTMGetLoggingObject()>"
+  %endif
+  %if ::CompiledModel.RTWStatesLogging
+    rt_CleanUpForStateLogWithMMI(%<loggingObject>);
+  %endif
+  rt_StopDataLogging(%<file>, %<loggingObject>);
+  %%
+%endfunction %% SLibGenLoggingStop
+
+%endif %% _LOGSUP_
+
+%% [EOF] logsup.tlc

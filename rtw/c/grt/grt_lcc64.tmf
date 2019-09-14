@@ -1,0 +1,315 @@
+# Copyright 1994-2018 The MathWorks, Inc.
+#
+# File    : grt_lcc64.tmf   
+#
+# Abstract:
+#	Template makefile for building a PC-based stand-alone generic real-time 
+#       version of Simulink model using	generated C code and LCC compiler 
+#       Version 2.4
+#
+# 	This makefile attempts to conform to the guidelines specified in the
+# 	IEEE Std 1003.2-1992 (POSIX) standard. It is designed to be used
+#       with GNU Make (gmake) which is located in matlabroot/bin/win64.
+#
+# 	Note that this template is automatically customized by the build 
+#       procedure to create "<model>.mk"
+#
+#       The following defines can be used to modify the behavior of the
+#	build:
+#	  OPT_OPTS       - Optimization options. Default is none. To enable
+#                          debugging specify as OPT_OPTS=-g4.
+#	  OPTS           - User specific compile options.
+#	  USER_SRCS      - Additional user sources, such as files needed by
+#			   S-functions.
+#	  USER_INCLUDES  - Additional include paths
+#			   (i.e. USER_INCLUDES="-Iwhere-ever -Iwhere-ever2")
+#			   (For Lcc, have a '/'as file separator before the
+#			   file name instead of a '\' .
+#			   i.e.,  d:\work\proj1/myfile.c - required for 'gmake')
+#
+#       This template makefile is designed to be used with a system target
+#       file that contains 'rtwgensettings.BuildDirSuffix' see grt.tlc
+
+#------------------------ Macros read by make_rtw ------------------------------
+#
+# The following macros are read by the build procedure:
+#
+#  MAKECMD         - This is the command used to invoke the make utility
+#  HOST            - What platform this template makefile is targeted for
+#                    (i.e. PC or UNIX)
+#  BUILD           - Invoke make from the build procedure (yes/no)?
+#  SYS_TARGET_FILE - Name of system target file.
+
+MAKECMD         = "%MATLAB%\bin\win64\gmake"
+SHELL           = cmd
+HOST            = PC
+BUILD           = yes
+SYS_TARGET_FILE = grt.tlc
+BUILD_SUCCESS	= *** Created
+COMPILER_TOOL_CHAIN = lcc
+
+# Opt in to simplified format by specifying compatible Toolchain
+TOOLCHAIN_NAME = "LCC-win64 v2.4.1 | gmake (64-bit Windows)"
+
+MAKEFILE_FILESEP = /
+
+#---------------------- Tokens expanded by make_rtw ----------------------------
+#
+# The following tokens, when wrapped with "|>" and "<|" are expanded by the
+# build procedure.
+#
+#  MODEL_NAME          - Name of the Simulink block diagram
+#  MODEL_MODULES       - Any additional generated source modules
+#  MAKEFILE_NAME       - Name of makefile created from template makefile <model>.mk
+#  MATLAB_ROOT         - Path to where MATLAB is installed.
+#  MATLAB_BIN          - Path to MATLAB executable.
+#  S_FUNCTIONS         - List of S-functions.
+#  S_FUNCTIONS_LIB     - List of S-functions libraries to link.
+#  NUMST               - Number of sample times
+#  TID01EQ             - yes (1) or no (0): Are sampling rates of continuous task
+#                        (tid=0) and 1st discrete task equal.
+#  NCSTATES            - Number of continuous states
+#  BUILDARGS           - Options passed in at the command line.
+#  MULTITASKING        - yes (1) or no (0): Is solver mode multitasking
+#  MAT_FILE            - yes (1) or no (0): Should mat file logging be done
+
+
+MODEL                = |>MODEL_NAME<|
+MODULES              = |>MODEL_MODULES<|
+MAKEFILE             = |>MAKEFILE_NAME<|
+MATLAB_ROOT          = |>MATLAB_ROOT<|
+ALT_MATLAB_ROOT      = |>ALT_MATLAB_ROOT<|
+MATLAB_BIN           = |>MATLAB_BIN<|
+ALT_MATLAB_BIN       = |>ALT_MATLAB_BIN<|
+MASTER_ANCHOR_DIR    = |>MASTER_ANCHOR_DIR<|
+START_DIR            = |>START_DIR<|
+S_FUNCTIONS          = |>S_FUNCTIONS<|
+S_FUNCTIONS_LIB      = |>S_FUNCTIONS_LIB<|
+NUMST                = |>NUMST<|
+TID01EQ              = |>TID01EQ<|
+NCSTATES             = |>NCSTATES<|
+BUILDARGS            = |>BUILDARGS<|
+MULTITASKING         = |>MULTITASKING<|
+MAT_FILE             = |>MAT_FILE<|
+
+CLASSIC_INTERFACE    = |>CLASSIC_INTERFACE<|
+# Optional for GRT
+ALLOCATIONFCN        = |>GENERATE_ALLOC_FCN<|
+ONESTEPFCN           = |>COMBINE_OUTPUT_UPDATE_FCNS<|
+TERMFCN              = 1
+MULTI_INSTANCE_CODE  = |>MULTI_INSTANCE_CODE<|
+
+MODELREFS            = |>MODELREFS<|
+SHARED_SRC           = |>SHARED_SRC<|
+SHARED_SRC_DIR       = |>SHARED_SRC_DIR<|
+SHARED_BIN_DIR       = |>SHARED_BIN_DIR<|
+SHARED_LIB           = |>SHARED_LIB<|
+SHARED_LIB_LINK      = $(subst /,\,$(SHARED_LIB))
+OPTIMIZATION_FLAGS   = |>OPTIMIZATION_FLAGS<|
+ADDITIONAL_LDFLAGS   = |>ADDITIONAL_LDFLAGS<|
+DEFINES_CUSTOM       = |>DEFINES_CUSTOM<|
+
+#--------------------------- Model and reference models -----------------------
+MODELLIB                  = |>MODELLIB<|
+MODELREF_LINK_LIBS        = |>MODELREF_LINK_LIBS<|
+MODELREF_LINK_RSPFILE     = |>MODELREF_LINK_RSPFILE_NAME<|
+MODELREF_INC_PATH         = |>START_MDLREFINC_EXPAND_INCLUDES<|-I|>MODELREF_INC_PATH<| |>END_MDLREFINC_EXPAND_INCLUDES<|
+RELATIVE_PATH_TO_ANCHOR   = |>RELATIVE_PATH_TO_ANCHOR<|
+# NONE: standalone, SIM: modelref sim, RTW: modelref coder target
+MODELREF_TARGET_TYPE       = |>MODELREF_TARGET_TYPE<|
+
+#-- In the case when directory name contains space ---
+ifneq ($(MATLAB_ROOT),$(ALT_MATLAB_ROOT))
+MATLAB_ROOT := $(ALT_MATLAB_ROOT)
+endif
+ifneq ($(MATLAB_BIN),$(ALT_MATLAB_BIN))
+MATLAB_BIN := $(ALT_MATLAB_BIN)
+endif
+
+#--------------------------- Tool Specifications ------------------------------
+
+LCC = $(MATLAB_ROOT)\sys\lcc64\lcc64
+include $(MATLAB_ROOT)\rtw\c\tools\lcc64tools.mak
+
+CMD_FILE             = $(MODEL).rsp
+
+#------------------------------ Include Path ----------------------------------
+
+# see COMPILER_INCLUDES from lcc64tools.mak
+
+ADD_INCLUDES = \
+|>START_EXPAND_INCLUDES<|	-I|>EXPAND_DIR_NAME<| \
+|>END_EXPAND_INCLUDES<|
+
+SHARED_INCLUDES =
+ifneq ($(SHARED_SRC_DIR),)
+SHARED_INCLUDES = -I$(SHARED_SRC_DIR) 
+endif
+
+INCLUDES = -I. -I$(RELATIVE_PATH_TO_ANCHOR) $(MODELREF_INC_PATH) $(ADD_INCLUDES) \
+           $(COMPILER_INCLUDES) $(USER_INCLUDES) $(SHARED_INCLUDES)
+
+#------------------------ rtModel ----------------------------------------------
+RTM_CC_OPTS = -DUSE_RTMODEL
+
+#-------------------------------- C Flags --------------------------------------
+
+# Optimization Options
+OPT_OPTS = $(DEFAULT_OPT_OPTS)
+
+# General User Options
+OPTS =
+
+# Compiler options, etc:
+ifneq ($(OPTIMIZATION_FLAGS),)
+CC_OPTS = $(OPTS) $(ANSI_OPTS) $(RTM_CC_OPTS) $(OPTIMIZATION_FLAGS)
+else
+CC_OPTS = $(OPT_OPTS) $(OPTS) $(ANSI_OPTS) $(RTM_CC_OPTS)
+endif
+
+CPP_REQ_DEFINES = -DMODEL=$(MODEL) -DRT -DNUMST=$(NUMST) \
+                  -DTID01EQ=$(TID01EQ) -DNCSTATES=$(NCSTATES) \
+                  -DMT=$(MULTITASKING) -DHAVESTDIO -DMAT_FILE=$(MAT_FILE) \
+		  -DONESTEPFCN=$(ONESTEPFCN) -DTERMFCN=$(TERMFCN) \
+		  -DMULTI_INSTANCE_CODE=$(MULTI_INSTANCE_CODE) \
+		  -DCLASSIC_INTERFACE=$(CLASSIC_INTERFACE) \
+		  -DALLOCATIONFCN=$(ALLOCATIONFCN)
+
+CFLAGS = $(DEFAULT_CFLAGS) $(CC_OPTS) $(DEFINES_CUSTOM) $(CPP_REQ_DEFINES) $(INCLUDES) -noregistrylookup -w
+
+ifeq ($(OPT_OPTS),$(DEFAULT_OPT_OPTS))
+LDFLAGS = -s -L$(LIB)
+else
+LDFLAGS = -L$(LIB)
+endif
+
+
+#------------------------- Additional Libraries -------------------------------
+
+LIBS =
+|>START_PRECOMP_LIBRARIES<|
+ifeq ($(OPT_OPTS),$(DEFAULT_OPT_OPTS))
+LIBS += |>EXPAND_LIBRARY_LOCATION<|\|>EXPAND_LIBRARY_NAME<|_lcc.lib
+else
+LIBS += |>EXPAND_LIBRARY_NAME<|.lib
+endif |>END_PRECOMP_LIBRARIES<|
+|>START_EXPAND_LIBRARIES<|
+LIBS += |>EXPAND_LIBRARY_NAME<|.lib |>END_EXPAND_LIBRARIES<|
+LIBS += $(S_FUNCTIONS_LIB)
+
+#----------------------------- Source Files ------------------------------------
+
+ifeq ($(MODELREF_TARGET_TYPE), NONE)
+    PRODUCT            = $(RELATIVE_PATH_TO_ANCHOR)/$(MODEL).exe
+    BIN_SETTING        = $(LD) $(LDFLAGS) $(ADDITIONAL_LDFLAGS) -o $(PRODUCT) $(SYSLIBS)
+    BUILD_PRODUCT_TYPE = executable
+    REQ_SRCS           = $(MODULES)
+else
+    # Model reference coder target
+    PRODUCT  = $(MODELLIB)
+    REQ_SRCS = $(MODULES)
+endif
+
+USER_SRCS =
+
+USER_OBJS       = $(USER_SRCS:.c=.obj)
+LOCAL_USER_OBJS = $(notdir $(USER_OBJS))
+
+SRCS      = $(REQ_SRCS) $(S_FUNCTIONS)
+OBJS      = $(SRCS:.c=.obj)  $(USER_OBJS)
+
+SHARED_OBJS := $(addsuffix .obj, $(basename $(wildcard $(SHARED_SRC))))
+FMT_SHARED_OBJS = $(subst /,\,$(SHARED_OBJS))
+
+#--------------------------------- Rules ---------------------------------------
+
+ifeq ($(MODELREF_TARGET_TYPE),NONE)
+$(PRODUCT) : $(OBJS) $(SHARED_LIB) $(LIBS) $(MODELREF_LINK_LIBS)
+	$(BIN_SETTING) @$(CMD_FILE) $(LOCAL_USER_OBJS) @$(MODELREF_LINK_RSPFILE) $(SHARED_LIB_LINK) $(LIBS) 
+	@cmd /C "echo $(BUILD_SUCCESS) executable: $(MODEL).exe"
+else
+
+$(PRODUCT) : $(OBJS) $(SHARED_LIB)
+	$(LIBCMD) /out:$(MODELLIB) @$(CMD_FILE) $(LOCAL_USER_OBJS)
+	@cmd /C "echo $(BUILD_SUCCESS) static library $(MODELLIB)"
+endif
+
+%.obj : %.c
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+
+%.obj : %.C
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+
+%.obj : $(RELATIVE_PATH_TO_ANCHOR)/%.c
+	$(CC) -c -Fo$(@F) -I$(RELATIVE_PATH_TO_ANCHOR)/$(<F:.c=cn_rtw) $(CFLAGS)  $<
+
+%.obj : $(RELATIVE_PATH_TO_ANCHOR)/%.C
+	$(CC) -c -Fo$(@F) -I$(RELATIVE_PATH_TO_ANCHOR)/$(<F:.c=cn_rtw) $(CFLAGS)  $<
+
+ifeq ($(CLASSIC_INTERFACE), 1)
+%.obj : $(MATLAB_ROOT)/rtw/c/grt/%.c
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+
+%.obj : $(MATLAB_ROOT)/rtw/c/grt/%.C
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+else
+%.obj : $(MATLAB_ROOT)/rtw/c/src/common/%.c
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+
+%.obj : $(MATLAB_ROOT)/rtw/c/src/common/%.C
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+endif
+
+%.obj : $(MATLAB_ROOT)/rtw/c/src/%.c
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+
+%.obj : $(MATLAB_ROOT)/rtw/c/src/%.C
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+
+|>START_EXPAND_RULES<|%.obj : |>EXPAND_DIR_NAME<|/%.c
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+
+|>END_EXPAND_RULES<|
+
+|>START_EXPAND_RULES<|%.obj : |>EXPAND_DIR_NAME<|/%.C
+	$(CC) -c -Fo$(@F) $(CFLAGS) $<
+
+|>END_EXPAND_RULES<|
+
+# Libraries:
+
+|>START_EXPAND_LIBRARIES<|MODULES_|>EXPAND_LIBRARY_NAME<| = \
+|>START_EXPAND_MODULES<|	|>EXPAND_MODULE_NAME<|.obj \
+|>END_EXPAND_MODULES<|
+
+|>EXPAND_LIBRARY_NAME<|.lib :  $(MAKEFILE) rtw_proj.tmw $(MODULES_|>EXPAND_LIBRARY_NAME<|)
+	@cmd /C "echo ### Creating $@"
+	@if exist $@ del $@
+	$(LIBCMD) /out:$@ $(MODULES_|>EXPAND_LIBRARY_NAME<|)
+	@cmd /C "echo ### $@ Created"
+
+|>END_EXPAND_LIBRARIES<|
+
+|>START_PRECOMP_LIBRARIES<|MODULES_|>EXPAND_LIBRARY_NAME<| = \
+|>START_EXPAND_MODULES<|	|>EXPAND_MODULE_NAME<|.obj \
+|>END_EXPAND_MODULES<|
+
+|>EXPAND_LIBRARY_NAME<|.lib : $(MAKEFILE) rtw_proj.tmw $(MODULES_|>EXPAND_LIBRARY_NAME<|)
+	@cmd /C "echo ### Creating $@"
+	@if exist $@ del $@
+	$(LIBCMD) /out:$@ $(MODULES_|>EXPAND_LIBRARY_NAME<|)
+	@cmd /C "echo ### $@ Created"
+
+|>END_PRECOMP_LIBRARIES<|
+
+#----------------------------- Dependencies ------------------------------------
+
+$(OBJS) : $(MAKEFILE) rtw_proj.tmw
+
+$(SHARED_OBJS) : $(SHARED_BIN_DIR)/%.obj : $(SHARED_SRC_DIR)/%.c 
+	$(CC) -c -Fo$@ $(CFLAGS) $<
+
+$(SHARED_LIB) : $(SHARED_OBJS)
+	@cmd /C "echo ### Creating $@" 
+	$(LIBCMD) /out:$@ $(FMT_SHARED_OBJS)
+	@cmd /C "echo ### $@ Created"

@@ -1,0 +1,329 @@
+%%
+%%  
+%%
+%% Abstract:
+%%      TLC file for generating Inf via Target Function Library (TFL).
+%%
+%% Copyright 2003-2014 The MathWorks, Inc.
+
+%implements "genrtinf" "C"
+
+%% Function: FcnLittleEndianInf ===================================================
+%% Abstract:
+%%      Setup code for nonfinte values on little-endian processors
+%% 
+%function FcnLittleEndianInf() Output
+  union {
+    LittleEndianIEEEDouble bitVal;
+    real_T fltVal;
+  } tmpVal;
+  
+  tmpVal.bitVal.words.wordH = 0x7FF00000U;
+  tmpVal.bitVal.words.wordL = 0x00000000U;
+  inf = tmpVal.fltVal;
+%endfunction
+
+%% Function: FcnBigEndianInf ======================================================
+%% Abstract:
+%%      Setup code for nonfinte values on big-endian processors
+%% 
+%function FcnBigEndianInf() Output
+  union {
+    BigEndianIEEEDouble bitVal;
+    real_T fltVal;
+  } tmpVal;
+  
+  tmpVal.bitVal.words.wordH = 0x7FF00000U;
+  tmpVal.bitVal.words.wordL = 0x00000000U;
+  inf = tmpVal.fltVal;
+%endfunction
+
+%% Function: FcnLittleEndianMinusInf ===================================================
+%% Abstract:
+%%      Setup code for nonfinte values on little-endian processors
+%% 
+%function FcnLittleEndianMinusInf() Output
+  union {
+    LittleEndianIEEEDouble bitVal;
+    real_T fltVal;
+  } tmpVal;
+  
+  tmpVal.bitVal.words.wordH = 0xFFF00000U;
+  tmpVal.bitVal.words.wordL = 0x00000000U;
+  minf = tmpVal.fltVal;
+%endfunction
+
+%% Function: FcnBigEndianMinusInf ======================================================
+%% Abstract:
+%%      Setup code for nonfinte values on big-endian processors
+%% 
+%function FcnBigEndianMinusInf() Output
+  union {
+    BigEndianIEEEDouble bitVal;
+    real_T fltVal;
+  } tmpVal;
+  
+  tmpVal.bitVal.words.wordH = 0xFFF00000U;
+  tmpVal.bitVal.words.wordL = 0x00000000U;
+  minf = tmpVal.fltVal;
+%endfunction
+
+%% Function: rtGetInfF ==================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header and source file contents for rtGetInfF.
+%%
+%function rtGetInfF(fctInfo,fileH,fileC) void
+  %<rtGetInf(fctInfo,fileH,fileC)>
+%endfunction
+
+%% Function: rtGetMinusInf ==================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header and source file contents for rtGetMinusInf.
+%%
+%function rtGetMinusInf(fctInfo,fileH,fileC) void
+  %<rtGetInf(fctInfo,fileH,fileC)>
+%endfunction
+
+%% Function: rtGetMinusInfF ==================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header and source file contents for rtGetMinusInfF.
+%%
+%function rtGetMinusInfF(fctInfo,fileH,fileC) void
+  %<rtGetInf(fctInfo,fileH,fileC)>
+%endfunction
+
+%% Function: rtGetInf ==================================================
+%% Abstract:
+%%      GENERATE entry point for Target Function Library TLC callbacks. Creates
+%%      header and source file contents for rt_getInf.
+%%
+%function rtGetInf(fctInfo,fileH,fileC) void
+  
+  %% Create header file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.h
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_banner", fileH, buf)>
+
+  %% For size_t.
+  %<SLibCacheUtilCodeToFile("util_hdr_reqed_incl", fileH, "<stddef.h>")>
+  %openfile buf
+  #include "%<SLibCoderTypesFilename()>"
+  #include "rt_nonfinite.h"
+  
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_incl", fileH, buf)>
+
+  %assign msFcn = SLibGetMemSecCategoryForUtilityFcn()
+  %openfile buf
+  %<FcnGenOpenExternCForCPP()>
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetInf", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real_T rtGetInf(void);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetInf", msFcn, "Post")>\
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetInfF", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real32_T rtGetInfF(void);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetInfF", msFcn, "Post")>\
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetMinusInf", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real_T rtGetMinusInf(void);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetMinusInf", msFcn, "Post")>\
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetMinusInfF", msFcn, "Pre")>\
+  %<LibExternInFcnDecls()>real32_T rtGetMinusInfF(void);
+  %<SLibGetFcnMemSecPragmaOnDecl("rtGetMinusInfF", msFcn, "Post")>\
+  %<FcnGenCloseExternCForCPP()>
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_hdr_decl", fileH, buf)>
+  
+  %% Create source file contents
+  %openfile buf
+  /*
+  * %<fctInfo.FileName>.%<LangFileExt>
+  *
+  %<SLibCommonUtilHeaderInfo()>\
+  */
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_banner", fileC, buf)>
+  
+  %openfile buf
+  /*
+  * Abstract:
+  *      Function to initialize non-finite, Inf
+  */
+  #include "rtGetInf.h"
+    
+  %closefile buf
+  %<SLibCacheUtilCodeToFile("util_src_incl", fileC, buf)>
+
+  %openfile buf
+  #define NumBitsPerChar  %<::CompiledModel.ConfigSet.ProdBitPerChar>U
+  %closefile buf  
+
+  %<SLibCacheMacroToUtilityFile("NumBitsPerChar", buf, "util_src_defines", fileC)>
+
+  %openfile buf
+  
+  %if GenCPP
+  extern "C" {
+  %endif
+  %assign fcnName = "rtGetInf"
+  %assign fcnReturns = "real_T"
+  %assign fcnParams = "void"
+  %openfile fcnAbstract
+Initialize rtInf needed by the generated code. 
+Inf is initialized as non-signaling. Assumes IEEE.
+  %closefile fcnAbstract
+  
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtinf.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    size_t bitsPerReal = sizeof(real_T) * (NumBitsPerChar);
+    real_T inf = 0.0;
+    
+    if (bitsPerReal == 32U) {
+      inf = rtGetInfF();
+    } else {
+    %if !SLibIsERTTarget() || ConfigSet.TargetEndianess == "Unspecified" || ConfigSet.PortableWordSizes == 1
+      uint16_T one = 1U;
+
+      enum {
+          LittleEndian,
+          BigEndian
+      } machByteOrder = (*((uint8_T *) &one) == 1U) ? LittleEndian : BigEndian;
+
+      switch (machByteOrder) {
+        case LittleEndian: {
+            %<FcnLittleEndianInf()>
+            break;
+        }
+        case BigEndian: {
+            %<FcnBigEndianInf()>
+            break;
+        }
+      }
+    %elseif ConfigSet.TargetEndianess == "LittleEndian"
+      %<FcnLittleEndianInf()>
+    %elseif ConfigSet.TargetEndianess == "BigEndian"
+      %<FcnBigEndianInf()>
+    %else
+      %openfile errTxt
+      Unsupported Target Endianess: %<ConfigSet.TargetEndianess>
+      %closefile errTxt
+      %<LibReportFatalError(errTxt)>
+    %endif
+    }
+    return inf;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtGetInfF"
+  %assign fcnReturns = "real32_T"
+  %assign fcnParams = "void"
+  %openfile fcnAbstract
+Initialize rtInfF needed by the generated code. 
+Inf is initialized as non-signaling. Assumes IEEE.
+  %closefile fcnAbstract
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtinf.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    IEEESingle infF;
+
+    infF.wordL.wordLuint = 0x7F800000U;
+    return infF.wordL.wordLreal;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+     
+  %assign fcnName = "rtGetMinusInf"
+  %assign fcnReturns = "real_T"
+  %assign fcnParams = "void"
+  %openfile fcnAbstract
+Initialize rtMinusInf needed by the generated code. 
+Inf is initialized as non-signaling. Assumes IEEE.
+  %closefile fcnAbstract
+  
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtinf.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    size_t bitsPerReal = sizeof(real_T) * (NumBitsPerChar);
+    real_T minf = 0.0;
+
+    if (bitsPerReal == 32U) {
+      minf =  rtGetMinusInfF();
+    } else {
+    %if !SLibIsERTTarget() || ConfigSet.TargetEndianess == "Unspecified" || ConfigSet.PortableWordSizes == 1
+      uint16_T one = 1U;
+
+      enum {
+          LittleEndian,
+          BigEndian
+      } machByteOrder = (*((uint8_T *) &one) == 1U) ? LittleEndian : BigEndian;
+
+      switch (machByteOrder) {
+        case LittleEndian: {
+            %<FcnLittleEndianMinusInf()>
+            break;
+        }
+        case BigEndian: {
+            %<FcnBigEndianMinusInf()>
+            break;
+        }
+      }
+    %elseif ConfigSet.TargetEndianess == "LittleEndian"
+      %<FcnLittleEndianMinusInf()>
+    %elseif ConfigSet.TargetEndianess == "BigEndian"
+      %<FcnBigEndianMinusInf()>
+    %else
+      %openfile errTxt
+      Unsupported Target Endianess: %<ConfigSet.TargetEndianess>
+      %closefile errTxt
+      %<LibReportFatalError(errTxt)>
+    %endif
+    }
+    return minf;
+  }
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %assign fcnName = "rtGetMinusInfF"
+  %assign fcnReturns = "real32_T"
+  %assign fcnParams = "void"
+  %openfile fcnAbstract
+Initialize rtMinusInfF needed by the generated code. 
+Inf is initialized as non-signaling. Assumes IEEE.
+  %closefile fcnAbstract
+  
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "utility"; GeneratedBy "genrtinf.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Pre")>\
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    IEEESingle minfF;
+
+    minfF.wordL.wordLuint = 0xFF800000U;
+    return minfF.wordL.wordLreal;
+  }
+  
+  %if GenCPP
+  }
+  %endif
+  %<SLibGetFcnMemSecPragma(fcnName, msFcn, "Post")>\
+  
+  %closefile buf 
+  %<SLibCacheUtilCodeToFile("util_src_fcn_defn", fileC, buf)>
+
+%endfunction

@@ -1,0 +1,91 @@
+%% ============================================================================
+%% 
+%% 
+
+%if EXISTS("_SFCNUTIL_") == 0
+%assign _SFCNUTIL_ = 1
+
+%function SLibGetSFcnNonFinite() void
+  %openfile tBuff
+  %if SLibRealNonFinitesRequired()
+    %<LibGenMathFcnCall("initnonfinite", FcnGetDataTypeIdFromName("double"),...
+      "sizeof(real_T)", "")>;
+  %endif
+  %closefile tBuff
+  
+  %openfile nonFinitesBuffer
+  %if !WHITE_SPACE(tBuff)
+    
+    /* non-finites */
+    %<tBuff>\
+  %endif
+  %closefile nonFinitesBuffer
+  
+  %return nonFinitesBuffer
+  
+%endfunction
+
+%% Function: SLibNoninlinedSfcnStaticFcn ===============
+%% Abstract:
+%%  Generate static functions used by noninlined sfunctions. 
+%%
+%function SLibNoninlinedSfcnStaticFcn() void
+  %openfile retBuf
+  %assign fcnName = "RegNumInputPorts"
+  %assign fcnReturns = "static int_T"
+  %assign fcnParams = "SimStruct *S, int_T nInputPorts"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "utility"; GeneratedBy "sfcnutil.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  #if defined(MATLAB_MEX_FILE) || defined(RT_MALLOC)
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {
+    _ssSetNumInputPorts(S,nInputPorts);
+    return true;
+  }
+  
+  %assign fcnName = "RegNumOutputPorts"
+  %assign fcnReturns = "static int_T"
+  %assign fcnParams = "SimStruct *S, int_T nOutputPorts"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "utility"; GeneratedBy "sfcnutil.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>) {    
+    _ssSetNumOutputPorts(S,nOutputPorts);
+    return true;
+  }
+  
+  %assign fcnName = "FcnSetErrorStatus"
+  %assign fcnReturns = "static int_T"
+  %assign fcnParams = "const SimStruct *S, DTypeId arg2"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+    Category "utility"; GeneratedBy "sfcnutil.tlc"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>) 
+  {
+    static char msg[256];
+
+    if (strlen(ssGetModelName(S)) < 128) {
+      sprintf(msg, "S-function %s does not have a tlc file. ...
+	It cannot use macros that access regDataType field in simstruct.", ...
+	ssGetModelName(S));
+    } else {
+      sprintf(msg, "A S-function does not have a tlc file. ...
+	It cannot use macros that access regDataType field in simstruct.");
+    }
+
+    ssSetErrorStatus(S, msg);
+    
+    UNUSED_PARAMETER(arg2);
+    return 0;
+  }
+  #endif
+  %closefile retBuf
+  
+  %return retBuf
+%endfunction %% SLibNoninlinedSfcnStaticFcn
+
+%endif %% _SFCNUTIL_ 
+%% [EOF] sfcnutil.tlc

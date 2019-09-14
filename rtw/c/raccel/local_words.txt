@@ -1,0 +1,18 @@
+# --*-conf-*---
+# Local Words for sbspell and sbcheck -check typos
+# This file is automatically maintained by sbspell.
+# Copyright 2018 The MathWorks, Inc.
+
+ LocalWords:  tmf POSIX gmake Iwhere myfile proj rtwgensettings MAKECMD TGT
+ LocalWords:  Toolchain TOOLCHAIN BUILDARGS NUMST NCSTATES PCMATLABROOT RSIM
+ LocalWords:  SLEXEC SSBRIDGE MODELREFS subst LDFLAGS RSPFILE MDLREFINC ifneq
+ LocalWords:  mak rsp DRSIM DMODEL DHAVESTDIO DNRT DENABLE ifeq DTID DNUMST
+ LocalWords:  CFLAGS noregistrylookup LD SYSLIBS OBJS addsuffix notdir LIBUT
+ LocalWords:  microsoft libut LIBMX libmx LIBMEX libmex LIBMAT libmat ROOTQ
+ LocalWords:  LIBMWMATHUTIL libmwmathutil LIBSL libmwsl FILEIO fileio unixtools
+ LocalWords:  LIBSIGSTREAM libmwsigstream LIBSLIO libmwslio LIBSIMLOG DBG DUNIX
+ LocalWords:  libmwslexec simlog simbridge PRECOMP LIBMWIPP libmwipp ws mswsock
+ LocalWords:  Fo CPPFLAGS cn lccstub del LIBCMD findstring Wno DEP lm BINDIR
+ LocalWords:  MATLIBS GLNX Wl rpath os lmwslexec lmwsl ruvs vctools Zi nmake
+ LocalWords:  APPVER BUILDINFO cflags cvarsdll wd EHsc ldebug conflags conlibs
+ LocalWords:  nologo

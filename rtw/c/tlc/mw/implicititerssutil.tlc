@@ -1,0 +1,398 @@
+%% ============================================================================
+%% 
+%% 
+%%
+%% Abstract:
+%%   This system file contains helper functions to support Implicit Iterator
+%%   Subsystems
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+
+%if EXISTS("_IMPLICITITERSSUTIL_") == 0
+%assign _IMPLICITITERSSUTIL_ = 1
+
+%% Function SLibGetSubsystemIsForEachSS =====================================
+%%
+%%
+%%
+%function SLibGetSubsystemIsForEachSS(sys)
+  %return ISFIELD(sys, "ForEachSubsystem") && ...
+    sys.ForEachSubsystem
+%endfunction %% end SLibGetSubsystemIsForEachSS
+
+
+%function SLibGetIsForEachSSReuseWithDiffNumIters(sys)
+  %return SLibGetSubsystemIsForEachSS(sys) &&...
+    ISFIELD(sys, "IISCodeReuseForDiffNumIters") && sys.IISCodeReuseForDiffNumIters
+%endfunction
+
+
+%function SLibSysVarGroupUsedAsMatrix(sys, type, idx)
+  %assign varGroupIdx = FcnSysVarGroupIndex(sys, type, idx)
+  %assign retStr = ""
+  %assign asMatrix = varGroupIdx >= 0
+  
+  %if asMatrix
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+    %assign asMatrix = LibCGTypeIsMatrix(varGroup.CGTypeIdx)
+  %endif
+  
+  %return asMatrix
+%endfunction
+
+
+%function SLibSysVarGroupWidth(sys, type, idx)
+  %assign varGroupIdx = FcnSysVarGroupIndex(sys, type, idx)
+  %assign retStr = ""
+  %assign width = "1"
+  
+  %if varGroupIdx >= 0
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+    %if LibCGTypeIsMatrix(varGroup.CGTypeIdx)
+      %assign width = LibCGTypeSymbolicWidth(varGroup.CGTypeIdx)
+    %endif
+  %endif 
+  
+  %return width
+%endfunction
+
+
+%function SLibGetBaseTypeForVarGroupUsedAsMatrix(cgTypeIdx) void
+  %return LibCGTypeBaseIndex(cgTypeIdx)
+%endfunction
+
+%function SLibIsMatrixVarGroupForIIS(sysIdx, type)
+   %assign varGroupIdx = FcnSysVarGroupIndex(System[sysIdx], type, 0)
+   %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+   %return LibCGTypeIsMatrix(varGroup.CGTypeIdx) && ...
+     ISFIELD(System[sysIdx], "IndexingSigSrc") 
+%endfunction
+ 
+%% Function: SLibGetSystemIndexVar =============================================
+%% Abstract:
+%%   Returns the scratch dworks iterator variable name or dwork access path.
+%%
+%function SLibGetSystemIndexVar(cs, accessSysIdx) void
+  %%
+  %% DWork or BlockIO is an array of struct.
+  %% The index of the current iteration is passed by a DWork.
+  %%
+  %assign cross = System[cs[0]].CrossNoArgFcnBound
+  %assign dwork = DWorks.DWork[IDNUM(System[cs[0]].IndexingSigSrc)[1]]
+  %%
+  %if dwork.IsLocalScratchDWork == 1
+    %if dwork.VarGroupVarIdx > -1              
+      %assign varGroupIdx = ...
+        ::CompiledModel.VarGroups.VarGroupVarIdx[dwork.VarGroupVarIdx]
+      %return SLibCG_GetVarGroupElementPath(varGroupIdx, ...
+        SLibGetHStructWithLocalScopeSystemIdx(accessSysIdx), cross)
+    %else
+      %return LibGetRecordIdentifier(dwork)
+    %endif
+  %else
+    %assign varGroupIdx = FcnSysVarGroupIndex(System[cs[0]], "DWork", cs[1])
+    %assign dwPath = SLibCGIRVarGroupPath(varGroupIdx, accessSysIdx, cross)
+    %return dwPath + LibGetRecordIdentifier(dwork)
+  %endif
+%endfunction
+
+%function SLibGetIndexedArgForForEachSS(varGroupIdx, identiPath, indenti, cs, accessSysIdx, sysIdx)
+  %assign dwName = SLibGetSystemIndexVar(cs, accessSysIdx)
+  %if Accelerator
+    %% When compiled for acceleration, the first element in the struct
+    %% array is reserved to match the memory layout in Simulink
+    %if System[cs[0]].HasBlockRunInSimulinkForAccel
+      %% When there is a block inside subsystem calling back to Simulink, 
+      %% all operations are on the first element in the struct array.
+      %assign fullpath = "&%<identiPath>%<indenti>[0]"
+    %else
+      %% Where there is no block inside subsystem calling back to Simulink,
+      %% The first element in the struct array will not be used
+      %assign fullpath = "&%<identiPath>%<indenti>[%<dwName>+1]"
+    %endif
+  %else
+    %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+    %if LibCGTypeIsMatrix(varGroup.CGTypeIdx) && ...
+      System[cs[0]].RTWSystemCode == 2
+      %% If IIS has a matrix varGroup and it has its own hier scope, the 
+      %% idenfiPath should have been indexed, and no need to append [%<dwName>] at the end.
+      %assign fullpath = "&%<identiPath>%<indenti>"
+    %else
+      %% If IIS has no matrix varGroup, the core subsystem contains a matrix 
+      %% varGroup, and the identi should be indexed.
+      %assign fullpath = "&%<identiPath>%<indenti>[%<dwName>]"
+    %endif
+  %endif
+  
+  %return fullpath
+%endfunction
+
+%function SLibGetIndexedCGIRVarGroupPathForISSLoopBoundReuse(aVarGroupIdx, vName, sysIdx)
+  %assign varGroupIdx          = aVarGroupIdx
+  %assign varGroup             = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+  %assign varGroupCategory     = LibGetVarGroupCategory(varGroupIdx)
+
+  %if ISEQUAL(varGroupCategory, "DWork") || ...
+      ISEQUAL(varGroupCategory, "ContStates") || ...
+      ISEQUAL(varGroupCategory, "Parameter") || ...
+      ISEQUAL(varGroupCategory, "ContStatesDerivative") || ...
+      ISEQUAL(varGroupCategory, "ContStatesDisabled") || ...
+      ISEQUAL(varGroupCategory, "ContStatesAbsoluteTolerance") || ...
+      ISEQUAL(varGroupCategory, "BlockIO") || ...
+      ISEQUAL(varGroupCategory, "ZCEvent") || ...
+      ISEQUAL(varGroupCategory, "ZCSV") || ...
+      ISEQUAL(varGroupCategory, "HierarchicalCoderData")
+     %assign vgCGType = CGTypes.CGType[varGroup.CGTypeIdx]
+     %assert(ISFIELD(System[sysIdx], "IndexingSigSrc"))
+     %assign dw = DWorks.DWork[IDNUM(System[sysIdx].IndexingSigSrc)[1]]
+     %assert(dw.IsLocalScratchDWork == 1)
+     %if dw.VarGroupVarIdx > -1              
+       %assign varGroupIdx = ...
+         ::CompiledModel.VarGroups.VarGroupVarIdx[dw.VarGroupVarIdx]
+       %assert SLibGetHStructWithLocalScopeSystemIdx(sysIdx) == sysIdx
+       %assign dwName = SLibCG_GetVarGroupElementPath(varGroupIdx, ...
+         SLibGetHStructWithLocalScopeSystemIdx(sysIdx), ...
+         System[sysIdx].CrossNoArgFcnBound)
+     %else
+       %assign dwName  = LibGetRecordIdentifier(dw)
+     %endif
+     %return vName + "[" + dwName + "]"
+   %endif
+ %endfunction
+  
+%function SLibGetIndexedCGIRVarGroupPathForISSNoLoopBoundReuse(varGroupIdx, vName, sysIdx, accSysIdx, cross)
+  %assign varGroup = ::CompiledModel.VarGroups.VarGroup[varGroupIdx]
+  %assign varGroupCategory = LibGetVarGroupCategory(varGroupIdx)
+  
+  %if ISEQUAL(varGroupCategory, "DWork") || ...
+      ISEQUAL(varGroupCategory, "ContStates") || ...
+      ISEQUAL(varGroupCategory, "Parameter") || ...
+      ISEQUAL(varGroupCategory, "ContStatesDerivative") || ...
+      ISEQUAL(varGroupCategory, "ContStatesDisabled") || ...
+      ISEQUAL(varGroupCategory, "ContStatesAbsoluteTolerance") || ...
+      ISEQUAL(varGroupCategory, "BlockIO") || ...
+      ISEQUAL(varGroupCategory, "ZCEvent") || ...
+      ISEQUAL(varGroupCategory, "ZCSV") || ...
+      ISEQUAL(varGroupCategory, "HierarchicalCoderData")
+    %assign vgCGType = CGTypes.CGType[varGroup.CGTypeIdx]
+    %if ((::BlockFcn == "Registration" ||...
+      ::BlockFcn == "Constructor"  || ...
+      ::BlockFcn == "Destructor")) && ...
+      ((EXISTS("NeedForEachLoopInReg") && ...
+      ::NeedForEachLoopInReg) || ...
+      (EXISTS("UseConstantForVarGroupIdx") && ...
+      ::UseConstantForVarGroupIdx))
+      %if EXISTS("NeedForEachLoopInReg") && ...
+        ::NeedForEachLoopInReg
+        %% Get index for the vargroup based on the hard-coded loop in TLC. This
+        %% is used for generating call to the registration function of the
+        %% reference model inside a For Each subsystem 
+        %if (EXISTS("NeedLoopUnrolling") && ::NeedLoopUnrolling)
+          %if Accelerator
+            %assign varName = "%<::Counter4LoopUnrolling[::ForEachLoopHierarchyLevel - 1] + 1>"
+          %else
+            %assign varName = "%<::Counter4LoopUnrolling[::ForEachLoopHierarchyLevel - 1]>"
+          %endif
+        %else
+          %if Accelerator
+            %assign varName = "i_%<ForEachLoopHierarchyLevel>+1"
+          %else
+            %assign varName = "i_%<ForEachLoopHierarchyLevel>"
+          %endif
+        %endif
+        %assign ::ForEachLoopHierarchyLevel = ::ForEachLoopHierarchyLevel + 1
+        %if ::ForEachLoopHierarchyLevel > ::NumForEachLoopHierarchyLevel
+          %assign ::ForEachLoopHierarchyLevel = 1
+        %endif
+      %else
+        %% Get the pre-defined index (in rtw file) for the vargroup. This is
+        %% used for the non-continuous derivative signals inside For Each
+        %% subsystems 
+        %if Accelerator
+          %assign varName = "%<::VarGroupIndexVector[::VarGroupIndexVectorIdx]>+1"
+        %else
+          %assign varName = %<::VarGroupIndexVector[::VarGroupIndexVectorIdx]>
+        %endif
+        %assign ::VarGroupIndexVectorIdx = ::VarGroupIndexVectorIdx - 1
+        %if ::VarGroupIndexVectorIdx < 0
+          %assign ::VarGroupIndexVectorIdx = ::VarGroupIndexVectorSize - 1
+        %endif
+      %endif
+      %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+        vName + "[%<varName>]."
+    %elseif ::BlockFcn == "Registration" || ::BlockFcn == "GlobalMap"
+      %% For dwork in Implicit Iterator Subsystem,
+      %% return the last region since for-iterator subsystem always logging the later iteration
+      %if Accelerator && ...
+           !(ISEQUAL(varGroupCategory, "ContStates") || ...
+             ISEQUAL(varGroupCategory, "Parameter") || ...
+             ISEQUAL(varGroupCategory, "ContStatesDerivative") || ...
+             ISEQUAL(varGroupCategory, "ContStatesDisabled") || ...
+             ISEQUAL(varGroupCategory, "ContStatesAbsoluteTolerance") || ...
+             ISEQUAL(varGroupCategory, "ZCEvent") || ...
+             ISEQUAL(varGroupCategory, "ZCSV"))
+        %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+          vName + "[%<vgCGType.Dimensions[0]>]."
+      %else
+        %% For parameters in Implicit Iterator Subsystem, return the first region
+        %if ISEQUAL(varGroupCategory, "Parameter")
+          %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+            vName + "[0]."
+        %else
+          %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+            vName + "[%<vgCGType.Dimensions[0] - 1>]."
+        %endif
+      %endif
+    %else 
+      %assert (::GlobalGeneratingSubFunctions || ...
+      ::BlockFcn == "Output"     || ::BlockFcn == "OutputUpdate"    || ...
+      ::BlockFcn == "Update"     || ::BlockFcn == "RootUpdate"      || ...
+      ::BlockFcn == "Initialize" || ::BlockFcn == "Start"           || ...
+      ::BlockFcn == "Enable"     || ::BlockFcn == "Disable"         || ...
+      ::BlockFcn == "Derivative" || ::BlockFcn == "ZeroCrossing"    || ...
+      ::BlockFcn == "MassMatrix" || ::BlockFcn == "ForcingFunction" || ...
+      ::BlockFcn == "Projection" || ::BlockFcn == "Terminate"       || ...
+      ::BlockFcn == "ModelInitialize" || ::BlockFcn == "SystemInitialize" || ...
+      ::BlockFcn == "SystemReset")
+      
+      %% (1) Access member of global non-reusable IO. For example, if a Delay block
+      %% connects directly to an Outport block and GNRIO is maintained
+      %% separately, output of Delay will not be canonical output. In parent
+      %% subsystem, hidden Assignment block will access Delay output directly if
+      %% the output is required to be concatenatted.
+      %% (2) Access member of DWork. If variable dims signals comes out from the
+      %% hidden code reuse subsystem for Implicit Iterator Subsystem, shared
+      %% DWork will be accessed.
+      %assign cs      = System[sysIdx].CallSites[varGroup.InstanceIdx]
+      %if ISFIELD(System[cs[0]], "IndexingSigSrc")
+        %assign dwName = SLibGetSystemIndexVar(cs, accSysIdx)
+        %if Accelerator && ...
+           !(ISEQUAL(varGroupCategory, "ContStates") || ...
+             ISEQUAL(varGroupCategory, "Parameter") || ...
+             ISEQUAL(varGroupCategory, "ContStatesDerivative") || ...
+             ISEQUAL(varGroupCategory, "ContStatesDisabled") || ...
+             ISEQUAL(varGroupCategory, "ContStatesAbsoluteTolerance") || ...
+             ISEQUAL(varGroupCategory, "ZCEvent") || ...
+             ISEQUAL(varGroupCategory, "ZCSV"))
+          %if System[cs[0]].HasBlockRunInSimulinkForAccel
+            %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+              vName + "[0]."
+          %else
+            %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+              vName + "[%<dwName>+1]."
+          %endif
+        %else
+          %if EXISTS("PartialIndexing") && ...
+            ::PartialIndexing && ...
+            cs[0] < ::PartialIdxBoundarySysystemIndex
+            %% The current var group belong to a For Each which is not accessed
+            %%in its loop
+            %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+            vName + "[0]."
+          %else
+            %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+            vName + "[%<dwName>]."
+          %endif
+        %endif
+      %else
+        %if Accelerator && ...
+          !(ISEQUAL(varGroupCategory, "ContStates") || ...
+            ISEQUAL(varGroupCategory, "Parameter") || ...
+          ISEQUAL(varGroupCategory, "ContStatesDerivative") || ...
+          ISEQUAL(varGroupCategory, "ContStatesDisabled") || ...
+          ISEQUAL(varGroupCategory, "ContStatesAbsoluteTolerance") || ...
+          ISEQUAL(varGroupCategory, "ZCEvent") || ...
+          ISEQUAL(varGroupCategory, "ZCSV")) && ...
+          !System[cs[0]].HasBlockRunInSimulinkForAccel
+          %% Acceleration mode where the number of iteration is 1 and there is
+          %% no block calling back to Simulink
+          %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+            vName + "[1]."
+        %else
+          %% Acceleration mode where the number of iteration is 1. 
+          %return SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+            vName + "[0]."
+        %endif
+      %endif
+    %endif
+  %else
+    %return ...
+      SLibCGIRVarGroupPath(varGroup.ParentVarGroupIdx, accSysIdx,cross) + ...
+      vName + "."
+  %endif
+%endfunction
+
+%function SLibDumpSupportsMultipleExecInstancesFlag()
+  %if ISFIELD(::CompiledModel,"ModelSupportsMultipleExecInstances") && ...
+      ::CompiledModel.ModelSupportsMultipleExecInstances
+    %return "ssSupportsMultipleExecInstances(S, true);"
+  %else
+    %assign errStr = STRING(::CompiledModel.ModelMultipleExecInstancesNoSupportMsg)
+    %openfile retbuf
+    ssSupportsMultipleExecInstances(S, false);
+    ssRegisterMsgForNotSupportingMultiExecInst(S,"%<errStr>");
+    %closefile retbuf	
+    %return retbuf
+  %endif
+%endfunction
+
+%function SLibDumpHasStateInsideForEachSSFlag()
+  %if ISFIELD(::CompiledModel,"ModelHasStateInsideForEachSS") && ...
+      ::CompiledModel.ModelHasStateInsideForEachSS
+    %return "ssHasStateInsideForEachSS(S, true);"
+  %else
+    %return "ssHasStateInsideForEachSS(S, false);"
+  %endif
+%endfunction
+
+%% Returns true if varGroup is matrix type or inside a matrix varGroup
+%% 
+%function SLibGetIsVarGroupParentedByMatrixVarGroup(varGroup)
+  %if LibCGTypeIsMatrix(varGroup.CGTypeIdx)
+    %return TLC_TRUE
+  %endif
+  %if varGroup.ParentVarGroupIdx != -1
+    %assign parentVarGroup = ::CompiledModel.VarGroups.VarGroup[varGroup.ParentVarGroupIdx]
+    %assign inInMatrixVarGroup = SLibGetIsVarGroupParentedByMatrixVarGroup(parentVarGroup)
+    %if inInMatrixVarGroup
+      %return TLC_TRUE
+    %endif
+  %endif
+  %return TLC_FALSE
+%endfunction
+
+%function SLibGetISSCanInputIter(sysIdx, ciIdx)
+  %assign interface   = System[sysIdx].Interface
+  %assign canInputArg = interface.CanonicalInputArgDef[ciIdx]
+  %return ISFIELD(canInputArg, "LoopReuseIter") && canInputArg.LoopReuseIter == "yes"
+%endfunction
+
+%% Methods for handling parallel ForEach Subsystem 
+%function SLibGetIsParallelInRapidAccelForEachSS(sys)
+  %return SLibGetSubsystemIsForEachSS(sys) && ...
+    ISFIELD(sys, "ParallelExecInRapidAccelSim") && ...
+    sys.ParallelExecInRapidAccelSim
+%endfunction
+
+%function SLibNeedHandleParallelForEachSS(sys, sysFcn)
+  %return SLibGetIsParallelInRapidAccelForEachSS(sys) && ...
+    (sysFcn == "Output" || sysFcn == "Outputs" || ...
+     sysFcn == "OutputUpdate" || ...
+     (sysFcn == "Derivative" && ISFIELD(sys, "ParallelExecInDerivFcn") && sys.ParallelExecInDerivFcn))
+%endfunction
+
+%function SLibGenParallelAccelForEachSS(sysIdx, fcnType) void
+  %openfile retBuf
+  %assign system = System[sysIdx]
+  %assign fcnTypeName = SLibCGIRGetFcnTypeName(fcnType)
+  %assign tmpTid = SLibSystemTidUsedByRateGroup(system,fcnTypeName)
+  %assign fcnInfo = LibGetFcnInfo(system, fcnTypeName, tmpTid)
+  %assign psysIdx = system.ParallelSubsystemIndex
+  parallel_for(%<system.NumImplicitIter>, %<fcnInfo.Name>, %<psysIdx>);
+  %closefile retBuf
+  %return retBuf
+%endfunction
+
+%endif %% _IMPLICITITERSSUTIL_
+%% [EOF] implicititerssutil.tlc

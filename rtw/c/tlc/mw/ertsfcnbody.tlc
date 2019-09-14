@@ -1,0 +1,2850 @@
+%% ============================================================================
+%% Abstract:
+%%   This system file creates <model>_sf.c for ERT's S-Function wrapper.
+%%
+%% Copyright 1994-2017 The MathWorks, Inc.
+%%
+
+%include "sfcnlib.tlc"
+%include "prm_sfcntunable.tlc"
+%assign ROLL_LIMIT         = ::CompiledModel.RollThreshold
+
+%if ::GenerateClassInterface
+  %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+  %assign theClassName = classConfObj.ModelClassName
+  %assign theObjectName = ::CompiledModel.GlobalScope.tModelObject
+%endif
+
+%assign tSimStructArg = GlobalScope.tSimStructArg
+%<LibAddToCompiledModel("tSimStructArg", tSimStructArg)>
+
+%function GetERTSFcnNumExtInputs() void
+  %assign numExtInps = ExternalInputs.NumExternalInputs
+  %if ExportFunctionsMode == 1
+    %assign rootSystem = System[NumSystems-1]
+    %foreach id = rootSystem.NumChildSystems
+      %assign systemId = rootSystem.ChildSystems[id][0]
+      %assign system = System[systemId]
+      %if system.Type == "function-call" && system.Exported == "yes"
+        %assign numExtInps = numExtInps + 1
+      %endif
+    %endforeach
+  %endif
+  %return numExtInps
+%endfunction
+
+%% Function DumpErtSFcnExternalInputs =========================================
+%% Abstract:
+%%   Generate the S-Function input signal registration for the generated ERT
+%%   code. This code will register the signal properties (like type and size)
+%%   for every ERT external input signal in the mdlInitializeSizes function.
+%%   The registration will be generated as follow:
+%%
+%%   /* Number of input ports */
+%%   if (!ssSetNumInputPorts(S, NumberOfInputPorts)) return;
+%%
+%%   ssSetInputPort<Property>(S, PortNumber, <PropertyValue`>);
+%%   ...
+%%
+%function DumpErtSFcnExternalInputs() Output
+  %with ExternalInputs
+    /* Number of input ports */
+    if (!ssSetNumInputPorts(%<tSimStructArg>, %<GetERTSFcnNumExtInputs()>)) return;
+    %if NumExternalInputs > 0
+      %foreach idx = NumExternalInputs
+	%assign extInp = ExternalInput[idx]
+	%with extInp
+          %% pIdx is the actual port index of the S-Fcn wrapper.
+          %% The pIdx is remapped for exported function calls.
+          %assign pIdx = idx
+          %if ExportFunctionsMode == 1
+            %assign pIdx = extInp.ExportedId - 1
+          %endif
+	  %assign portWidth  = LibGetRecordWidth(extInp)
+	  %assign sampleTime = SampleTime[TID].PeriodAndOffset[0]
+	  %assign offsetTime = SampleTime[TID].PeriodAndOffset[1]
+	  %assign isComplex  = LibGetRecordIsComplex(extInp)
+          %assign dataTypeIdx= LibGetRecordDataTypeId(extInp)
+          %assign isFrame    = FrameData == "yes"
+          %assign dims = LibGetRecordDimensions(extInp)
+          %assign numDimensions = SIZE(%<dims>,1)
+          %assign isBus = LibDataTypeIsBus(dataTypeIdx)
+
+          %if ISFIELD(extInp, "HasVarDims")
+            ssSetInputPortRequiredContiguous(%<tSimStructArg>, %<pIdx>, %<GET_TYPE_ID_REPLACEMENT("true")>);
+            %if isBus == TLC_FALSE
+              ssSetInputPortDimensionsMode(%<tSimStructArg>, %<pIdx>, VARIABLE_DIMS_MODE)
+            %endif
+          %endif
+          %<SLibDumpSfcnInpDims("%<tSimStructArg>",pIdx,portWidth,numDimensions,dims)>
+          %%
+          %<SLibSfunRegisterAndSetDataType("input","%<tSimStructArg>",pIdx,dataTypeIdx,"namedObject")>
+          ssSetBusInputAsStruct(%<tSimStructArg>, %<pIdx>, 1);
+	  %%
+	  %if isComplex
+	    ssSetInputPortComplexSignal(%<tSimStructArg>, %<pIdx>, COMPLEX_YES);
+	  %endif
+          %if isFrame
+            ssSetInputPortFrameData(%<tSimStructArg>, %<pIdx>, FRAME_YES);
+          %endif
+	  ssSetInputPortDirectFeedThrough(%<tSimStructArg>, %<pIdx>, 1);
+          
+	  %% ssSetInputPortRequiredContiguous(%<tSimStructArg>, %<pIdx>, 1);
+	  %if AllSampleTimesInherited == "yes" || ExportFunctionsMode == 1
+	    ssSetInputPortSampleTime(%<tSimStructArg>, %<pIdx>, -1);	  
+	  %else
+	    ssSetInputPortSampleTime(%<tSimStructArg>, %<pIdx>, %<sampleTime>);	  
+	    ssSetInputPortOffsetTime(%<tSimStructArg>, %<pIdx>, %<offsetTime>);
+	  %endif
+	  %if TYPE(TID) == "Number"
+	    %assign ::CompiledModel.IsSampleTimeOnPort[TID]=1
+	  %endif
+	%endwith %% extInp
+      %endforeach
+    %endif
+  %endwith %% ExternalInputs
+  %if ExportFunctionsMode == 1
+    /* Register exported function-call wrappers. */
+    %assign rootSystem = System[NumSystems-1]
+    %foreach id = rootSystem.NumChildSystems
+      %assign systemId = rootSystem.ChildSystems[id][0]
+      %assign system = System[systemId]
+      %if system.Type == "function-call" && system.Exported == "yes"
+        %assign pIdx = System[systemId].ExportedId - 1
+        ssSetInputPortDataType(%<tSimStructArg>, %<pIdx>, SS_FCN_CALL);
+        ssSetInputPortWidth(%<tSimStructArg>, %<pIdx>, 1);
+        ssSetInputPortSampleTime(%<tSimStructArg>, %<pIdx>, -1);	  
+        ssSetInputPortDirectFeedThrough(%<tSimStructArg>, %<pIdx>, 1);
+        ssExportOutputFcn(%<tSimStructArg>, %<pIdx>, mdlExportedOutputFcn%<pIdx>);
+        %if !LibSystemFcnIsEmpty(System[systemId],"Enable")
+          ssExportEnableFcn(%<tSimStructArg>, %<pIdx>, mdlExportedEnableFcn%<pIdx>);
+        %endif
+         %if !LibSystemFcnIsEmpty(System[systemId],"Disable")
+          ssExportDisableFcn(%<tSimStructArg>, %<pIdx>, mdlExportedDisableFcn%<pIdx>);
+        %endif
+      %endif
+    %endforeach
+    %openfile latchBuffer
+    %if NumModelInputs > 0
+      %foreach extIdx = ExternalInputs.NumExternalInputs
+        %assign inputIsLatched = 1  %% Assume
+        %assign rootSystem = System[NumSystems-1]
+        %foreach id = rootSystem.NumChildSystems
+          %assign sysId = rootSystem.ChildSystems[id][0]
+          %assign system = System[sysId]
+          %if system.Type == "function-call" && system.Exported == "yes" && ...
+            ISFIELD(system, "NonLatchedInputs")
+            %foreach latchIdx = SIZE(system.NonLatchedInputs, 1)
+              %if extIdx == system.NonLatchedInputs[latchIdx]
+                %assign inputIsLatched = 0
+                %break
+              %endif
+            %endforeach
+            %if inputIsLatched == 0
+              %break
+            %endif
+          %endif
+        %endforeach
+        %if inputIsLatched == 1
+          %assign sfcnIdx = ExternalInputs.ExternalInput[extIdx].ExportedId - 1
+          ssInportIsLatched(%<tSimStructArg>, %<sfcnIdx>);
+        %endif
+      %endforeach
+    %endif
+    %closefile latchBuffer
+    %if !WHITE_SPACE(latchBuffer)
+      /* Declare latched input ports. */
+      %<latchBuffer>
+    %endif
+  %endif
+%endfunction %% DumpErtSFcnExternalInputs
+
+%% Function DumpErtSFcnExternalOutputs ========================================
+%% Abstract:
+%%   Generate the S-Function output signal registration for the generated ERT
+%%   code. This code will register the signal properties (like type and size)
+%%   for every ERT external output signal in the mdlInitializeSizes function.
+%%   The registration will be generated as follow:
+%%
+%%   /* Number of output ports */
+%%   if (!ssSetNumOutputPorts(%<tSimStructArg>, NumberOfOutputPorts)) return;
+%%
+%%   ssSetOutputPort<Property>(%<tSimStructArg>, PortNumber, <PropertyValue>);
+%%   ...
+%%
+%function DumpErtSFcnExternalOutputs() Output
+  %with ExternalOutputs
+    /* Number of output ports */
+    if (!ssSetNumOutputPorts(%<tSimStructArg>, %<NumExternalOutputs>)) return;
+    %if NumExternalOutputs > 0
+      %foreach idx = ExternalOutputs.NumExternalOutputs
+	%assign extOut       = ExternalOutputs.ExternalOutput[idx]
+	%assign sysIdx       = extOut.Block[0]
+	%assign blkIdx       = extOut.Block[1]
+	%assign outportBlock = System[sysIdx].Block[blkIdx]
+	%with System[sysIdx]
+	%with outportBlock
+	  %assign portWidth     = LibBlockInputSignalWidth(0)
+	  %assign dataTypeIdx   = LibBlockInputSignalDataTypeId(0)
+	  %assign numDimensions = LibBlockInputSignalNumDimensions(0)
+	  %assign isComplex     = LibBlockInputSignalIsComplex(0)
+          %assign isFrame       = extOut.FrameData == "yes"
+          %assign isBus         = LibDataTypeIsBus(dataTypeIdx)
+          
+	  %if TYPE(TID) == "Number" 
+	    %assign sampleTime    = SampleTime[TID].PeriodAndOffset[0]
+	    %assign offsetTime    = SampleTime[TID].PeriodAndOffset[1]
+	  %else
+            %assign sampleTime    = "mxGetInf()"
+            %assign offsetTime    = 0
+	  %endif
+          
+     %if ISFIELD(extOut, "HasVarDims") 
+        %if GenerateClassInterface
+           %% variable-size output signal + C++ class interface not supported
+           %% see g1147332
+           %<SLibReportErrorWithId("RTW:tlc:ERTSfcnCPPVarSize")>
+        %endif
+        %if !isBus
+           ssSetOutputPortDimensionsMode(%<tSimStructArg>, %<idx>, VARIABLE_DIMS_MODE);
+        %endif
+     %endif
+
+     %assign dims = LibBlockInputSignalDimensions(0)
+	  %<SLibDumpSfcnOutDims("%<tSimStructArg>",idx,portWidth,numDimensions,dims)>
+
+	  %<SLibSfunRegisterAndSetDataType("output","%<tSimStructArg>",idx,dataTypeIdx,"namedObject")>
+	  %assign locBusObj = LibBlockParamSetting("Outport", "BusObject")
+	  %if !WHITE_SPACE(locBusObj)
+	    ssSetBusObjectName(%<tSimStructArg>, %<idx>, (void *)"%<locBusObj>");
+	    %assign locOutStruct = LibBlockParamSetting("Outport", "OutputAsStructure")
+	    ssSetBusOutputAsStruct(%<tSimStructArg>, %<idx>, %<locOutStruct>);
+	  %endif
+          %if isComplex
+            ssSetOutputPortComplexSignal(%<tSimStructArg>, %<idx>, COMPLEX_YES);
+          %endif	  
+          %if isFrame
+            ssSetOutputPortFrameData(%<tSimStructArg>, %<idx>, FRAME_YES);
+          %endif
+          %if ExportFunctionsMode == 1
+            ssSetOutputPortOptimOpts(%<tSimStructArg>, %<idx>, SS_NOT_REUSABLE_AND_GLOBAL);
+          %endif
+	  %if AllSampleTimesInherited == "yes" || ExportFunctionsMode
+	    ssSetOutputPortSampleTime(%<tSimStructArg>, %<idx>, -1);
+	  %else
+	    ssSetOutputPortSampleTime(%<tSimStructArg>, %<idx>, %<sampleTime>);
+	    ssSetOutputPortOffsetTime(%<tSimStructArg>, %<idx>, %<offsetTime>);
+	  %endif
+	  %if TYPE(TID) == "Number"
+	    %assign ::CompiledModel.IsSampleTimeOnPort[TID]=1
+	  %endif
+	%endwith %% outportBlock
+	%endwith %% System[sysIdx]
+      %endforeach
+      %undef extOut, sysIdx, blkIdx
+    %endif
+  %endwith %% ExternalOutputs
+%endfunction %% DumpErtSFcnExternalOutputs
+
+%% Function: GetInputPtrTypeFromId ============================================
+%% Abstract:
+%%   This function return a Simulink input signal pointer type from a given
+%%   data-type identifier. On glnxa64, the name of the DataType sfix33 is set to
+%%   uint64_T by FixPt_DataTypeSetup.
+
+%%
+%% Syntax:
+%%  GetInputPtrTypeFromId(dataTypeId) 
+%%
+%% Arguments:
+%%   id - data-type identifier
+%%
+%function GetInputPtrTypeFromId(id) void
+  %%
+  %assign storageDataType = ...
+             LibGetDataTypeStorageIdFromId(...
+             LibGetDataTypeIdAliasedThruToFromId(id))
+  %%
+  %switch storageDataType
+    %case tSS_DOUBLE
+      %return "InputRealPtrsType"
+    %case tSS_SINGLE
+      %return "InputReal32PtrsType"
+    %case tSS_UINT8
+      %return "InputUInt8PtrsType"
+    %case tSS_UINT16
+      %return "InputUInt16PtrsType"
+    %case tSS_UINT32
+      %return "InputUInt32PtrsType"
+    %case tSS_BOOLEAN
+      %return "InputBooleanPtrsType"
+    %case tSS_INT8
+      %return "InputInt8PtrsType"      
+    %case tSS_INT16
+      %return "InputInt16PtrsType"
+    %case tSS_INT32
+      %return "InputInt32PtrsType"     
+    %default
+      %% for structures, use char* because marshalling uses
+      %% structure field offset (computed by Simulink in bytes).
+      %if LibIsStructDataType(id)
+        %return "const char * const *"
+      %else
+        %return "const %<LibGetDataTypeNameFromId(id)> * const *"
+      %endif
+  %endswitch
+%endfunction %% GetInputPtrTypeFromId
+
+%% Function: GenerateImportedExternalSignalDefinition =========================
+%% Abstract:
+%%   If the model has imported external signals (or pointer to imported
+%%   signals) this function will declared and export the imported signals. The
+%%   signals will be declared in the generated S-Function wrapper.
+%%
+%% Syntax:
+%%   GenerateImportedExternalSignalDefinition(signalRecord)
+%%
+%% Arguments:
+%%   signalRecord - A signal record from the external inputs or block outputs
+%%                  table.
+%%
+%% Returns:
+%%
+%%   /* model imported external pointer */
+%%
+%%   static real_T vec1_value[3];
+%%   real_T *vec1[3] = { &vec1_value[0] , &vec1_value[1] , &vec1_value[2] };
+%%
+%%   /* model imported output signals pointer */
+%%
+%%   static real_T vec2_value[2];
+%%   real_T *vec2[2] = { &vec2_value[0] , &vec2_value[1] };
+%%
+%%   /* model imported external */
+%%
+%%   real_T vec3[3];
+%%
+%function GenerateImportedExternalSignalDefinition(signal) Output
+  %if signal.StorageClass == "ImportedExtern" || ...
+    signal.StorageClass == "ImportedExternPointer"
+    %assign dataType = SLibGetRecordDataTypeName(signal, "")
+    %assign optWidth = LibOptionalVectorWidth(LibGetRecordWidth(signal))
+    %assign       id = LibGetRecordIdentifier(signal)
+    %if signal.StorageClass == "ImportedExternPointer"
+      /* %<::CompiledModel.Name> imported external pointer */
+      static %<dataType> %<id>_value%<optWidth>;
+      %<dataType> *%<id> = \
+      %if LibGetRecordWidth(signal) == 1
+        &%<id>_value;
+      %else
+        %<id>_value;
+      %endif
+    %else
+      /* %<::CompiledModel.Name> imported external `*/
+      %<dataType> %<id>%<optWidth>;
+    %endif
+  %endif
+%endfunction %% GenerateImportedExternalSignalDefinition
+
+%% Function: GenerateImportedExternalParameterDefinition ======================
+%% Abstract:
+%%   If the model has imported external parameter (or pointer to imported
+%%   parameters) this function will declared and export the imported 
+%%   parameters. The parameters will be declared in the generated S-Function 
+%%   wrapper.
+%%
+%% Syntax:
+%%   GenerateImportedExternalParameterDefinition(parameterRecord)
+%%
+%% Arguments:
+%%   parameterRecord - A parmeter record from the models paramter vector
+%%
+%% Returns:
+%%
+%%   /* model imported external pointer */
+%%
+%%   static real_T vec1_value[3];
+%%   real_T *vec1[3] = { &vec1_value[0] , &vec1_value[1] , &vec1_value[2] };
+%%
+%%   /* model imported external */
+%%
+%%   real_T vec3[3];
+%%
+%function GenerateImportedExternalParameterDefinition(mdlPrm) Output
+  %assign dataType = SLibGetRecordDataTypeName(mdlPrm, "")
+  %assign numOfElements = LibBlockParameterWidth(mdlPrm)
+  %assign optWidth = LibOptionalVectorWidth(numOfElements)
+  %assign       id = LibGetRecordIdentifier(mdlPrm)
+  %if mdlPrm.StorageClass == "ImportedExternPointer"
+    /* %<::CompiledModel.Name> imported external pointer */
+    static %<dataType> %<id>_value%<optWidth>;
+    %<dataType> *%<id> = \
+    %if numOfElements == 1
+      &%<id>_value;
+    %else
+      %<id>_value;
+    %endif
+  %else
+    /* %<::CompiledModel.Name> imported external `*/
+    %<dataType> %<id>%<optWidth>;
+  %endif
+%endfunction %% GenerateImportedExternalSignalDefinition
+
+
+%% Function: DumpImportedExternalSignalDeclaration ============================
+%% Abstract:
+%%   This function will generate the needed declations for model imported
+%%   extrnal signals. See GenerateImportedExternalSignalDefinition for more
+%%   information.
+%%
+%function DumpImportedExternalSignalDeclaration() Output
+  %if ExternalInputs.NumImportedExternSignals > 0 || ...
+      ExternalInputs.NumImportedExternPointerSignals > 0
+    /* Imported external inputs */
+    %foreach idx = ExternalInputs.NumExternalInputs
+      %assign extInp = ExternalInputs.ExternalInput[idx]
+      %<GenerateImportedExternalSignalDefinition(extInp)>
+    %endforeach
+  %endif
+    
+  %if BlockOutputs.NumImportedExternSignals > 0 || ...
+    BlockOutputs.NumImportedExternPointerSignals > 0
+    /* Imported output signals */
+    %foreach boIdx = BlockOutputs.NumExternalBlockOutputs
+      %assign bo = BlockOutputs.ExternalBlockOutput[boIdx]
+	%<GenerateImportedExternalSignalDefinition(bo)>
+    %endforeach
+  %endif
+  
+  %foreach dwIdx = DWorks.NumDWorks
+     %assign dw = DWorks.DWork[dwIdx]
+     %<GenerateImportedExternalSignalDefinition(dw)>
+  %endforeach
+%endfunction %% DumpImportedExternalSignalDeclaration
+
+%% Function: DumpImportedExternalParameterDeclaration =========================
+%% Abstract:
+%%   This function will generate the needed declaration for model imported
+%%   external parameters. See GenerateImportedExternalParameterDefinition
+%%   for more information.
+%%
+%function DumpImportedExternalParameterDeclaration() Output
+  %with ::CompiledModel.ModelParameters
+    %if (NumImportedExtern + NumImportedExternPointer) > 0
+      /* Imported parameters */
+      %foreach parIdx = NumParameters
+	%if ((Parameter[parIdx].StorageClass == "ImportedExtern" || ...
+	  Parameter[parIdx].StorageClass == "ImportedExternPointer") && ...
+          !SLibIsModelParamConst(Parameter[parIdx]))
+	  %<GenerateImportedExternalParameterDefinition(Parameter[parIdx])>
+	%endif
+      %endforeach
+    %endif
+  %endwith
+%endfunction %% DumpImportedExternalParameterDeclaration
+
+%% Function: GenerateTmpSFunctionInputSignalDef ===============================
+%% Abstract:
+%%  Generates the right hand side of the S-Function input signal definition 
+%%  which is used in mdlOutputs function. In certain situations, this
+%%  function is used in favor of GenerateSFunctionInputSignalDefinition
+%%  because the latter will always declare a local variable.
+%%
+%% Returns:
+%%  ((InputRealPtrsType)ssGetInputPortSignalPtrs(%<tSimStructArg>,0))
+%%
+%function GenerateTmpSFunctionInputSignalDef(idx) Output
+  %assign extInp = ExternalInputs.ExternalInput[idx]
+  %assign sfcnIdx = idx
+  %if ExportFunctionsMode == 1
+    %assign sfcnIdx = extInp.ExportedId - 1
+  %endif
+  %with extInp
+    %assign dataTypeIdx  = SLibGetRecordDataTypeId(extInp)
+    %assign dataTypeEnum = LibGetDataTypeEnumFromId(dataTypeIdx)
+    %if dataTypeEnum == "SS_FCN_CALL"
+      %return
+    %endif
+      ((%<GetInputPtrTypeFromId(dataTypeIdx)>) ...
+      ssGetInputPortSignalPtrs(%<tSimStructArg>, %<sfcnIdx>))\
+  %endwith %% extInp
+%endfunction %% GenerateTmpSFunctionInputSignalDef
+
+%% Function: GenerateSFunctionInputSignalDefinition ===========================
+%% Abstract:
+%%   This function generates the S-Function input signal definition for the
+%%   mdlOutputs function.
+%%
+%% Syntax: 
+%%   GenerateSFunctionInputSignalDefinition(prefix)
+%%
+%% Arguments:
+%%   prefix - signal name prefix 
+%%
+%% Returns:
+%%    InputRealPtrsType <prefix>0 = (InputRealPtrsType) 
+%%                                 ssGetInputPortSignalPtrs(%<tSimStructArg>, 0);
+%%
+%function GenerateSFunctionInputSignalDefinition(prefix,idx) Output
+  %assign extInp = ExternalInputs.ExternalInput[idx]
+  %assign dataTypeIdx  = SLibGetRecordDataTypeId(extInp)
+  %assign dataTypeEnum = LibGetDataTypeEnumFromId(dataTypeIdx)
+  %if dataTypeEnum == "SS_FCN_CALL"
+    %return
+  %endif
+  
+  %% VarDims signal is always contiguous, use
+  %% ssGetInputPortSignal to access.
+  %if !ISFIELD(extInp, "HasVarDims")
+    %<GetInputPtrTypeFromId(dataTypeIdx)> %<prefix>%<idx> = ...
+      (%<GetInputPtrTypeFromId(dataTypeIdx)>) ...
+      ssGetInputPortSignalPtrs(%<tSimStructArg>, %<idx>);
+  %else
+    %% use char* pointer to address structures because
+    %% marshalling uses structure field offset, which is
+    %% computed by Simulink in bytes
+    %assign storageType = LibGetDataTypeStorageIdFromId(...
+      LibGetDataTypeIdAliasedThruToFromId(dataTypeIdx))
+    
+    %if LibIsStructDataType(storageType)
+      %assign dataType = "char"
+    %else
+      %%% Note the difference between CGTypes and DataTypes
+      %%% FixPt_DataTypeSetup works on DataTypes, not CGTypes
+      %assign dataType = LibGetDataTypeNameFromId(storageType)
+    %endif
+
+    const %<dataType> *%<prefix>%<idx> = ...
+      (const %<dataType> *) ...
+      ssGetInputPortSignal(%<tSimStructArg>, %<idx>);
+
+    %% if it is AUTO Storage then look at SizeVarGroupIdx, else
+    %% look at DimSizeDwork for Exported Global
+    %if ISFIELD(extInp, "SizeVarGroupIdx")
+      %assign cgTypeIdx = SLibCGVarGroupMemberCGTypeIdx(...
+        extInp.SizeVarGroupIdx[0], ...
+        extInp.SizeVarGroupIdx[1])
+    %elseif ISFIELD(extInp,"DimSizeDWork")
+      %assign cgTypeIdx = LibGetRecordCGTypeIdx(::CompiledModel.DWorks.DWork[extInp.DimSizeDWork])
+    %endif
+    %if EXISTS(cgTypeIdx)
+        const %<LibCGTypeName(cgTypeIdx)> * %<prefix>%<idx>_Size = ...
+            (const %<LibCGTypeName(cgTypeIdx)> *) ...
+            & ...
+            ssGetCurrentInputPortDimensions(%<tSimStructArg>, %<idx>, 0);
+    %endif
+  %endif
+%endfunction %% GenerateSFunctionInputSignalDefinition
+
+%% Function: GenerateTmpSFunctionOutputSignalDef ==============================
+%% Abstract:
+%%  Generates the right hand side of the S-Function output signal definition 
+%%  which is used in mdlOutputs function. In certain situations, this
+%%  function is used in favor of GenerateSFunctionOutputSignalDefinition
+%%  because the latter will always declare a local variable.
+%%
+%% Returns:
+%%  ((real_T *)ssGetOutputPortSignal(%<tSimStructArg>,0))
+%%
+%function GenerateTmpSFunctionOutputSignalDef(idx) Output
+  %assign extOut       = ExternalOutputs.ExternalOutput[idx]
+  %assign sysIdx       = extOut.Block[0]
+  %assign blkIdx       = extOut.Block[1]
+  %assign outportBlock = System[sysIdx].Block[blkIdx]
+  %with System[sysIdx]
+    %with outportBlock
+      %assign dTypeId = LibBlockInputSignalDataTypeId(0)
+      %assign isStruct = LibIsStructDataType(dTypeId)
+      %if isStruct
+        %assign dataType = "char"
+      %else
+        %assign dataType = LibBlockInputSignalDataTypeName(0, "")
+      %endif
+      ((%<dataType> *)ssGetOutputPortSignal(%<tSimStructArg>, %<idx>))\
+    %endwith %% outportBlock
+  %endwith %% System[sysIdx]
+%endfunction %% GenerateTmpSFunctionOutputSignalDef
+
+%% Function: GenerateSFunctionOutputSignalDefinition ==========================
+%% Abstract:
+%%   This function generates the S-Function output signal definition for the
+%%   mdlOutputs function.
+%%
+%% Syntax: 
+%%   GenerateSFunctionOutputSignalDefinition(prefix)
+%%
+%% Arguments:
+%%   prefix - signal name prefix 
+%%
+%% Returns:
+%%   real_T *<prefix>_0 = ssGetOutputPortSignal(%<tSimStructArg>, 0);
+%%
+%function GenerateSFunctionOutputSignalDefinition(prefix,idx) Output
+  %assign extOut       = ExternalOutputs.ExternalOutput[idx]
+  %assign sysIdx       = extOut.Block[0]
+  %assign blkIdx       = extOut.Block[1]
+  %assign outportBlock = System[sysIdx].Block[blkIdx]
+  %with System[sysIdx]
+    %with outportBlock
+      %assign dTypeId = LibBlockInputSignalDataTypeId(0)
+      %assign isStruct = LibIsStructDataType(dTypeId)
+      %if isStruct
+        %assign dataType = "char"
+      %else
+        %assign dataType = LibBlockInputSignalDataTypeName(0, "")
+      %endif
+      %<dataType> *%<prefix>%<idx> = (%<dataType> *)ssGetOutputPortSignal(%<tSimStructArg>, %<idx>);
+
+      %if ISFIELD(extOut, "HasVarDims")
+        %% SizeVarGroupIdx is only present for non virtual outports
+        %if ISFIELD(extOut, "SizeVarGroupIdx")
+          %assign cgTypeIdx = SLibCGVarGroupMemberCGTypeIdx(...
+            extOut.SizeVarGroupIdx[0], ...
+            extOut.SizeVarGroupIdx[1])
+          %assign width = LibCGTypeWidth(cgTypeIdx)
+          %<LibCGTypeName(cgTypeIdx)> * %<prefix>%<idx>_Size = ...
+            (%<LibCGTypeName(cgTypeIdx)> *) ...
+            & ...
+            ssGetCurrentOutputPortDimensions(%<tSimStructArg>, %<idx>, 0);
+        %endif
+      %endif
+    %endwith %% outportBlock
+  %endwith %% System[sysIdx]
+%endfunction %% GenerateSFunctionOutputSignalDefinition
+
+%function FcnIndexSimStructCallResult(isContiguous, isComplex, elemIdx) void
+  %% the following is needed no matter what the roll threshold is.
+  %%
+  %% VarDims inputs are always contiguous.
+  %% we generate InPort_0[i] if it is real
+  %% we generate InPort_0[2*i] and InPort_0[2*i+1] if it is complex.
+    
+  %if isContiguous
+    %if !isComplex
+      %assign indexReal = "[%<elemIdx>]"
+      %assign indexImg = ""
+    %else
+      %assign indexReal = "[2*%<elemIdx>]"
+      %assign indexImg = "[2*%<elemIdx>+1]"
+    %endif
+  %else
+    %assign indexReal = "[%<elemIdx>][0]"
+    %assign indexImg = "[%<elemIdx>][1]"
+  %endif
+  %return ["%<indexReal>", "%<indexImg>"]
+%endfunction
+
+%% Function: GenerateTmpInputSignalConditioning ===============================
+%% Abstract:
+%%   This function generates the necessary code to copy input signals from the
+%%   S-Function to the generated model code. In certain situations, this
+%%   function is used in favor of GenerateInputSignalConditioning because
+%%   the latter depends on the use of locally declared variables.
+%% Returns:
+%%   {
+%%     int i = 0;
+%%     for(i = 0; i < 4; i++) {
+%%       vec1_value[i] = *tmpVar[i];
+%%     }
+%%   }
+%%   <model>_U.root_vec4[0] = *tmpVar[0];
+%%   <model>_U.root_vec4[1] = *tmpVar[1];
+%%   vec3[0] = *<prefix>2[0];
+%%   vec3[1] = *<prefix>2[1];
+%%
+%function GenerateTmpInputSignalConditioning(tmpVar, rolllimit, idx) Output
+  %if MultiInstanceERTCode && !RootIOStructures
+    %assign localUQualifier = "_"
+  %else
+    %assign localUQualifier = "."
+  %endif
+  
+  %assign extInp = ExternalInputs.ExternalInput[idx]
+  %%fpcWithArgs - flag to indicate that there
+  %%is model step function prototype control,
+  %% or non-void-void C++ class
+  %assign fpcWithArgs = TLC_FALSE
+  %if FcnConditionRootInputsAsSeparateArgs()
+    %assign localVarName = "localIn%<idx>"
+    %assign fpcWithArgs = TLC_TRUE
+  %endif
+  
+  %assign    portWidth = LibGetRecordWidth(extInp)
+  %assign    isComplex = LibGetRecordIsComplex(extInp)
+  %assign      dotReal = "." + tRealPart
+  %assign      dotImag = "." + tImagPart
+  %assign      dTypeId = SLibGetRecordDataTypeId(extInp)
+  %assign dataTypeEnum = LibGetDataTypeEnumFromId(dTypeId)
+  
+  %if dataTypeEnum == "SS_FCN_CALL"
+    %return
+  %endif
+  %%For model step function prototype control's case, there is really no
+  %%localUQualifier. Use its argument postion to pass in the needed local
+  %%variable name.
+  %assign nameOrQualifier = fpcWithArgs ? localVarName : localUQualifier
+  %%
+  
+  %if ISFIELD(extInp, "SizeVarGroupIdx")
+    %assign sizeCGType = SLibCGVarGroupMemberCGTypeIdx(...
+        extInp.SizeVarGroupIdx[0], ...
+        extInp.SizeVarGroupIdx[1])
+  %elseif ISFIELD(extInp, "DimSizeDWork")
+     %assign sizeCGType = LibGetRecordCGTypeIdx(::CompiledModel.DWorks.DWork[extInp.DimSizeDWork])
+  %endif
+  
+  %if EXISTS(sizeCGType)
+     %assign sizeVecLen = LibCGTypeWidth(sizeCGType)
+     %if LibIsStructDataType(dTypeId) && portWidth == 1 ...
+       && sizeVecLen == 1
+       %% multi-word fix-pt goes to the else branch.
+       %<SLibGetInportSize(idx, 1, "", -1, "", 0)> = *%<tmpVar>_Size;
+     %else
+       %foreach dimIdx = sizeVecLen
+        %<SLibGetInportSize(idx, sizeVecLen, "", -1, "", dimIdx)> = %<tmpVar>_Size[%<dimIdx>];
+       %endforeach
+     %endif
+  %endif
+ 
+  %if LibIsStructDataType(dTypeId)
+    %% Special case for structured data type (this cover Simulink.Bus, 
+    %% Simulink.StructType and multi-word fixed-point data type)
+    %if ISFIELD(extInp, "HasVarDims")
+      %assign rhs = tmpVar
+    %else
+      %assign rhs = "&" + tmpVar + "[0][0]"
+    %endif
+    %<FcnGenSigAssignment(extInp, 0, "", nameOrQualifier,rhs,rolllimit)>
+  %elseif portWidth < rolllimit
+    %assign varDims = ISFIELD(extInp, "HasVarDims")
+    %foreach sigIdx = portWidth
+      %assign indices = FcnIndexSimStructCallResult(varDims, isComplex, sigIdx)
+      %assign indexReal = indices[0]
+      %assign indexImg = indices[1]
+      %assign rhs = tmpVar + indexReal
+      %if isComplex
+        %<FcnGenSigAssignment(extInp, sigIdx, dotReal, nameOrQualifier,rhs,rolllimit)>
+        %assign rhs = tmpVar + indexImg
+        %<FcnGenSigAssignment(extInp, sigIdx, dotImag, nameOrQualifier,rhs,rolllimit)>
+      %else
+        %<FcnGenSigAssignment(extInp, sigIdx,      "", nameOrQualifier,rhs,rolllimit)>
+      %endif
+    %endforeach %% sigIdx = portWidth
+  %else %% portWidth > rolllimit
+    %assign sigIdx = "i"
+    %assign varDims = ISFIELD(extInp, "HasVarDims")
+    %assign indices = FcnIndexSimStructCallResult(varDims, isComplex, sigIdx)
+    %assign indexReal = indices[0]
+    %assign indexImg = indices[1]
+    %assign rhs = tmpVar + indexReal
+    {
+      int i = 0;
+      for(i = 0; i < %<portWidth>; i++) {
+        %if isComplex
+          %<FcnGenSigAssignment(extInp, sigIdx, dotReal, nameOrQualifier,rhs,rolllimit)>
+          %assign rhs = tmpVar + indexImg
+          %<FcnGenSigAssignment(extInp, sigIdx, dotImag, nameOrQualifier,rhs,rolllimit)>
+        %else
+          %<FcnGenSigAssignment(extInp, sigIdx,      "", nameOrQualifier,rhs,rolllimit)>
+        %endif
+      }
+    }
+  %endif  
+%endfunction %% GenerateTmpInputSignalConditioning
+
+%% Function: GenerateInputSignalConditioning ==================================
+%% Abstract:
+%%   This function generates the necessary code to copy input signals from the
+%%   S-Function to the generated model code.
+%%
+%% Syntax:
+%%   GenerateInputSignalConditioning(prefix, rolllimit)
+%%
+%% Arguments:
+%%   prefix    - signal name prefix
+%%   rolllimit - roll-limit for input vector signals 
+%%
+%% Returns:
+%%   {
+%%     int i = 0;
+%%     for(i = 0; i < 4; i++) {
+%%       vec1_value[i] = *<prefix>0[i];
+%%     }
+%%   }
+%%   <model>_U.root_vec4[0] = *<prefix>1[0];
+%%   <model>_U.root_vec4[1] = *<prefix>1[1];
+%%   vec3[0] = *<prefix>2[0];
+%%   vec3[1] = *<prefix>2[1];
+%%
+%function GenerateInputSignalConditioning(prefix, rolllimit,idx) Output
+  %assign tmpVar = prefix + "%<idx>"
+  %<GenerateTmpInputSignalConditioning(tmpVar,rolllimit,idx)>
+%endfunction %% GenerateInputSignalConditioning
+
+%function FcnGenSigAssignment(sigRec,sigIdx,reim,localUQualifier,rhs,rolllimit) void
+  %assign       dTypeId = SLibGetRecordDataTypeId(sigRec)
+  %assign isStructOrBus = LibIsStructDataType(dTypeId)
+  %assign     isComplex = LibGetRecordIsComplex(sigRec)
+  %assign            id = LibGetRecordIdentifier(sigRec)
+  %with sigRec
+    %if ISFIELD(::CompiledModel, "RTWFcnClass") && ...
+        StorageClass != "Auto"
+        %assign errTxt = ...
+          "Model step function prototype control does not support " + ...
+          "non-Auto custom storage classes for root-level I/O ports."
+        %<LibReportFatalError(errTxt)>
+    %endif
+    
+    %if LibGetRecordWidth(sigRec) == 1
+      %assign sigIdx = ""
+    %elseif isStructOrBus
+      %% Reset the signal index for structured data type since the dedicated 
+      %% marshalling functions manage the addressing themselves
+      %assign sigIdx = ""
+    %else
+      %assign sigIdx = "[%<sigIdx>]"
+    %endif
+    
+    %% Special case for custom storage classes
+    %if StorageClass == "Custom"
+      %if (CustomStorageClassVersion > 1)
+	    %% EARLY RETURN ==>
+            %if rhs[0] == "&"
+              %assign rhs = "(*((" + LibGetDataTypeNameFromId(dTypeId) + "*)" + rhs + "))"
+            %endif
+	    %return LibAccessCustomData(sigRec, "set", sigIdx, reim, rhs)
+        %endif
+
+      %assign fullId = LibCustomData(sigRec,"contents",sigIdx,reim)
+    %else %% StorageClass != Custom
+      
+      %% Generate the base identifier
+      %switch StorageClass
+        %case "Auto"
+          %if !SLibFcnProtoCtrlActive() && ...
+            !GenerateClassInterface
+	        %assign baseId = LibGetExternalInputStruct() + ...
+                localUQualifier + id
+          %elseif GenerateClassInterface
+            %if classConfObj.hasGlobalAccessForInport
+              %% void-void case
+              %assign baseId = ::CompiledModel.GlobalScope.tModelObject + ...
+                "." + LibGetExternalInputStruct() + "." + id
+            %else
+              %% non void-void case. Should be the same as the FPC's case
+              %assign baseId = localUQualifier
+            %endif
+          %else
+              %% model step function prototype control in place. 
+              %% Use local variable instead, which is passed in as
+              %% localUQualifier.
+              %assign baseId = localUQualifier
+          %endif
+          %break
+        %case "ImportedExternPointer"
+          %assign baseId = id + "_value"
+          %break
+        %default
+          %assign baseId = id
+          %break
+      %endswitch %% StorageClass
+
+      %% Add the index and real/imaginary parts to the identifier
+      %assign fullId = baseId + sigIdx + reim
+    %endif %% StorageClass == Custom
+  %endwith %% sigRec
+
+  %% Add right-hand side
+  %if isStructOrBus
+    %assign retVal = ""
+    %openfile retVal
+    %<SLibAssignSLStructToUserStructND(dTypeId, LibGetRecordWidth(sigRec), ...
+            fullId, rhs, Matrix(1,1) [0], 0, isComplex)>
+    %closefile retVal
+    %return retVal
+  %else
+    %return fullId + " = " + rhs + ";"
+  %endif
+%endfunction
+  
+%% Function: GenerateTmpOutputSignalConditioning ==============================
+%% Abstract:
+%%   This function generates the necessary code to copy output signals from the
+%%   generated model code to the S-Function outputs. In certain situations, this
+%%   function is used in favor of GenerateOutputSignalConditioning because
+%%   the latter depends on the use of locally declared variables.
+%% Returns:
+%%   <tmpVar>[i] = <model>_Y.root_Out0;
+%%   {
+%%     int i = 0;
+%%     for(i = 0; i < 4; i++) {
+%%       <tmpVar>[i] = <model>_Y.root_Out1[i];
+%%     }
+%%   }
+%%
+%function GenerateTmpOutputSignalConditioning(tmpVar, rolllimit,idx) Output
+  %if MultiInstanceERTCode && !RootIOStructures
+    %assign localYQualifier = "_"
+  %else
+    %assign localYQualifier = "."
+  %endif
+  
+  %assign extOut       = ExternalOutputs.ExternalOutput[idx]
+  %assign sysIdx       = extOut.Block[0]
+  %assign blkIdx       = extOut.Block[1]
+  %assign outportBlock = System[sysIdx].Block[blkIdx]
+  %assign id           = LibGetRecordIdentifier(outportBlock)
+  %% fpcInPlace - flag to indicate that there
+  %% is model step function prototype control, 
+  %% or non-void-void C++ class
+  %assign fpcWithArgs = TLC_FALSE
+  %if FcnConditionRootOutputsAsSeparateArgs()
+    %assign localVarName = "localOut%<idx>"
+    %assign fpcWithArgs = TLC_TRUE
+  %endif
+  
+  %with System[sysIdx]
+    %assign id = LibGetRecordIdentifier(outportBlock)
+    %with outportBlock
+      %assign portWidth = LibBlockInputSignalWidth(0)
+      %assign dTypeId = LibBlockInputSignalDataTypeId(0)
+      %assign isStructOrBus = LibIsStructDataType(dTypeId)
+      %%
+      %if ISFIELD(extOut, "SizeVarGroupIdx")
+        %assign sizeCGType = SLibCGVarGroupMemberCGTypeIdx(...
+          extOut.SizeVarGroupIdx[0], ...
+          extOut.SizeVarGroupIdx[1])
+        %assign sizeVecLen = LibCGTypeWidth(sizeCGType)
+        %if isStructOrBus && portWidth == 1 ...
+          && sizeVecLen == 1
+          %% multi-word goes to else branch.
+
+          *%<tmpVar>_Size = %<SLibGetOutportSize(idx, 1, "", -1, "", 0)>;
+        %else
+          %foreach dimIdx = sizeVecLen
+            %<tmpVar>_Size[%<dimIdx>] = %<SLibGetOutportSize(idx, sizeVecLen, "", -1, "", dimIdx)>; 
+          %endforeach
+        %endif
+      %endif
+      
+      %if isStructOrBus
+        %assign dst = "&%<tmpVar>[0]"
+        %if !fpcWithArgs
+          %assign objPrefix=""
+          %if GenerateClassInterface
+            %% Must be void-void case for class genearation, set object prefix
+            %assign objPrefix = "%<::CompiledModel.GlobalScope.tModelObject>."
+          %endif   
+          %%
+          %if SLibExternalOutputIsVirtual(outportBlock)
+            %assign src = LibBlockInputSignal(0, "", "", 0)
+          %else
+            %assign src = "%<LibGetExternalOutputStruct()>%<localYQualifier>%<id>"
+          %endif
+          %%
+          %assign src = "%<objPrefix>%<src>"
+        %else
+          %assign src = localVarName
+        %endif %%!fpcWithArgs
+        %%
+        %assign isComplex = LibGetRecordIsComplex(extOut)         
+        %% When portWidth is not 1, SLibAssignUserStructToSLStructND expects that src is a pointer          
+        %if SLibExternalOutputIsVirtual(outportBlock) && (ISEQUAL(portWidth,1)==TLC_FALSE)
+          %assign src = "(%<LibBlockInputSignalAddr(0, "", "", 0)>)"
+        %endif
+        %<SLibAssignUserStructToSLStructND(dTypeId, portWidth, dst, src, Matrix(1,1) [0], 0, isComplex)>
+      %else      
+        %if portWidth == 1
+          %<tmpVar>[0] = \
+          %if !fpcWithArgs
+            %assign objPrefix=""
+            %if GenerateClassInterface
+              %% Must be void-void case for class genearation, set object prefix
+              %assign objPrefix = "%<::CompiledModel.GlobalScope.tModelObject>."
+            %endif 
+            %if SLibExternalOutputIsVirtual(outportBlock)
+              %<objPrefix>%<LibBlockInputSignal(0, "", "", 0)>;
+            %else
+              %<objPrefix>%<LibGetExternalOutputStruct()>%<localYQualifier>%<id>;
+            %endif
+          %else
+            %<localVarName>;
+          %endif
+        %elseif portWidth < rolllimit
+          %foreach sigIdx = portWidth
+            %<tmpVar>[%<sigIdx>] = \
+            %if !fpcWithArgs
+              %assign objPrefix=""
+              %if GenerateClassInterface
+                %% Must be void-void case for class genearation, set object prefix
+                %assign objPrefix = "%<::CompiledModel.GlobalScope.tModelObject>."
+              %endif 
+              %if SLibExternalOutputIsVirtual(outportBlock)
+                %<objPrefix>%<LibBlockInputSignal(0, "", "", sigIdx)>;
+              %else
+                %<objPrefix>%<LibGetExternalOutputStruct()>%<localYQualifier>%<id>[%<sigIdx>];
+              %endif
+            %else
+              %<localVarName>[%<sigIdx>];
+            %endif
+          %endforeach
+        %else %% portWidth > rolllimit
+          {
+            int i = 0;
+            for(i = 0; i < %<portWidth>; i++) {
+              %<tmpVar>[i] =  \
+              %if !fpcWithArgs
+                %assign objPrefix=""
+                %if GenerateClassInterface
+                  %% Must be void-void case for class genearation, set object prefix
+                  %assign objPrefix = "%<::CompiledModel.GlobalScope.tModelObject>."
+                %endif 
+                %if SLibExternalOutputIsVirtual(outportBlock)
+                  %<objPrefix>%<LibBlockInputSignal(0, "i", "", 0)>;
+                %else
+                  %<objPrefix>%<LibGetExternalOutputStruct()>%<localYQualifier>%<id>[i];
+                %endif
+              %else
+                %<localVarName>[i];
+              %endif
+            }
+          }
+        %endif
+      %endif   %% isstructorBus
+    %endwith   %% outportBlock
+  %endwith    %% System[sysIdx]
+%endfunction %% GenerateTmpOutputSignalConditioning
+
+%% Function: GenerateOutputSignalConditioning ==================================
+%% Abstract:
+%%   This function generates the necessary code to copy output signals from the
+%%   generated model code to the S-Function outputs.
+%%
+%% Syntax:
+%%   GenerateOutputSignalConditioning(prefix, rolllimit)
+%%
+%% Arguments:
+%%   prefix    - signal name prefix
+%%   rolllimit - roll-limit for input vector signals 
+%%
+%% Returns:
+%%   <prefix>0[i] = <model>_Y.root_Out0;
+%%   {
+%%     int i = 0;
+%%     for(i = 0; i < 4; i++) {
+%%       <prefix>1[i] = <model>_Y.root_Out1[i];
+%%     }
+%%   }
+%%
+%function GenerateOutputSignalConditioning(prefix, rolllimit,idx) Output
+  %<GenerateTmpOutputSignalConditioning("%<prefix>%<idx>",rolllimit,idx)>
+%endfunction %% GenerateOutputSignalConditioning
+
+%% Function: DumpTimeConditioningCode =========================================
+%% Abstract:
+%%   
+%%
+%function DumpTimeConditioningCode(localTid) Output
+  int_T %<localTid> = %<GET_TYPE_ID_REPLACEMENT("MIN_int32_T")>;
+            
+  %foreach idx = NumRuntimeExportedRates
+    if (ssIsSampleHit(%<tSimStructArg>, %<idx>, %<LibTID()> )) {
+      %<localTid> = %<idx>;
+    }
+  %endforeach
+%endfunction %% DumpTimeConditioningCode
+
+%% ============================================================================
+%% S-FUNCTION FRAME FOR ERT CODE FORMAT
+%% 
+%% The S-Function <model>_sf.c is created as follows:
+%%
+%% #defines
+%% 
+%% #includes
+%% 
+%% ERT external inputs structure definition and declaration
+%%
+%% ERT external outputs structure definition and declaration
+%%
+%% ERT imported and exported signal declaration 
+%%
+%% static void mdlCheckParameters(SimStruct *%<tSimStructArg>) {
+%%   
+%%   Check data type, size & complexity of S-Function parameters.
+%%  
+%% }
+%%
+%% updateGlobalVarsFromRunTimeParams(SimStruct *%<tSimStructArg>) {
+%%
+%%   Copy data from run-time parameters to global variables.
+%%   
+%% }
+%%
+%% static void mdlSetWorkWidths(SimStruct *%<tSimStructArg>)
+%%   
+%%   Register tunable parameters as run-time parameters
+%%   and call updateGlobalVarsFromRunTimeParams.
+%%   
+%% }
+%%
+%% static void mdlProcessParameters(SimStruct *%<tSimStructArg>) {
+%%   
+%%   Update run-time parameters from evaluated dialog parameters
+%%   and call updateGlobalVarsFromRunTimeParams.
+%%  
+%% }
+%%
+%% static void mdlInitializeSizes(SimStruct *%<tSimStructArg>) {
+%%   
+%%   Inputs and outputs signal type registration.
+%%  
+%% }
+%%
+%% static void mdlInitializeSampleTimes(SimStruct *%<tSimStructArg>) {
+%%
+%%   Number of sample times and sample rate registration.
+%%
+%% }
+%%
+%% static void mdlInitializeConditions(SimStruct *S) {   
+%%
+%%   ERT initialization function call.
+%%
+%% }
+%%
+%% static void mdlOutputs(SimStruct *%<tSimStructArg>, int_T tid) {  
+%%
+%%   Simulink S-Function inputs to ERT inputs copy
+%%
+%%   ERT time conditioning
+%%
+%%   ERT step function call
+%%
+%%   ERT outputs to Simulink S-Function outputs copy
+%%
+%% }
+%%
+%% static void mdlTerminate(SimStruct *%<tSimStructArg>) {
+%%
+%%   ERT termination function call
+%%
+%% }
+%%
+%function FcnGenModelParameterAssignment(mdlPrm, idx, reim, rhs) Output
+  %if mdlPrm.StorageClass == "Custom"
+    %if mdlPrm.CustomStorageClassVersion > 1
+      %<LibAccessCustomData(mdlPrm, "set", idx, reim, rhs)>
+    %else
+      %assign lhs = LibCustomData(mdlPrm, "contents", idx, reim)
+      %<lhs> = %<rhs>;
+    %endif
+  %else
+    %assign lhs = FcnAccessModelParameter(mdlPrm, idx) + reim
+    %<lhs> = %<rhs>;
+  %endif
+%endfunction
+
+%% Function: CopyRunTimeStructParamToGlobalVar ================================
+%% Abstract:
+%%    Copy run-time structparameter to global variable used in the generated
+%%    code.
+%%
+%function CopyRunTimeStructParamToGlobalVar(mdlPrm, rtpIdx) Output
+  %assign dtId = mdlPrm.OriginalDataTypeIdx
+  %assert(LibDataTypeIsBus(dtId) == TLC_TRUE)
+  %assign tmpVarDType = "const char *"
+  %assign tmpVar="rtp_%<rtpIdx>"
+  %assign rhs = "((%<tmpVarDType>) ssGetRunTimeParamInfo(%<tSimStructArg>,%<rtpIdx>)->data)"
+  %if mdlPrm.StorageClass == "Custom"
+    %assign isGetSetStorageClass = (mdlPrm.CustomStorageClassVersion > 1) && ...
+                                   !(LibGetRTWInfoObjectPackage(mdlPrm) == "AUTOSAR")
+    %assert(!isGetSetStorageClass)
+    %assign paramVar= LibCustomData(mdlPrm, "contents","", "")  
+  %else
+    %assign paramVar= FcnAccessModelParameter(mdlPrm,"")  
+  %endif
+ {
+ %<tmpVarDType> %<tmpVar> = %<rhs>;
+ %<SLibAssignSLStructToUserStructND(dtId, LibBlockParameterWidth(mdlPrm), ...
+    paramVar, tmpVar, Matrix(1,1) [0], 0, LibBlockParameterIsComplex(mdlPrm))>
+ }
+%endfunction
+
+%% Function: CopyRunTimeParamToGlobalVar ======================================
+%% Abstract:
+%%    Copy run-time parameter to global variable used in the generated code.
+%%
+%function CopyRunTimeParamToGlobalVar(mdlPrm, rtpIdx, index) Output
+  %assign isBus = LibDataTypeIsBus(mdlPrm.OriginalDataTypeIdx)
+  %if isBus
+      %% EARLY RETURN ==>
+      %assert(index == "") %% We do not support array of struct
+      %return  CopyRunTimeStructParamToGlobalVar(mdlPrm, rtpIdx)
+  %endif
+  %assign rtpDType = LibGetDataTypeNameFromId(mdlPrm.OriginalDataTypeIdx)
+  %assign rtpPtr = "((%<rtpDType> *) ssGetRunTimeParamInfo(%<tSimStructArg>,%<rtpIdx>)->data)"
+  %%
+  %if index == ""
+    %assign LHSIdx     = ""
+    %assign realRHS = "(%<rtpPtr>[0])"
+    %assign imagRHS = "(%<rtpPtr>[1])"   %% MAY NOT BE USED
+  %else
+    %assign LHSIdx     = "[%<index>]"
+    %if SLibGetRecordIsComplex(mdlPrm)
+      %assign realRHS = "(%<rtpPtr>[2*%<index>])"
+      %assign imagRHS = "(%<rtpPtr>[2*%<index>+1])"
+    %else
+      %assign realRHS = "(%<rtpPtr>[%<index>])"
+    %endif
+  %endif
+  %%
+  %if SLibGetRecordIsComplex(mdlPrm)
+    %assign realSuffix = ".%<tRealPart>"
+    %assign imagSuffix = ".%<tImagPart>"
+    %<FcnGenModelParameterAssignment(mdlPrm, LHSIdx, realSuffix, realRHS)>
+    %<FcnGenModelParameterAssignment(mdlPrm, LHSIdx, imagSuffix, imagRHS)>
+  %else
+    %<FcnGenModelParameterAssignment(mdlPrm, LHSIdx, "", realRHS)>
+  %endif
+%endfunction
+
+
+%% Function: FcnGenErtSFcnParamChecks ==========================================
+%% Abstract:
+%%   Generate code to check attributes of parameters for the ERT S-Function.
+%%   The ERT S-Function registers all of its tunable parameters as run-time
+%%   parameters (which is completely different to the generated S-Function).
+%%
+%% NOTE:
+%% - Dimensions must match exactly.
+%% - If the original RTP was real, then the sfcnParam must also be real.
+%%   If the original RTP was complex, the sfcnParam could be real / complex.
+%% - We do not need to check data type because the data type of the evaluated
+%%   dialog parameter will be transformed as necessary when the S-Function
+%%   registers run-time parameters.
+%%
+%function FcnGenErtSFcnParamChecks(mdlPrm, sfcnPrmIdx) Output
+  %assign pName = LibGetRecordIdentifier(mdlPrm)
+  %%
+  %% Construct dimensions string (for initialization)
+  %%
+  %assign dims = FcnGetMatlabSafeDimensions(mdlPrm)
+  %assign nDims = SIZE(dims,1)
+  %%
+  %assign dimsStr = "%<dims[0]>"
+  %foreach dimsIdx = (nDims-1)
+    %assign dimsStr = dimsStr + ", %<dims[dimsIdx+1]>"
+  %endforeach
+  %%
+  %% Get complexity
+  %%
+  %if SLibGetRecordIsComplex(mdlPrm)
+    %assign isComplex = "true"
+  %else
+    %assign isComplex = "false"
+  %endif
+  %%
+  /* Check attributes of parameter '%<pName>' */
+  {
+    int dimsArray[%<nDims>] = {%<dimsStr>};
+    ssCheckSFcnParamValueAttribs(%<tSimStructArg>, %<sfcnPrmIdx>, "%<pName>", DYNAMICALLY_TYPED,
+                                 %<nDims>, dimsArray, %<isComplex>);
+  }
+  
+%endfunction %% FcnGenErtSFcnParamChecks
+
+
+%% Function: FcnGenErtSFcnCheckParamsFcn =======================================
+%% Abstract:
+%%   Generate mdlCheckParameters function for generated S-Functions.
+%%
+%function FcnGenErtSFcnCheckParamsFcn(numTunablePrms, prmIdxVec) Output
+  %if numTunablePrms > 0
+    %with ModelParameters
+      %assign fcnName = "mdlCheckParameters"
+      %assign fcnReturns = "static void"
+      %assign fcnParams = "SimStruct *%<tSimStructArg>"
+      %assign fcnAbstract = "This function checks the attributes of tunable parameters."
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Model parameter check"}
+      %<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      #define MDL_CHECK_PARAMETERS
+      #if defined(MDL_CHECK_PARAMETERS) && defined(MATLAB_MEX_FILE)
+      %<fcnReturns> %<fcnName>(%<fcnParams>)
+      {
+	%foreach sfcnPrmIdx = numTunablePrms
+	  %assign mdlPrm = Parameter[prmIdxVec[sfcnPrmIdx]]
+          %<FcnGenErtSFcnParamChecks(mdlPrm, sfcnPrmIdx)>
+	%endforeach %% sfcnPrmIdx = numTunablePrms
+      }
+      #endif /* MDL_CHECK_PARAMETERS */
+    %endwith %% ModelParameters
+  %endif %% numTunablePrms > 0
+%endfunction %% FcnGenErtSFcnCheckParamsFcn
+
+
+%% Function: FcnGenErtSFcnRunTimePrmReg =======================================
+%% Abstract:
+%%  register data types and run-time parameters for all tunable parameters.
+%% 
+%function FcnGenErtSFcnRunTimePrmReg(numTunablePrms, prmIdxVec, callToLocalFcn) Output
+  %if numTunablePrms > 0
+    %with ModelParameters
+      /* Set number of run-time parameters */
+      if (!ssSetNumRunTimeParams(%<tSimStructArg>, %<numTunablePrms>)) return;
+      
+      %foreach sfcnPrmIdx = numTunablePrms
+        %assign mdlPrm = Parameter[prmIdxVec[sfcnPrmIdx]]
+        %assign prmName = "P%<sfcnPrmIdx>_%<LibGetRecordIdentifier(mdlPrm)>"
+        %assign dtId = mdlPrm.OriginalDataTypeIdx
+	%assign dtStr = ""
+
+        %if !ISEMPTY(mdlPrm.WorkspaceVarName)
+	{
+          %if LibIsBuiltInDataType(dtId)
+            %assign dtStr = LibGetDataTypeEnumFromId(dtId)
+            %%
+          %elseif LibIsEnumDataType(dtId)
+            %assign dtName = LibGetDataTypeNameFromId(dtId)
+            DTypeId dtId = INVALID_DTYPE_ID;
+            ssRegisterTypeFromNamedObject(%<tSimStructArg>, "%<dtName>", &dtId);
+            if(dtId == INVALID_DTYPE_ID) return;
+            %assign dtStr = "dtId"
+          %elseif LibDataTypeIsBus(dtId)
+            %assign dtChecksum = DataTypes.DataType[dtId].StructDtChecksum
+            %assign dtChecksumStr = ...
+              "%<dtChecksum[0]>,%<dtChecksum[1]>,%<dtChecksum[2]>,%<dtChecksum[3]>"
+            uint32_T dtChecksum[4] = {%<dtChecksumStr>};
+            DTypeId dtId = INVALID_DTYPE_ID;
+            ssGetSFcnParamDataType(%<tSimStructArg>, %<sfcnPrmIdx>, &dtId);
+            if(dtId == INVALID_DTYPE_ID) return;
+            ssCheckStructParamChecksum(%<tSimStructArg>, %<sfcnPrmIdx>, dtChecksum);
+            %assign dtStr = "dtId"
+          %endif
+          %%
+          %if !WHITE_SPACE(dtStr)
+            ssRegDlgParamAsRunTimeParam(%<tSimStructArg>, %<sfcnPrmIdx>, %<sfcnPrmIdx>, \
+            "%<prmName>", %<dtStr>);
+          %else
+            %%
+            %assign curDT = FixPt_GetDataTypeFromIndex(dtId)
+            %%
+            %if curDT.IsFixedPoint
+              %assign dtOverride = 0
+              %if FixPt_DataTypeIsFloat(curDT)
+                DTypeId fixptDTId = ssRegisterDataTypeFxpScaledDouble(%<tSimStructArg>, \
+                %<curDT.IsSigned>, %<curDT.RequiredBits>, \
+                (double) %<curDT.FracSlope>, %<curDT.FixedExp>, \
+                (double) %<curDT.Bias>, %<dtOverride>);
+                if (fixptDTId == INVALID_DTYPE_ID) return;
+                ssRegDlgParamAsRunTimeParam(%<tSimStructArg>, %<sfcnPrmIdx>, %<sfcnPrmIdx>, \
+                "%<prmName>", fixptDTId);
+              %else
+                DTypeId fixptDTId = ssRegisterDataTypeFxpFSlopeFixExpBias(%<tSimStructArg>, \
+                %<curDT.IsSigned>, %<curDT.RequiredBits>, \
+                (double) %<curDT.FracSlope>, %<curDT.FixedExp>, \
+                (double) %<curDT.Bias>, %<dtOverride>);
+                if (fixptDTId == INVALID_DTYPE_ID) return;
+                ssRegDlgParamAsRunTimeParam(%<tSimStructArg>, %<sfcnPrmIdx>, %<sfcnPrmIdx>, \
+                "%<prmName>", fixptDTId);
+              %endif
+            %else
+              %assign errTxt = ...
+                "User-defined data types not supported for ERT S-Function parameters."
+              %<LibReportFatalError(errTxt)>
+            %endif
+          %endif
+          if (ssGetErrorStatus(%<tSimStructArg>) != (NULL)) { return; }
+        }
+        %endif
+      %endforeach %% sfcnPrmIdx = numTunablePrms
+      
+      %if !WHITE_SPACE(callToLocalFcn)
+        %<callToLocalFcn>
+      %endif
+    %endwith %% ModelParameters
+  %endif %% numTunablePrms > 0
+%endfunction %% FcnGenErtSFcnRunTimePrmReg
+
+
+%% Function: FcnGenErtSFcnLocalProcessParamsFcn ================================
+%% Abstract:
+%%    Wrapper around CopyRunTimeParamToGlobalVar to copy data from run-time
+%%    parameter to corresponding global variable used in generated code.
+%%
+%function FcnGenErtSFcnLocalProcessParamsFcn(numTunablePrms, prmIdxVec) Output
+  %if numTunablePrms > 0
+    %with ModelParameters
+      
+      %assign fcnName = "updateGlobalVarsFromRunTimeParams"
+      %assign fcnReturns = "static void"
+      %assign fcnParams = "SimStruct *%<tSimStructArg>"
+      %assign fcnAbstract = "Copy parameter values from run-time parameters to global variables."
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+        Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Update"}
+      %<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<fcnReturns> %<fcnName>(%<fcnParams>)
+      {
+	int_T i;
+	%foreach sfcnPrmIdx = numTunablePrms
+	  %assign mdlPrm = Parameter[prmIdxVec[sfcnPrmIdx]]
+	  %assign numOfElements = LibBlockParameterWidth(mdlPrm)
+          %assign ppStuff = SLibDataPreprocessorStuff(mdlPrm)
+          
+	  %<ppStuff[0]>
+	  /* Update parameter '%<LibGetRecordIdentifier(mdlPrm)>' */
+	  
+	  %if numOfElements > 1
+	    for (i=0; i<%<numOfElements>; i++) {
+	      %<CopyRunTimeParamToGlobalVar(mdlPrm, sfcnPrmIdx, "i")>
+	    }
+	  %else
+	    %<CopyRunTimeParamToGlobalVar(mdlPrm, sfcnPrmIdx, "")>
+	  %endif
+	  %<ppStuff[1]>
+	%endforeach %% sfcnPrmIdx = numTunablePrms
+      }
+    %endwith %% ModelParameters
+  %endif %% numTunablePrms > 0
+%endfunction %% FcnGenErtSFcnLocalProcessParamsFcn
+
+
+%% Function: FcnGenErtSFcnProcessParamsFcn =====================================
+%% Abstract:
+%%   Generate mdlProcessParameters function for generated S-Functions
+%%   to update run-time parameter data during simulation.
+%%
+%function FcnGenErtSFcnProcessParamsFcn(numTunablePrms, callToLocalFcn) Output
+  %if numTunablePrms > 0
+    %assign fcnName = "mdlProcessParameters"
+    %assign fcnReturns = "static void"
+    %assign fcnParams = "SimStruct *%<tSimStructArg>"
+    %assign fcnAbstract = "This function updates tunable parameter values during simulation."
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Update"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    #define MDL_PROCESS_PARAMETERS
+    #if defined(MDL_PROCESS_PARAMETERS) && defined(MATLAB_MEX_FILE)
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      ssUpdateAllTunableParamsAsRunTimeParams(%<tSimStructArg>);
+      %if !WHITE_SPACE(callToLocalFcn)
+	%<callToLocalFcn>
+      %endif
+    }
+    #endif /* MDL_PROCESS_PARAMETERS */
+  %endif
+%endfunction %% FcnGenErtSFcnProcessParamsFcn
+
+
+%function FcnConditionRootInputsAsSeparateArgs() void
+  %return SLibFcnProtoCtrlActive() || ...
+    (GenerateClassInterface && !(classConfObj.hasGlobalAccessForInport))
+%endfunction
+
+%function FcnConditionRootOutputsAsSeparateArgs() void
+  %return SLibFcnProtoCtrlActive() || ...
+    (GenerateClassInterface && !(classConfObj.hasGlobalAccessForOutport))
+%endfunction
+
+%% Function: GenErtSFcnParamHandlingFcns ======================================
+%% Abstract:
+%%    The function generates all of the parameter handling functions:
+%%    - mdlCheckParameters:   Check attributes of dialog parameters
+%%    - mdlSetWorkWidths:     Register run-time parameters
+%%    - mdlProcessParameters: Update tunable parameter values
+%%
+%function GenErtSFcnParamHandlingFcns() void
+  %assign result = [0, "", ""]
+
+  %% Create mapping to tunable parameters to be included
+  %assign numTunablePrms = 0
+  %with ModelParameters
+    %if (NumParameters > 0)
+      %assign prmIdxVec = ...
+	Vector(%<NumParameters>) [0:%<NumParameters-1>]
+      %foreach prmIdx = NumParameters
+	%assign mdlPrm = Parameter[prmIdx]
+	%assign origDtypeIdx = mdlPrm.OriginalDataTypeIdx
+        %assign isGetSetStorageClass = (mdlPrm.StorageClass == "Custom") && ...
+                                       (mdlPrm.CustomStorageClassVersion > 1) && ...
+                                       !(LibGetRTWInfoObjectPackage(mdlPrm) == "AUTOSAR")
+        %% We use the WorkspaceVarName field of a mdlPrm to determine if mdlPrm represents a workspace
+        %% variable. For block parameters or a parameter created for a collapsed expression,
+        %% the field WorkspaceVarName is empty.
+        %assign isTunable = (mdlPrm.Tunable == "yes") && !ISEMPTY(mdlPrm.WorkspaceVarName) && ...
+                            (LibIsDataTypeBuiltinOrFixpt(origDtypeIdx) || ...
+                             LibIsEnumDataType(origDtypeIdx) || ...
+                             (LibDataTypeIsBus(origDtypeIdx) && !isGetSetStorageClass))
+	%if isTunable && ...
+          LibBlockParameterWidth(mdlPrm) > 0 && ...
+          !SLibIsModelParamConst(mdlPrm) && ...
+          !SLibIsModelParamMacro(mdlPrm) && ...
+          !SLibIsModelParamFileOrAutoScope(mdlPrm)
+          %assert ((prmIdx < NumInrtP) || (mdlPrm.StorageClass != "Auto") || mdlPrm.InModelRefGlobalSection)
+          %if ((prmIdx < NumInrtP) || (mdlPrm.StorageClass != "Auto") || mdlPrm.InModelRefGlobalSection)
+            %assign prmIdxVec[numTunablePrms] = prmIdx
+            %assign numTunablePrms = numTunablePrms + 1
+          %endif
+        %endif
+      %endforeach
+    %else
+      %assign prmIdxVec = 0
+    %endif
+  %endwith
+
+  %% Generate the functions into a buffer to be returned
+  %if numTunablePrms > 0
+    %assign locProcPrmsFcn = "updateGlobalVarsFromRunTimeParams(%<tSimStructArg>);"
+    %assign origName       = ::CompiledModel.Name
+
+    %% Cache parameter names in variable in global MATLAB workspace
+    %<SLibCreateSfcnTunablePrmWSVariable(origName, numTunablePrms, prmIdxVec)>
+    
+    %assign fcnBuffer = ""
+    %openfile fcnBuffer
+    
+    %% Write out mdlCheckParameters function
+    %<FcnGenErtSFcnCheckParamsFcn(numTunablePrms, prmIdxVec)>
+    
+    %% Write out local process parameters function
+    %<FcnGenErtSFcnLocalProcessParamsFcn(numTunablePrms, prmIdxVec)>
+    
+    %% Write out mdlProcessParameters function
+    %<FcnGenErtSFcnProcessParamsFcn(numTunablePrms, locProcPrmsFcn)>
+    
+    %closefile fcnBuffer
+    
+    %assign mdlWorkWidthBuffer = ""
+    %openfile mdlWorkWidthBuffer
+    
+    %% Write out mdlSetWorkWidths function body
+    %<FcnGenErtSFcnRunTimePrmReg(numTunablePrms, prmIdxVec, locProcPrmsFcn)>
+    
+    %closefile mdlWorkWidthBuffer
+    %assign result[0] = numTunablePrms
+    %assign result[1] = fcnBuffer
+    %assign result[2] = mdlWorkWidthBuffer
+  %endif %% numTunablePrms > 0
+
+  %return result
+%endfunction %% GenErtSFcnParamHandlingFcns
+
+%function FcnErtSfcnDeclareSimStruc() 
+  %openfile retBuf
+  %assign rootSystem = System[NumSystems-1]
+  %assign   reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+    %if !reqInsts.SimStructInst && !EmptyRealTimeObject
+    %<::tSimStructType> *const %<::tSimStruct> = &%<tSimStruct>_;
+  %endif
+  %closefile retBuf
+  
+  %return retBuf
+%endfunction
+
+%% Does the C++ class need ertSfcnZeroInternalMemory function for generating
+%% ERT S-Function?
+%function SLibCPPClassNeedERTSfcnZeroInternalMemory()
+  %assign retVal = TLC_FALSE
+  
+  %if GenerateClassInterface && ::GenerateErtSFunction && ...
+      !(ConfigSet.ZeroInternalMemoryAtStartup)
+    
+    %assign retVal = TLC_TRUE
+  %endif
+
+  %return retVal
+%endfunction %% SLibCPPClassNeedERTSfcnZeroInternalMemory
+
+%% Does the C++ class need ertSfcnZeroIOMemory function for generating
+%% ERT S-Function?
+%function SLibCPPClassNeedERTSfcnZeroIOMemory()
+  %assign retVal = TLC_FALSE
+  
+  %if GenerateClassInterface && ::GenerateErtSFunction && ...
+      (!(ConfigSet.ZeroExternalMemoryAtStartup) && ...
+        (classConfObj.hasGlobalAccessForOutport || ...
+         classConfObj.hasGlobalAccessForInport))
+    
+    %assign retVal = TLC_TRUE
+  %endif
+
+  %return retVal
+%endfunction %% SLibCPPClassNeedERTSfcnZeroIOMemory
+
+
+%% Does the C++ class has/needs a derived class with ertSfcnZeroMemory
+%% method for the ERT S-Function?
+%function SLibCPPClassNeedsDerivedClassWithERTSfcnZeroMem()
+
+  %return GenerateClassInterface && SLibCPPClassNeedSubclass() && ...
+          !(ConfigSet.ZeroExternalMemoryAtStartup)
+        
+%endfunction %% SLibCPPClassHasDerivedClassWithERTSfcnZeroMem
+      
+
+%%Optionally generate local variables for ertZeroMemory for C++ class
+%%generation
+%function GenLocalVariablesForCPPClass()
+  %openfile tempBuf
+    %if GenerateClassInterface && ...
+        ( SLibCPPClassNeedERTSfcnZeroIOMemory() || ...
+          SLibCPPClassNeedERTSfcnZeroInternalMemory() )
+      %assign targetObj =  ::CompiledModel.GlobalScope.tModelObject
+      
+      %if !(ConfigSet.ZeroInternalMemoryAtStartup)
+        %% internal states
+        
+        %if !LibBlockIOStructIsEmpty()
+          %if ConfigSet.GenerateInternalMemberAccessMethods != "None"
+            %<::tBlockIOType> &%<::tBlockIO> = (%<tBlockIOType> &)%<targetObj>.getBlockSignals();
+          %else
+            %<::tBlockIOType> &%<::tBlockIO> = %<targetObj>.%<tBlockIO>;
+          %endif
+        %endif
+        
+        %if NumContStates>0
+          %if ConfigSet.GenerateInternalMemberAccessMethods != "None"
+            %<::tContStateType> &%<::tContState> = (%<tContStateType> &)%<targetObj>.getContinuousStates();
+          %else
+            %<::tContStateType> &%<::tContState> = %<targetObj>.%<tContState>;
+          %endif
+        %endif
+        
+        %if !LibDWorkStructIsEmpty()
+          %if ConfigSet.GenerateInternalMemberAccessMethods != "None"
+            %<::tDWorkType> &%<::tDWork> = (%<tDWorkType> &)%<targetObj>.getDWork();
+          %else
+            %<::tDWorkType> &%<::tDWork> = %<targetObj>.%<tDWork>;
+          %endif
+          %if CPPEncapNeedsLocalVars(TLC_TRUE)
+            %assign cppEncapLocalVars = SLibGetCPPEncapInitLocalVars(TLC_TRUE)
+            %if !WHITE_SPACE(cppEncapLocalVars)
+              %<cppEncapLocalVars>
+            %endif
+          %endif
+        %endif          
+        
+      %endif %%internal states
+      
+      %if !(ConfigSet.ZeroExternalMemoryAtStartup)
+        %assign classConfObj = FcnGetRTWCPPStepPrototypeRecord()
+
+        %% only for void-void case and 'generate i/o access methods' being
+        %% deselected. void-void and 'generate i/o access methods' being
+        %% selected will be handled by using the subclass approach.
+        %if ( classConfObj.hasGlobalAccessForOutport || ...
+              classConfObj.hasGlobalAccessForInport ) && ...
+              (ConfigSet.GenerateExternalIOAccessMethods == "None")
+            %% in this case, rtU/rtY must be public members
+   
+            %if classConfObj.hasGlobalAccessForInport
+              %<::tInputType> &%<::tInput> = %<targetObj>.%<::tInput>;
+            %endif
+            
+            %if classConfObj.hasGlobalAccessForOutport
+              %<::tOutputType> &%<::tOutput> = %<targetObj>.%<::tOutput>;
+            %endif
+
+        %endif
+      %endif %% external I/O
+      
+    %endif %% need zero memory
+  %closefile tempBuf
+  
+  %return tempBuf
+%endfunction %% GenLocalVariablesForCPPClass
+
+%function ERTSfcnGenInitializeConditionCode(origERTInitFcnArg, ROLL_LIMIT)
+  %openfile retBuf
+  
+   %if !GenerateClassInterface
+    %assign modelInitFcn       = GenerateModelInitFcnName()
+    %<modelInitFcn>(%<origERTInitFcnArg>);
+  %else %%in class gen mode
+    %<::CompiledModel.GlobalScope.tModelObject>.initialize();
+  %endif
+
+  %if ExportFunctionsMode == 1 && NumModelOutputs > 0 
+    %% It would be nice if we could selectively
+    %% write out the external outputs as in the 
+    %% case for DumpERTExportedFcnDataRead.
+    %% However, we do not have the map for potential 
+    %% merge'd signals at the system output.
+    /* Initialize block output signals. */
+    %foreach idx = ExternalOutputs.NumExternalOutputs
+      %assign extIdx = idx
+      %openfile tmpVar
+      %<GenerateTmpSFunctionOutputSignalDef(extIdx)>\
+      %closefile tmpVar
+      %<GenerateTmpOutputSignalConditioning(tmpVar, ROLL_LIMIT, extIdx)>\
+    %endforeach
+  %endif
+  %closefile retBuf
+  
+  %return retBuf
+%endfunction
+
+%% ============================================================================
+%% Setup of some common variables
+%%
+%with ::CompiledModel
+
+%assign ROLL_LIMIT         = RollThreshold
+%assign instanceCounter    = "%<Name>_sf_counter"
+
+
+%if CombineOutputUpdateFcns
+  %assign modelStepFcn = SLibModelStepFcnName("")
+%else
+  %assign modelStepFcn = "%<Name>_output"
+%endif
+%assign modelUpdtFcn       = "%<Name>_update"
+%assign modelTermFcn       = "%<Name>_terminate"
+%assign modelRtObject      = "%<Name>_rtO"
+%assign modelEnable        = "%<Name>_enable"
+%assign modelDisable       = "%<Name>_disable"
+%assign modelZeroMemory    = "%<Name>_ertSfcnZeroMemory"
+
+%assign sFunctionName      = "%<Name>_sf"
+%<LibWriteToStandardOutput("### Creating ERT S-Function wrapper %<sFunctionName>.%<LangFileExt>")>
+
+%% ============================================================================
+%% Generate parameter handling buffer
+%%
+%assign prmHandlingInfo     = GenErtSFcnParamHandlingFcns()
+%assign numTunablePrms      = prmHandlingInfo[0]
+%assign prmHandlingBuffer   = prmHandlingInfo[1]
+%assign mdlWorkWidthFcnBody = prmHandlingInfo[2]
+
+%% ===========================================================================
+%% Create the the ERT S-Function wrapper
+%%
+%<SetCurrentUtilsIncludesIdx("ertSfcn_util_incl")>
+
+%openfile ModelSfu = "%<sFunctionName>.%<LangFileExt>"
+/*
+* %<sFunctionName>.%<LangFileExt>
+*
+* This file contains a "wrapper style S-Function" for testing the generated
+* code from Simulink.  Simulink invokes the generated code through its
+* S-Function API.  Note that this file is not required for deployment
+* of the generated code outside of Simulink.
+*
+%<SLibCommonHeaderInfo()>\
+*
+*/
+
+#if !defined(S_FUNCTION_NAME)
+#define S_FUNCTION_NAME %<sFunctionName>
+#endif
+#define S_FUNCTION_LEVEL 2
+/* So mdlEnable and mdlDisable will be defined in the simstruc.h */  
+#if !defined(RTW_GENERATED_S_FUNCTION)
+#define RTW_GENERATED_S_FUNCTION
+#endif
+
+%if ExportFunctionsMode == 1
+  #define S_FUNCTION_EXPORTS_FUNCTION_CALLS
+%endif  
+
+#include <stdio.h>
+#include <math.h>
+
+%% Use rtwtypes.h equivalent signedness for type definition of INT8_T, instead of
+%% tmwtypes.h. This ensures the type is identical and is only needed for the Sfcn
+%% wrapper file which includes simstruc.h.
+%if ::GenCPP && (::RTWTypesStyle == "minimized") 
+  /* Ensure typedef signedness matches rtwtypes.h */
+
+  %assign typeINT8_T   = SLibGetANSICDataTypeFromId(tSS_INT8)
+
+  %if !ISEMPTY(typeINT8_T)
+    #define INT8_T %<typeINT8_T>
+  %endif
+%endif %%GenCPP
+
+/* Remove defines that are incompatible with mex compilation */
+#undef MT
+#undef RT
+#undef USE_RTMODEL
+
+/* For compatibility with packngo, MATLAB_MEX_FILE must always be defined */
+#ifndef MATLAB_MEX_FILE
+#define MATLAB_MEX_FILE
+#endif
+
+#include "simstruc.h"
+#include "fixedpoint.h"
+#include "rtwtypes_sf.h"
+
+#define rt_logging_h
+#define RTWSfcnInfo void *
+
+%% The followin static declaration is necessary to direct the compiler
+%% not to treat the friend function declaration in the generated class,
+%% if applicable, as an 'extern' function.
+%if GenerateClassInterface && SLibCPPClassNeedSubclass() 
+static void mdlOutputs(SimStruct *%<tSimStructArg>, int_T %<::CompiledModel.GlobalScope.tTID>);
+static void mdlStart(SimStruct *%<tSimStructArg>);
+%endif
+
+#include "%<Name>.h"
+%%
+%% Include ERT S-Function header file if it was generated.
+%%
+%assign ertSFcnFile = SLibDoesModelFileExist("SystemHeader", sFunctionName)
+%if (TYPE(ertSFcnFile) == "Scope")
+  #include "%<sFunctionName>.h"
+%endif
+%%
+%<SLibDeclareModelFcnArgs(TLC_TRUE)>\
+%%
+%<DumpImportedExternalSignalDeclaration()>
+%%
+%<DumpImportedExternalParameterDeclaration()>
+%%
+
+%if EXISTS(::NamespaceName) && (::NamespaceName != "") 
+  using namespace %<::NamespaceName>;
+%endif
+  
+static int8_T %<instanceCounter> = 0;
+
+%if GenerateClassInterface && SLibCPPClassNeedSubclass()
+  class %<theClassName>_sf : public %<theClassName> {
+    friend void mdlOutputs(SimStruct *, int_T);
+    friend void mdlStart(SimStruct *);
+    %if !(ConfigSet.ZeroExternalMemoryAtStartup)
+      public:
+        void ertSfcnZeroMemory(void);
+    %endif
+  };
+%endif
+    
+%if GenerateClassInterface
+  %if !SLibCPPClassNeedSubclass()
+    static %<theClassName> %<::CompiledModel.GlobalScope.tModelObject>;
+  %else
+    static %<theClassName>_sf %<::CompiledModel.GlobalScope.tModelObject>;
+  %endif
+  
+  %assign reqInsts = LibGetSystemField(rootSystem, "ReqRootPrmHdrDataInsts")
+  %if !reqInsts.ParamsInst && ...
+      !SLibPrmBufferIsEmpty("SimulinkGlobal", "Instance")
+      %if ConfigSet.ParameterMemberVisibility == "private" || ...
+          ConfigSet.ParameterMemberVisibility == "protected" 
+        static %<::tParametersType>& %<::tParameters> = const_cast<%<tParametersType>&>(%<::CompiledModel.GlobalScope.tModelObject>.getBlockParameters());
+      %else
+        static %<::tParametersType>& %<::tParameters> = %<::CompiledModel.GlobalScope.tModelObject>.%<tParameters>;
+      %endif
+  %endif
+%endif
+
+%if FcnConditionRootInputsAsSeparateArgs()
+  %foreach idx = ExternalInputs.NumExternalInputs
+    %assign extInp = ExternalInputs.ExternalInput[idx]
+    %assign portWidth = LibGetRecordWidth(extInp)
+    %if portWidth > 1
+      %assign coll = "[%<portWidth>]"
+    %else
+      %assign coll = ""
+    %endif
+    static %<LibGetRecordDataTypeName(extInp, "")> localIn%<idx>%<coll>;
+  %endforeach%%NumInports
+%endif
+
+%if FcnConditionRootOutputsAsSeparateArgs()
+  %foreach idx =  ExternalOutputs.NumExternalOutputs
+    %assign extOutp = ExternalOutputs.ExternalOutput[idx]
+    %assign portWidth = LibGetRecordWidth(extOutp)
+    %assign sysIdx       = extOutp.Block[0]
+    %assign blkIdx       = extOutp.Block[1]
+    %assign outportBlock = System[sysIdx].Block[blkIdx]
+    %if portWidth > 1
+      %assign coll = "[%<portWidth>]"
+    %else
+      %assign coll = ""
+    %endif
+    static %<LibGetRecordDataTypeName(extOutp, "")> localOut%<idx>%<coll>;
+  %endforeach %% NumOutports
+%endif%%  SLibFcnProtoCtrlActive()
+
+%% 
+%%
+%% ERT sfucntion dump Zero Initialization code that is optimized out
+%% in ERT production code
+%%
+%% After generate zero initialization code, arg list of Initialize 
+%% function will change. ERT Sfunction need use original arg list 
+%% while calling ERT Initlize Fcn. Need save original ERT Initialize
+%% function arg list here
+%%
+%assign origERTInitFcnArg = SLibModelFcnArgs("Initialize",TLC_TRUE,"")
+%assign ertSfcnNeedZeroInitialization = TLC_FALSE
+%if (!ZeroExternalMemoryAtStartup || !ZeroInternalMemoryAtStartup)
+  %assign ::GenerateInitCodeRemoved = TLC_TRUE  
+  %%
+  %% Initialize real-time object
+  %%
+  %openfile tmpBuf2
+  %if RealTimeModelAccessed && SLibZeroMemory("RTM")
+    %assign baseSysIdx = GetBaseSystemIdx()
+    /* initialize real-time model */
+    %if !GenerateClassInterface
+      %if !MultiInstanceERTCode || UsingMalloc || SLibUseBackwardCompatibleReusableInterface()
+        (void) %<LibGenMemFcnCall("memset", "(void *)%<::tSimStruct>", ...
+          "0", "sizeof(%<::tSimStructType>)")>;
+      %endif
+    %else
+      (void) %<LibGenMemFcnCall("memset", ...
+        "(void *)%<::CompiledModel.GlobalScope.tModelObject>.getRTM()", ...
+        "0", "sizeof(%<::tSimStructType>)")>;
+    %endif
+    %%%<LibAccessArg(::CompiledModel.System[baseSysIdx].Interface.RTMArgDef)>
+  %endif
+  %closefile tmpBuf2
+  
+  %assign ::BlockFcn = "Initialize" 
+  %assign tmpBuf = SLibDumpERTAndModelrefInitMemoryCode(TLC_TRUE, TLC_TRUE, 1)
+  %assign ::GenerateInitCodeRemoved = TLC_FALSE
+
+  %if GenerateClassInterface
+    %if SLibCPPClassNeedsDerivedClassWithERTSfcnZeroMem()
+      %% This method in the derived class only initialize External I/O memory
+      %% when needed.
+      %assign fcnName = "%<theClassName>_sf::ertSfcnZeroMemory"
+      %assign fcnReturns = "void"
+      %assign fcnParams = "void"
+      %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+        Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Initialize"}
+      %<SLibDumpFunctionBanner(fcnRec)>
+      %undef fcnRec
+      %<fcnReturns> %<fcnName>(%<fcnParams>) {
+        %openfile tmpBufRtUY
+        %% This call covers external input structure (i.e. with internal storage),
+        %% and external inputs with external storage
+        %<SLibInitExternalInputs(1,FcnConditionRootInputsAsSeparateArgs(),1)>\
+        
+        %% This call covers external output structure (i.e. with internal storage),
+        %% not including external outputs with external storage (which should
+        %% already be covered by Block IO)
+        %<SLibInitExternalOutputs(1,FcnConditionRootOutputsAsSeparateArgs(),1)>\
+        %closefile tmpBufRtUY
+
+        %if !WHITE_SPACE(tmpBufRtUY)
+          %<tmpBufRtUY>          
+        %endif
+      }
+    %endif
+  %endif
+
+  %assign ::BlockFcn = "Unknown"
+  
+  %if !WHITE_SPACE(tmpBuf) || !WHITE_SPACE(tmpBuf2)
+  
+    %<LibDumpGroundDeclarations(1)>
+    %assign fcnName = modelZeroMemory
+    %assign fcnReturns = "static void"
+    %assign fcnParams = "%<SLibModelFcnArgs("Initialize",TLC_FALSE,"")>"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+      Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Initialize"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>) {
+      %openfile localVariables
+      %if (MultiInstanceERTCode || ::CompiledModel.ModelRefSimpInterface)&& !GenerateClassInterface
+        %<SLibDumpLocalVariablesForBlockFcn(System[NumSystems-1],"Initialize")>
+      %endif
+      %closefile localVariables
+      %if !WHITE_SPACE(localVariables)
+        %<localVariables>
+      %endif
+      
+      %if GenerateClassInterface
+        %assign localVarBuf = GenLocalVariablesForCPPClass()
+        %if !ISEMPTY(localVarBuf)
+          %<localVarBuf>
+        %endif
+      %endif
+      
+      %<tmpBuf2>
+      %if !GenerateClassInterface
+        %<tmpBuf>
+      %else
+        %if SLibCPPClassNeedSubclass() && ...
+            !(ConfigSet.ZeroExternalMemoryAtStartup)
+          %<::CompiledModel.GlobalScope.tModelObject>.ertSfcnZeroMemory();
+        %endif
+        %if CPPEncapNeedsLocalVars(TLC_TRUE)
+          %% Cache the refmdl object pointers stored in DWork before
+          %% they get Zeroed out.
+          %assign cppEncapCopyCode = SLibGetCPPEncapInitCopyCode(TLC_TRUE, TLC_TRUE)
+          %if !WHITE_SPACE(cppEncapCopyCode)
+            %<cppEncapCopyCode>
+          %endif
+        %endif
+        
+        %<tmpBuf>
+        
+        %if CPPEncapNeedsLocalVars(TLC_TRUE)
+          %% Restore the refmdl object pointers after the DWork has been
+          %% Zeroed out
+          %assign cppEncapRestoreCode = SLibGetCPPEncapInitCopyCode(TLC_FALSE, TLC_TRUE)
+          %if !WHITE_SPACE(cppEncapRestoreCode)
+            %<cppEncapRestoreCode>
+          %endif
+        %endif
+      %endif
+    }
+    %assign ertSfcnNeedZeroInitialization = TLC_TRUE
+  %endif
+%endif
+%%
+%assign rootSystem = System[NumSystems-1]
+%%
+%if numTunablePrms > 0
+  %<prmHandlingBuffer>\
+%endif
+
+%% ============================================================================
+%% Generate wrappers for exported functions
+%%
+
+%% Function: GetERTExportedFcnArgEl ===========================================
+%% Abstract:
+%%   Returns either 'el' or 'elt', whichever doesn't coincide with the
+%%   given original name. The returned value is used as the argument name
+%%   in the exported function wrapper.
+%%
+%function GetERTExportedFcnArgEl(origName) void
+  %assign argEl = "ssEl"
+  %if origName == argEl
+    %assign argEl = "ssElt"
+  %endif
+  %return argEl
+%endfunction
+
+%% Function: GetERTExportedFcnArgEl ===========================================
+%% Abstract:
+%%   Returns either 'tid' or 'taskId', whichever doesn't coincide with the
+%%   given original name. The returned value is used as the argument name
+%%   in the exported function wrapper.
+%%
+%function GetERTExportedFcnArgTid(origName) void
+  %assign argTid = "ssTid"
+  %if origName == argTid
+    %assign argTid = "ssTaskId"
+  %endif
+  %return argTid  
+%endfunction
+  
+%% Function: DumpERTExportedFcns ==============================================
+%% Abstract:
+%%   If this is an S-Function which exports function calls, then this
+%%   utility is called to dump the exported output, enable and disable
+%%   functions.
+%% Returns:
+%%   ssFcnCallErr_T mdlExportedOutputFcn0(SimStruct *%<tSimStructArg>, int_T el, int_T tid)
+%%   {
+%%      ...
+%%   }
+%%
+%function DumpERTExportedFcns(sysId, ROLL_LIMIT) Output
+  %assign driverPortIdx = System[sysId].ExportedId - 1
+  %assign fcallSysId = sysId
+  
+  %% Emit the exported enable function, if needed.
+  %if !LibSystemFcnIsEmpty(System[sysId],"Enable")
+    %openfile fcnAbstract
+This function is a wrapper around the 'enable' function for system
+'%<LibGetRecordIdentifier(System[sysId])>'.  This function is explicitly called
+by the function-call initiator which drives input port '%<driverPortIdx>'
+of this S-Function.
+    %closefile fcnAbstract
+    %assign argEl = GetERTExportedFcnArgEl(System[sysId].EnableFcn)
+    %assign argTid = GetERTExportedFcnArgTid(System[sysId].EnableFcn)
+    %assign fcnName = "mdlExportedEnableFcn%<driverPortIdx>"
+    %assign fcnReturns = "static ssFcnCallErr_T"
+    %assign fcnParams = "SimStruct *%<tSimStructArg>, int_T %<argEl>, int_T %<argTid>"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Exported Enable";...
+      GeneratedFor "%<LibGetRecordIdentifier(System[sysId])>"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      /* Reserved arguments. */
+      (void)%<argEl>;
+      (void)%<argTid>;
+      
+      /* Enable function for system '%<LibGetRecordIdentifier(System[sysId])>'. */
+      %<System[sysId].EnableFcn>();
+
+      /* Default return status. */
+      return(SS_FCNCALL_NO_ERR);
+    }
+  %endif
+  %% Emit the exported disable function, if needed.
+  %if !LibSystemFcnIsEmpty(System[sysId],"Disable")
+    %openfile fcnAbstract
+This function is a wrapper around the 'disable' function for system
+'%<LibGetRecordIdentifier(System[sysId])>'.  This function is explicitly called
+by the function-call initiator which drives input port '%<driverPortIdx>'
+of this S-Function.
+    %closefile fcnAbstract
+    %assign argEl = GetERTExportedFcnArgEl(System[sysId].DisableFcn)
+    %assign argTid = GetERTExportedFcnArgTid(System[sysId].DisableFcn)
+    %assign fcnName = "mdlExportedDisableFcn%<driverPortIdx>"
+    %assign fcnReturns = "static ssFcnCallErr_T"
+    %assign fcnParams = "SimStruct *%<tSimStructArg>, int_T %<argEl>, int_T %<argTid>"
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+      Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Exported Disable"; ...
+      GeneratedFor "%<LibGetRecordIdentifier(System[sysId])>"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<fcnReturns> %<fcnName>(%<fcnParams>)
+    {
+      /* Reserved arguments. */
+      (void)%<argEl>;
+      (void)%<argTid>;
+
+      %<DumpERTExportedFcnDataRead(fcallSysId, ROLL_LIMIT)>
+      /* Disable function for system '%<LibGetRecordIdentifier(System[sysId])>'. */
+      %<System[sysId].DisableFcn>();
+      %<DumpERTExportedFcnDataWrite(fcallSysId, ROLL_LIMIT)>
+      /* Default return status. */
+      return(SS_FCNCALL_NO_ERR);
+    }
+  %endif  
+  %% Finally, emit the exported output-update function, which must exist.
+  %openfile fcnAbstract
+  This function is a wrapper around the 'output-update' function for
+system '%<LibGetRecordIdentifier(System[sysId])>'.  This function is explicitly called
+by the function-call initiator which drives input port '%<driverPortIdx>' 
+of this S-Function.
+  %closefile fcnAbstract
+  %assign argEl = GetERTExportedFcnArgEl(LibGetRecordIdentifier(System[sysId]))
+  %assign argTid = GetERTExportedFcnArgTid(LibGetRecordIdentifier(System[sysId]))
+  %assign fcnName = "mdlExportedOutputFcn%<driverPortIdx>"
+  %assign fcnReturns = "static ssFcnCallErr_T"
+  %assign fcnParams = "SimStruct *%<tSimStructArg>, int_T %<argEl>, int_T %<argTid>"
+  %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+    Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Exported OutputUpdate";...
+    GeneratedFor "'%<LibGetRecordIdentifier(System[sysId])>"}
+  %<SLibDumpFunctionBanner(fcnRec)>
+  %undef fcnRec
+  %<fcnReturns> %<fcnName>(%<fcnParams>)
+   {
+      /* Reserved arguments. */
+      (void)%<argEl>;
+      (void)%<argTid>;
+
+      %<DumpERTExportedFcnDataRead(fcallSysId, ROLL_LIMIT)>
+      %if !LibSystemFcnIsEmpty(System[sysId],"OutputUpdate")
+        /* Output-update function for system '%<LibGetRecordIdentifier(System[sysId])>'. */
+        %<System[sysId].OutputUpdateFcn>();
+      %else
+        /* (Output-update function for system '%<LibGetRecordIdentifier(System[sysId])>' is empty.) */
+      %endif      
+      %<DumpERTExportedFcnDataWrite(fcallSysId, ROLL_LIMIT)>
+      /* Default return status. */
+      return(SS_FCNCALL_NO_ERR);
+    }
+%endfunction
+
+%function DumpERTExportedFcnDataRead(sysId, ROLL_LIMIT) Output
+  %openfile declBuffer
+  %if NumModelInputs > 0 && ...
+    ISFIELD(System[sysId], "ExternalInputs")
+    %foreach idx = SIZE(System[sysId].ExternalInputs, 1)
+      %assign extIdx = System[sysId].ExternalInputs[idx]
+      %openfile tmpVar
+      %<GenerateTmpSFunctionInputSignalDef(extIdx)>\
+      %closefile tmpVar
+      %<GenerateTmpInputSignalConditioning(tmpVar, ROLL_LIMIT, extIdx)>\
+    %endforeach
+  %endif
+  
+  %assign currBlockFcn = ::BlockFcn
+  %assign ::BlockFcn = "SFunctionOutputs"
+  %<SLibGenDataStoreReads("%<tSimStructArg>")>
+  %assign ::BlockFcn = currBlockFcn  
+  %closefile declBuffer
+  
+  %if !WHITE_SPACE(declBuffer)
+    /* Update input variables for system '%<LibGetRecordIdentifier(System[sysId])>'. */
+    %<declBuffer>
+  %endif
+%endfunction
+
+%function DumpERTExportedFcnDataWrite(sysId, ROLL_LIMIT) Output
+  %openfile declBuffer
+  %if NumModelOutputs > 0 && ...
+    ISFIELD(System[sysId], "ExternalOutputs")
+    %% It would be nice if we could selectively
+    %% write out the external outputs as in the 
+    %% case for DumpERTExportedFcnDataRead.
+    %% However, we do not have the map for potential 
+    %% merge'd signals at the system output.
+    %foreach idx = SIZE(System[sysId].ExternalOutputs, 1)
+      %assign extIdx = System[sysId].ExternalOutputs[idx]
+      %openfile tmpVar
+      %<GenerateTmpSFunctionOutputSignalDef(extIdx)>\
+      %closefile tmpVar
+      %<GenerateTmpOutputSignalConditioning(tmpVar, ROLL_LIMIT, extIdx)>\
+    %endforeach
+  %endif
+  
+  %assign currBlockFcn = ::BlockFcn
+  %assign ::BlockFcn = "SFunctionOutputs"
+  %<SLibGenDataStoreWrites(tSimStructArg)>
+  %assign ::BlockFcn = currBlockFcn
+  %closefile declBuffer
+  
+  %if !WHITE_SPACE(declBuffer)
+    /* Update block output for this S-Function. */
+    %<declBuffer>
+  %endif
+%endfunction
+
+
+%function FcnCompareDataTypeChecksums() Output
+  %openfile compareBuffer
+  %foreach dtIdx = ::CompiledModel.DataTypes.NumDataTypes
+    %assign dt = ::CompiledModel.DataTypes.DataType[dtIdx]
+    %if ISFIELD(dt, "Checksum")
+      %if dt.Checksum[0] > 0 || dt.Checksum[1] > 0 || dt.Checksum[2] > 0 || dt.Checksum[3] > 0
+        ssCallGetDataTypeChecksum(%<tSimStructArg>, "%<dt.Name>", &checksumVals);
+        %% g947942: if ssCallGetDataTypeChecksum fails, the error is implicitly 
+        %% assigned to the SimStruct and checksumVals is set to NULL
+        if ((checksumVals != NULL) && (checksumVals[0] != %<dt.Checksum[0]> ||
+             checksumVals[1] != %<dt.Checksum[1]> ||
+             checksumVals[2] != %<dt.Checksum[2]> ||
+             checksumVals[3] != %<dt.Checksum[3]>)) {
+           ssSetErrorStatus(%<tSimStructArg>, "The definition of the data type "
+              "'%<dt.Name>' has been updated since this S-Function was "
+              "generated; regenerate this S-Function.");
+           return;        
+        }
+      %endif
+    %endif
+  %endforeach  
+  %closefile compareBuffer
+
+  %if !WHITE_SPACE(compareBuffer)
+    /* Validate checksums for user-defined data types used by this S-Function. */
+    {
+      const uint32_T *checksumVals;
+      %<compareBuffer>
+    }
+  %endif
+%endfunction
+
+%if ExportFunctionsMode == 1
+  %assign rootSystem = System[NumSystems-1]
+  %foreach id = rootSystem.NumChildSystems
+    %assign systemId = rootSystem.ChildSystems[id][0]
+    %assign system = System[systemId]
+    %if system.Type == "function-call" && system.Exported == "yes"
+      %<DumpERTExportedFcns(systemId,ROLL_LIMIT)>
+    %endif
+  %endforeach
+%endif
+
+%assign fcnName = "mdlInitializeSizes"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<tSimStructArg>"
+%openfile fcnAbstract
+This function registers the input and output signal properties of the
+generated ERT code.
+%closefile fcnAbstract
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Initialize"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>)
+{  
+  /* Tunable Parameters */
+  ssSetNumSFcnParams(%<tSimStructArg>, %<numTunablePrms>);
+
+  %% Be U32Bit Region Compliant
+  %% If the generated S-Function calls published fixedpoint API functions 
+  %% to handle 33+ fixed point data, it must call set this flat to be 
+  %% U32BitRegionCompliant.
+  ssFxpSetU32BitRegionCompliant(%<tSimStructArg>, 1);
+  /* Number of expected parameters */
+  if (ssGetNumSFcnParams(%<tSimStructArg>) == ssGetSFcnParamsCount(%<tSimStructArg>)) {
+    #if defined(MDL_CHECK_PARAMETERS)
+    mdlCheckParameters(%<tSimStructArg>);
+    #endif /* MDL_CHECK_PARAMETERS */
+    if (ssGetErrorStatus(%<tSimStructArg>) != %<SLibGetNullDefinitionFromTfl()>) {
+      return;
+    }
+  } else {
+    return; /* Parameter mismatch will be reported by Simulink */
+  }
+  
+  ssSetNumContStates(%<tSimStructArg>, 0);
+  ssSetNumDiscStates(%<tSimStructArg>, 0);
+    
+  ssSetRTWGeneratedSFcn(%<tSimStructArg>, 3);
+  
+  %%
+  %% Register data-store accesses
+  %%
+  %<SLibRegisterDataStores(tSimStructArg)>
+  
+  %% Create and initialize an array to track what TIDs are associated
+  %% with ports. Each time a TID is associated with a port it is
+  %% expected that the relative IsSampleTimeOnPort element should be
+  %% set to 1. These associations are made within the functions: 
+  %% DumpErtSFcnExternalInputs DumpErtSFcnExternalOutputs
+  %%
+  %assign localISTParray = []
+  %foreach idx = ::CompiledModel.NumSampleTimes
+    %assign localISTParray = localISTParray + 1
+    %assign localISTParray[idx]=0
+  %endforeach
+  %addtorecord ::CompiledModel IsSampleTimeOnPort localISTParray
+  %<DumpErtSFcnExternalInputs()>
+  %<DumpErtSFcnExternalOutputs()>
+  
+  %%
+  %% Create a boolean result from the IsSampleTimeOnPort array
+  %assign AllSampleTimesOnPorts = TLC_TRUE
+  %foreach idx = ::CompiledModel.NumRuntimeExportedRates
+    %if !::CompiledModel.IsSampleTimeOnPort[idx]
+      %assign AllSampleTimesOnPorts = TLC_FALSE
+      %break
+    %endif
+  %endforeach
+  %%
+  
+  %assign NeedConstantST = TLC_FALSE
+  %% Export function assume all outport/inport inherit sample time, 
+  %% No need to explicity set constant st at outport. 
+  %if ExportFunctionsMode != 1 && ExternalOutputs.NumExternalOutputs > 1 
+    %foreach idx = ExternalOutputs.NumExternalOutputs
+      %assign extOut       = ExternalOutputs.ExternalOutput[idx]
+      %assign sysIdx       = extOut.Block[0]
+      %assign blkIdx       = extOut.Block[1]
+      %assign outportBlock = System[sysIdx].Block[blkIdx]
+      %if ISEQUAL(outportBlock.TID,"constant")
+        %assign NeedConstantST = TLC_TRUE
+        %break
+      %endif
+    %endforeach
+  %endif
+  
+  %if %<ConfigSet.NoFixptDivByZeroProtection>
+    %assign ss_option_str = ""
+  %else
+    %assign ss_option_str = "SS_OPTION_EXCEPTION_FREE_CODE"
+  %endif
+  %if NumRuntimeExportedRates > 1 || NeedConstantST
+    %if AllSampleTimesOnPorts
+      /*
+      * All sample times are available through ports.
+      * Use port based sample times 
+      */
+      ssSetNumSampleTimes(%<tSimStructArg>, PORT_BASED_SAMPLE_TIMES);
+    %else
+      /* Using hybrid block and port based sample times */
+      ssSetNumSampleTimes
+      (%<tSimStructArg>, %<NumRuntimeExportedRates>);
+      %if !ISEMPTY(ss_option_str)
+        %assign ss_option_str = "%<ss_option_str> | "
+      %endif
+      %assign ss_option_str = "%<ss_option_str>SS_OPTION_PORT_SAMPLE_TIMES_ASSIGNED"
+    %endif
+    %if NeedConstantST
+      %if !ISEMPTY(ss_option_str)
+        %assign ss_option_str = "%<ss_option_str> | "
+      %endif
+      %assign ss_option_str = "%<ss_option_str>SS_OPTION_ALLOW_CONSTANT_PORT_SAMPLE_TIME"
+    %endif
+    %%
+  %else
+    /* Number of sample-times */
+    ssSetNumSampleTimes(%<tSimStructArg>, %<NumRuntimeExportedRates>);
+  %endif
+  ssSetNumRWork(%<tSimStructArg>, 0);
+  ssSetNumIWork(%<tSimStructArg>, 0);
+  ssSetNumPWork(%<tSimStructArg>, 0);
+  ssSetNumModes(%<tSimStructArg>, 0);
+  ssSetNumNonsampledZCs(%<tSimStructArg>, 0);
+  
+  /* ERT S-Function works with model reference normal mode */
+  ssSetModelReferenceNormalModeSupport(%<tSimStructArg>, MDL_START_AND_MDL_PROCESS_PARAMS_OK);
+
+  %if AllSampleTimesInherited == "yes"
+    /* ERT S-Function works with model sample time inheritance */
+    ssSetModelReferenceSampleTimeDefaultInheritance(%<tSimStructArg>);
+  %endif
+    
+  %% Disallow constant sample time if the S-Function have access to Wrapper
+  %% DWorks, or has inherited sample times and dworks
+  %if ::CompiledModel.DWorks.NumSFcnWrapperDWorks > 0 || ...
+    (AllSampleTimesInherited == "yes" && ::CompiledModel.DWorks.NumDWorks > 0)
+    %if !ISEMPTY(ss_option_str)
+      %assign ss_option_str = "%<ss_option_str> | "
+    %endif
+    %assign ss_option_str = "%<ss_option_str>SS_OPTION_DISALLOW_CONSTANT_SAMPLE_TIME"
+  %endif
+  %if !ISEMPTY(ss_option_str)
+    /* Set SS_OPTIONS */
+    ssSetOptions(%<tSimStructArg>, %<ss_option_str>);
+  %endif
+  %if AllSampleTimesInherited == "yes"
+    ssSetModelReferenceSampleTimeInheritanceRule(%<tSimStructArg>, USE_DEFAULT_FOR_DISCRETE_INHERITANCE);
+  %endif
+}
+
+%assign fcnName = "mdlInitializeSampleTimes"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<tSimStructArg>"
+%assign fcnAbstract = "This function registers the sample times of the generated ERT code."
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Initialize"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>)
+{
+  %if AllSampleTimesInherited == "yes" || ExportFunctionsMode == 1
+    ssSetSampleTime(%<tSimStructArg>, 0, -1);
+  %else
+    %foreach idx = NumRuntimeExportedRates
+      %assign tid        = SampleTime[idx].TID
+      %assign sampleTime = SampleTime[idx].PeriodAndOffset[0]
+      %assign offset     = SampleTime[idx].PeriodAndOffset[1]
+      ssSetSampleTime(%<tSimStructArg>, %<tid>, %<sampleTime>);
+      ssSetOffsetTime(%<tSimStructArg>, %<tid>, %<offset>);
+    %endforeach
+  %endif
+}
+
+%assign genWrapperDWorks = ::CompiledModel.DWorks.NumSFcnWrapperDWorks > 0
+
+%assign fcnName = "mdlSetWorkWidths"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<tSimStructArg>"
+%assign fcnAbstract = "This function registers run-time parameters for tunable parameters."
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Initialize"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+#define MDL_SET_WORK_WIDTHS
+#if defined(MDL_SET_WORK_WIDTHS) && defined(MATLAB_MEX_FILE)
+%<fcnReturns> %<fcnName>(%<fcnParams>)
+{
+  %if numTunablePrms > 0
+    %<mdlWorkWidthFcnBody>
+    
+  %endif  
+  %if genWrapperDWorks
+    %<SLibGenDataStoreChecks("%<tSimStructArg>")>
+    
+  %endif
+
+  %%
+  %% Compare checksums of user-defined datatypes
+  %%
+  %<FcnCompareDataTypeChecksums()>
+  
+}
+#endif /* MDL_SET_WORK_WIDTHS */
+
+%if !SLibMdlEnableDisablePermitted()
+static boolean_T      enable_first_entry;
+%endif
+
+%assign fcnName = "mdlStart"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<tSimStructArg>" 
+%openfile fcnAbstract
+  This function does sfunction consistent check, initializes internal memory if neccessary, and 
+  calls the initialization function of the generated ERT code.
+%closefile fcnAbstract
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Start"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+#define MDL_START  /* Change to #undef to remove function */
+#if defined(MDL_START) 
+%<fcnReturns> %<fcnName>(%<fcnParams>)
+{
+  %assign currBlockFcn = ::BlockFcn
+  %assign currSystemFcn = ::SystemFcnsForArgAccess
+  %assign ::BlockFcn = "SFunctionStart"
+  %assign ::SystemFcnsForArgAccess = ::BlockFcn
+  
+  %if NumModelOutputs > 0 
+    %foreach idx = ExternalOutputs.NumExternalOutputs
+      %<GenerateSFunctionOutputSignalDefinition("OutPort_",idx)>
+    %endforeach
+  %endif
+  %if !GenerateClassInterface
+    %<FcnErtSfcnDeclareSimStruc()>
+  %endif
+ 
+  /* check if more than one instance of this S-Function has been used */
+  if (++%<instanceCounter> > 1) {
+    ssSetErrorStatus(%<tSimStructArg>,"This S-Function is limited to one copy per model.");
+    %<instanceCounter> = 0;
+    return;
+  }
+  /* check if parent model's start time is the same as that used to generate code */
+  if (ssGetTStart(%<tSimStructArg>) != %<::CompiledModel.StartTime>) {
+    ssSetErrorStatus(%<tSimStructArg>,"The parent model of this S-Function must set the value of the 'Start time' on the Solver page of its Configuration Parameters Dialog to %<::CompiledModel.StartTime> since that was the value used when generating code for the S-Function's original model.");
+    return;
+  }
+  %<SLibGenerateSolverChecks("%<tSimStructArg>")>
+%if !SLibMdlEnableDisablePermitted()
+  enable_first_entry = %<GET_TYPE_ID_REPLACEMENT("true")>;
+%endif
+
+
+#ifdef PIL_S_FUNCTION
+  pilMarshallInitSFcnSimStruct(%<tSimStructArg>);
+  pilMarshallInitRootSimStruct(ssGetRootSS(%<tSimStructArg>));
+#endif
+
+%% Pack model data into RTM
+%<FcnPackModelDataIntoRTM()> 
+
+%if ertSfcnNeedZeroInitialization
+  %<modelZeroMemory>(%<SLibModelFcnArgs("Initialize",TLC_TRUE,"")>);
+%endif
+
+%<ERTSfcnGenInitializeConditionCode(origERTInitFcnArg,ROLL_LIMIT)>
+%%
+%% Notice that the outport name prefix must be the same as used for
+%% the GenerateSFunctionOutputSignalDefinition function.
+%if NumModelOutputs > 0 
+  %foreach idx = ExternalOutputs.NumExternalOutputs     
+    %<GenerateOutputSignalConditioning("OutPort_", ROLL_LIMIT,idx)>
+  %endforeach
+%endif
+%assign ::BlockFcn = currBlockFcn
+%assign ::SystemFcnsForArgAccess = currSystemFcn
+}
+#endif /*  MDL_START */
+
+
+#define MDL_INITIALIZE_CONDITIONS
+%assign fcnName = "mdlInitializeConditions"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<tSimStructArg>"
+%openfile fcnAbstract
+%if SLibMdlEnableDisablePermitted()
+  This function calls the initialization function of the generated ERT
+  code.
+%else
+  Nothing runs in this function 
+%endif
+%closefile fcnAbstract
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Initialize"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>)
+{
+  %if SLibMdlEnableDisablePermitted()
+    %<ERTSfcnGenInitializeConditionCode(origERTInitFcnArg,ROLL_LIMIT)>
+  %endif
+ 
+}
+
+
+%if ExportFunctionsMode != 1
+  %assign fcnName = "mdlOutputs"
+  %assign fcnReturns = "static void"
+  %assign fcnParams = "SimStruct *%<tSimStructArg>, int_T %<::CompiledModel.GlobalScope.tTID>"
+  %openfile fcnAbstract
+This function calls the step function of the generated ERT code
+and provides an interface with the simulation data.
+ %closefile fcnAbstract
+ %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+   Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Output"}
+ %<SLibDumpFunctionBanner(fcnRec)>
+ %undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>)
+{  
+%assign currBlockFcn = ::BlockFcn
+%assign currSystemFcn = ::SystemFcnsForArgAccess
+%assign ::BlockFcn = "SFunctionOutputs"
+%assign ::SystemFcnsForArgAccess = ::BlockFcn
+%%
+%if NumModelInputs > 0
+  %foreach idx = ExternalInputs.NumExternalInputs
+    %<GenerateSFunctionInputSignalDefinition("InPort_",idx)>
+  %endforeach
+%endif
+%if NumModelOutputs > 0
+  %foreach idx = ExternalOutputs.NumExternalOutputs
+    %<GenerateSFunctionOutputSignalDefinition("OutPort_",idx)>
+  %endforeach
+%endif
+
+%if !GenerateClassInterface
+  %<FcnErtSfcnDeclareSimStruc()>
+%endif
+
+%% Notice that the inport name prefix must be the same as used for
+%% the GenerateSFunctionInputSignalDefinition function.
+%if NumModelInputs > 0
+  %foreach idx = ExternalInputs.NumExternalInputs
+    %<GenerateInputSignalConditioning("InPort_", ROLL_LIMIT,idx)>
+  %endforeach
+%endif
+
+%<SLibGenDataStoreReads("%<tSimStructArg>")>
+
+%assign localTid = ""
+%assign mdlTid01Eq  = ISEQUAL(SolverType, "FixedStep") && ...
+  FixedStepOpts.TID01EQ
+%assign mdlAllTidEq = NumRuntimeExportedRates == 1 || ...
+  (NumRuntimeExportedRates == 2 && mdlTid01Eq)
+%assign needTimeConditioningCode = ...
+  NumRuntimeExportedRates > 1 &&  !mdlAllTidEq && !SLibSingleTasking()
+
+%openfile codeBody
+%if SLibFcnProtoCtrlActive()
+  %assign fcnData = FcnGetFunctionPrototypeRecord()
+  %assign arglist = FcnModelStepFcnArgs(fcnData,"ERTSfcnCall")
+  %assign fcnName = fcnData.FunctionName
+  %assign haveReturnValue = (fcnData.NumArgSpecData > 0 && ... 
+                             fcnData.ArgSpecData[0].Category == "Value" && ...
+                             fcnData.ArgSpecData[0].SLObjectType == "Outport")
+  %assign returnAssignment = ""
+  %if haveReturnValue 
+    %assign returnAssignment = "localOut%<fcnData.ArgSpecData[0].PortNum> = "
+  %endif
+
+  %<returnAssignment>%<fcnName>(%<arglist>);
+%elseif ::GenerateClassInterface && ...
+  SLibSingleTasking()
+  %% class generation and single rate or MR/singletasking mode
+  %assign fcnName = classConfObj.FunctionName
+
+  %if (!(classConfObj.hasGlobalAccessForInport)) || ...
+    (!(classConfObj.hasGlobalAccessForOutport))
+    %% Non void-void case
+    %assign arglist = FcnModelStepFcnArgs(classConfObj,"ERTSfcnCall")
+    %assign haveReturnValue = ISFIELD(classConfObj, "hasReturnValue") && ...
+                              classConfObj.hasReturnValue
+    %assign returnAssignment = ""
+    
+    %if haveReturnValue 
+      %assign returnAssignment = "localOut%<classConfObj.ArgSpecData[0].PortNum> = "
+    %endif
+
+    %<returnAssignment>%<::CompiledModel.GlobalScope.tModelObject>.%<fcnName>(%<arglist>);
+  %else %% void-void case
+    %<::CompiledModel.GlobalScope.tModelObject>.%<fcnName>();
+  %endif 
+  
+%elseif needTimeConditioningCode
+  {
+    %assign localTid = "ertTid"
+    %<DumpTimeConditioningCode(localTid)>   
+    %%
+    %if GenerateSampleERTMain && SLibIsPeriodicRateGrouping()
+      switch(%<localTid>) {
+        %foreach tid = NumRuntimeExportedRates
+          case %<tid> :
+          %assign rootSystem.CurrentTID = tid
+          %if CombineOutputUpdateFcns == 1
+            %if !GenerateClassInterface
+              %<modelStepFcn>%<tid>(%<SLibModelFcnArgs("OutputUpdate",TLC_TRUE,tid)>);
+            %else
+              %% for class generation, this must be void-void case.
+
+              %<::CompiledModel.GlobalScope.tModelObject>.%<classConfObj.FunctionName>%<tid>();
+            %endif
+          %else
+            %<modelStepFcn>%<tid>(%<SLibModelFcnArgs("Output",TLC_TRUE,tid)>);
+            %<modelUpdtFcn>%<tid>(%<SLibModelFcnArgs("Update",TLC_TRUE,tid)>);
+          %endif
+          break;
+        %endforeach
+        default : 
+        break;
+      }
+    %else
+      %if CombineOutputUpdateFcns == 1
+        %<modelStepFcn>(%<SLibModelFcnArgs("OutputUpdate",TLC_TRUE,localTid)>);
+      %else
+        %<modelStepFcn>(%<SLibModelFcnArgs("Output",TLC_TRUE,localTid)>);
+        %if (NumContStates > 0)
+          %<modelUpdtFcn>(%<SLibModelFcnArgs("UpdateContStates",TLC_TRUE,localTid)>);
+        %else
+          %<modelUpdtFcn>(%<SLibModelFcnArgs("RootUpdate",TLC_TRUE,localTid)>);
+        %endif
+      %endif
+    %endif
+  }
+%else
+  %if NumRuntimeExportedRates > 1 
+    %assert (mdlTid01Eq && mdlAllTidEq) || SLibSingleTasking()
+    %% If model has and only has tid0 and tid1
+    %% and tid01eq, step function must be guarded 
+    %% by major time step. 
+    if (ssIsMajorTimeStep(%<tSimStructArg>)) {
+    %endif	
+    %if CombineOutputUpdateFcns == 1
+      %<modelStepFcn>(%<SLibModelFcnArgs("OutputUpdate",TLC_TRUE,"")>);
+    %else
+      %<modelStepFcn>(%<SLibModelFcnArgs("Output",TLC_TRUE,"")>);
+      %if (NumContStates > 0)
+        %<modelUpdtFcn>(%<SLibModelFcnArgs("UpdateContStates",TLC_TRUE,localTid)>);
+      %else
+        %<modelUpdtFcn>(%<SLibModelFcnArgs("RootUpdate",TLC_TRUE,localTid)>);
+      %endif
+    %endif
+    %if NumRuntimeExportedRates > 1    
+    }
+  %endif
+%endif
+%closefile codeBody
+
+%% Skip step for CONSTANT_TID to avoid running step twice at t=0. 
+%% Don't need do so if needTimeConditioningCode. TimeConditioningCode will
+%% take care of CONSTANT_TID
+%if NeedConstantST && !needTimeConditioningCode
+  if (%<::CompiledModel.GlobalScope.tTID> != CONSTANT_TID) {
+    %<codeBody>
+  }
+%else
+  %<codeBody>
+%endif
+
+%%
+%% Notice that the outport name prefix must be the same as used for
+%% the GenerateSFunctionOutputSignalDefinition function.
+%if NumModelOutputs > 0
+  %foreach idx = ExternalOutputs.NumExternalOutputs      
+    %<GenerateOutputSignalConditioning("OutPort_", ROLL_LIMIT,idx)>
+  %endforeach
+%endif
+
+%<SLibGenDataStoreWrites(tSimStructArg)>
+%assign ::BlockFcn = currBlockFcn
+%assign ::SystemFcnsForArgAccess = currSystemFcn
+}
+%endif
+
+%assign fcnName = "mdlTerminate"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<tSimStructArg>"
+%assign fcnAbstract = "This function calls the termination function of the generated ERT code."
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract fcnAbstract; ...
+  Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Terminate"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>)
+{
+  %if !GenerateClassInterface
+  %<FcnErtSfcnDeclareSimStruc()>
+  %endif
+  
+  %if GenerateClassInterface && ::CompiledModel.IncludeMdlTerminateFcn
+    %<::CompiledModel.GlobalScope.tModelObject>.terminate();
+  %elseif ::CompiledModel.IncludeMdlTerminateFcn
+    %<modelTermFcn>(%<SLibModelFcnArgs("Terminate",TLC_TRUE,"")>);
+  %endif
+  %<instanceCounter> = 0;
+}
+ 
+#define MDL_ENABLE
+%assign fcnName = "mdlEnable"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<tSimStructArg>"
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+  Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Enable"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>) {
+%if EnableGenerated == 1
+  %if !GenerateClassInterface
+    %<modelEnable>(%<SLibModelFcnArgs("Enable",TLC_TRUE,"")>);
+  %else
+    %%%% C++ encapsulation
+    %<::CompiledModel.GlobalScope.tModelObject>.enable();
+  %endif
+%else
+  %if !SLibMdlEnableDisablePermitted()
+    if (!enable_first_entry) {
+      static char msg[256];
+       if (strlen(ssGetPath(%<tSimStructArg>)) < 128) {
+        sprintf(msg, "The model is attempting to invoke the enable method of ...
+          the S-Function block %s for model '%<LibGetModelName()>', yet the code ...
+          generated for the model does not include the enable method\n", ssGetPath(%<tSimStructArg>));
+      } else {
+         sprintf(msg, "The model is attempting to invoke the enable method of ...
+          the S-Function block for model '%<LibGetModelName()>', yet the code ...
+          generated for the model does not include the enable method\n");
+      }
+      ssSetErrorStatus(%<tSimStructArg>, msg);
+    }
+    enable_first_entry = %<GET_TYPE_ID_REPLACEMENT("false")>;
+  %else
+    (void) %<tSimStructArg>;
+  %endif
+%endif
+}
+
+#define MDL_DISABLE
+%assign fcnName = "mdlDisable"
+%assign fcnReturns = "static void"
+%assign fcnParams = "SimStruct *%<tSimStructArg>"
+%createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; Abstract ""; ...
+  Category "sfcn"; GeneratedBy "ertsfcnbody.tlc"; Type "Disable"}
+%<SLibDumpFunctionBanner(fcnRec)>
+%undef fcnRec
+%<fcnReturns> %<fcnName>(%<fcnParams>) {
+%if DisableGenerated == 1
+  %if !GenerateClassInterface
+    %<modelDisable>(%<SLibModelFcnArgs("Disable",TLC_TRUE,"")>);
+  %else
+    %%%% C++ encapsulation
+    %<::CompiledModel.GlobalScope.tModelObject>.disable();
+  %endif
+%else
+  %if !SLibMdlEnableDisablePermitted()
+    static char msg[256];
+    if (strlen(ssGetPath(%<tSimStructArg>)) < 128) {
+      sprintf(msg, "The model is attempting to invoke the disable mothod of ...
+        the S-Function block %s for model '%<LibGetModelName()>', yet the code ...
+        generated for the model does not include the disable method\n", ssGetPath(%<tSimStructArg>));
+    } else {
+      sprintf(msg, "The model is attempting to invoke the disable mothod of ...
+        the S-Function block for model '%<LibGetModelName()>', yet the code ...
+        generated for the model does not include the disable method\n");
+    }
+    ssSetErrorStatus(%<tSimStructArg>, msg);
+  %else
+    (void) %<tSimStructArg>;
+  %endif
+%endif
+}
+
+#ifdef  MATLAB_MEX_FILE    /* Is this file being compiled as a MEX-file? */
+#include "simulink.c"      /* MEX-file interface mechanism */
+#include "fixedpoint.c"
+#else
+#include "cg_sfun.h"       /* Code generation registration function */
+#endif
+
+%<SetCurrentUtilsIncludesIdx("")>
+
+
+%closefile ModelSfu
+%<SLibAddGeneratedFileToList(sFunctionName + "." + LangFileExt, "interface", "source", "")>
+%<SLibAddGeneratedFileToList("rtwtypes_sf.h", "interface", "header", "")>
+%endwith %% ::CompiledModel

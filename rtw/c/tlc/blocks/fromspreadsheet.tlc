@@ -1,0 +1,223 @@
+%% 
+%% 
+%% Copyright 2015-2017 The MathWorks, Inc.
+%%
+%% Abstract: From Spreadsheet block
+%%
+%include "fixptcast.tlc"
+%implements FromSpreadsheet "C"
+
+%% Function: BlockTypeSetup ===================================================
+%% Abstract:
+%%
+%function BlockTypeSetup(block, system) void
+   %<SLibAddToNonSharedIncludes("simtarget/slSimTgtExcelReaderCAPI.h")>
+%endfunction
+  
+%% Start ======================================================================
+%% Abstract:
+%function Start(block, system) Output
+{
+  %assign nulldef = SLibGetNullDefinitionFromTfl()
+  %assign fileNameStr = STRING(ParamSettings.FileName)
+  %assign sheetNameStr = STRING(ParamSettings.SheetName)
+  %assign rangeStr = STRING(ParamSettings.Range)
+  %assign spreadsheetIOImplStr = STRING(ParamSettings.SpreadsheetIOImpl)
+  char fileName[%<RTWMaxStringLength>] = "%<fileNameStr>";
+  CHAR16_T * fileUName = rtwExcelLoaderGetUnicodeStringFromChars(fileName);
+  CHAR16_T * sheetUName = rtwExcelLoaderGetUnicodeStringFromChars("%<sheetNameStr>");
+  CHAR16_T * rangeUName = rtwExcelLoaderGetUnicodeStringFromChars("%<rangeStr>");
+  char spreadsheetIOImpl[%<RTWMaxStringLength>] = "%<spreadsheetIOImplStr>";
+  
+  %if IsModelReferenceSimTarget() || isRAccel
+    %assign blockPath = STRING(LibGetBlockPath(block))
+    const char *blockpath = "%<blockPath>";
+  %endif
+  
+
+  
+  %assign dTypeId = LibBlockOutputSignalDataTypeId(0)
+  %assign dTypeId = LibGetDataTypeIdAliasedThruToFromId(dTypeId)
+  %assign groundValueBin = DataTypes.DataType[dTypeId].GroundValueBin
+  %openfile groundValueBuffer
+  %if SLibIsNdIndexingFeatureOn()
+    %assign groundValueBufferData = ...
+      GENERATE_FORMATTED_VALUE(groundValueBin, "", 0, 1)
+  %else
+    %assign groundValueBufferData = ...
+      GENERATE_FORMATTED_VALUE(groundValueBin, "")
+  %endif
+  %closefile groundValueBuffer
+  unsigned char groundValue[] = %<groundValueBuffer>;
+  
+  %if isRSim
+    %if isRAccel==0
+      rt_RSimRemapFromFileName(fileName);
+    %endif
+  %endif
+
+  %% Treat first column as setting
+  %assign TreatFirstColumnAs = ...
+    ParamSettings.TreatFirstColumnAs
+  %assign OutputAfterLastPoint = ...
+    ParamSettings.OutputAfterLastPoint
+
+  %% interpolation interface parameters
+  %assign extrapolationBeforeFirstDataPointInt = ...
+    ParamSettings.ExtrapolationBeforeFirstDataPoint
+  %assign interpolationWithinTimeRangeInt = ...
+    ParamSettings.InterpolationWithinTimeRange
+  %assign extrapolationAfterLastDataPointInt = ...
+    ParamSettings.ExtrapolationAfterLastDataPoint
+  
+  %% zero-crossing parameter
+  %assign zeroCrossingSwitch = ParamSettings.ZeroCrossingSwitch
+  
+  %if IsModelReferenceSimTarget() || isRAccel
+    if(slIsRapidAcceleratorSimulating()) {
+      rt_RAccelReplaceFromFilename(blockpath, fileName);
+    }
+  %endif
+  %foreach portIdx = block.NumDataOutputPorts
+  {
+       void *fp = %<nulldef>;
+       const char *errMsg = %<nulldef>;
+       errMsg = rtwExcelLoaderCreateInstanceWithSequenceSupport(fileUName,...
+                sheetUName,...
+                rangeUName,...
+                %<TreatFirstColumnAs>, ...
+                %<OutputAfterLastPoint>, ...
+                %<extrapolationBeforeFirstDataPointInt>, ...
+                %<interpolationWithinTimeRangeInt>, ...
+                %<extrapolationAfterLastDataPointInt>, ...
+                groundValue, ...
+                %<zeroCrossingSwitch>,...
+                %<portIdx>,...
+                spreadsheetIOImpl,...
+                &fp);
+      if (errMsg != %<nulldef>) {
+        %<RTMSetErrStat("errMsg")>;
+        return;
+      }
+      %<LibBlockPWork(ExcelLoader,"","",portIdx)> = fp;
+  }
+  %endforeach
+
+  rtwExcelLoaderFreeLabel(fileUName);
+  rtwExcelLoaderFreeLabel(sheetUName);
+  rtwExcelLoaderFreeLabel(rangeUName);
+
+}
+%endfunction %% Start
+
+%% Function: Terminate =====================================================
+%% Abstract:
+%%      Terminate callback.
+%%
+%function Terminate(block, system) Output
+  %assign nulldef = SLibGetNullDefinitionFromTfl()
+  {
+    %foreach portIdx = block.NumDataOutputPorts
+    {
+        void * excelLoader = (void *) %<LibBlockPWork(ExcelLoader,"","",portIdx)>;
+        if (excelLoader != %<nulldef>) {
+             const char *errMsg = %<nulldef>;
+             errMsg = rtwExcelLoaderTerminate(excelLoader);
+              if (errMsg != %<nulldef>) {
+                  %<RTMSetErrStat("errMsg")>;
+                  return;
+              }
+        }
+    }
+   %endforeach
+  }
+%endfunction %% Terminate
+
+
+%% Function: ZeroCrossings =====================================================
+%% Abstract:
+%%      Zero-crossing callback.
+%%
+%function ZeroCrossings(block, system) Output
+  %assign nulldef = SLibGetNullDefinitionFromTfl()
+  {
+
+        void * excelLoader = (void *) %<LibBlockPWork(ExcelLoader,"","",0)>;
+        if (excelLoader != %<nulldef>) {
+              real_T t = %<LibGetT()>;
+              double zcSignalValue = -1.0;
+              void *pZCSignalValue = &zcSignalValue;
+              const char *errMsg = %<nulldef>;
+             errMsg = rtwExcelLoaderGetZeroCrossingSignal(...
+                        excelLoader, ...
+                        t, ...
+                        %<RTMIs("MajorTimeStep")>, ...
+                        pZCSignalValue...
+                        );
+              if (errMsg != %<nulldef>) {
+                  %<RTMSetErrStat("errMsg")>;
+                  return;
+              }
+            %<LibBlockZCSignalValue("","",0, 0)> = zcSignalValue;
+        }
+     }
+%endfunction %% ZeroCrossings
+
+
+%% Outputs ======================================================================
+%% Abstract:
+%%      Output data from specified spreadsheet file at each time point.
+%%
+%function Outputs(block, system) Output
+{
+    %assign nulldef = SLibGetNullDefinitionFromTfl()
+    %% zero-crossing parameter
+    %assign zeroCrossingSwitch = ParamSettings.ZeroCrossingSwitch
+    
+    
+    %foreach portIdx = block.NumDataOutputPorts
+    {
+        %assign dTypeId = LibBlockOutputSignalDataTypeId(0)
+        const char *errMsg = %<nulldef>;
+
+        void * excelLoader = (void *) %<LibBlockPWork(ExcelLoader,"","",portIdx)>;
+        void * TempDoubleOutput = (void *) &%<LibBlockRWork(TempDoubleOutput,"","",0)>;
+            if (excelLoader != %<nulldef> && ...
+              (%<RTMIs("MajorTimeStep")> || !%<zeroCrossingSwitch>) ...
+              ) {
+                      void *y = &%<LibBlockOutputSignal(portIdx, "", "", 0)>; 
+                      real_T t = %<LibGetTaskTimeFromTID(block)>;
+                      errMsg = rtwExcelLoaderGetOutput(...
+                            &TempDoubleOutput,...
+                            excelLoader,...
+                            t, ...
+                            %<RTMIs("MajorTimeStep")>
+                            );
+
+                      if (errMsg != %<nulldef>) {
+                          %<RTMSetErrStat("errMsg")>;
+                          return;
+                      }
+                  
+        %assign yLabel = LibBlockOutputSignal(portIdx, "", "", 0)
+        %assign uDT = FixPt_GetDataTypeFromIndex(tSS_DOUBLE)
+        %assign xLabel = LibBlockRWork(TempDoubleOutput,"","",0)
+        %assign y0DT = FixPt_GetOutputDataType(portIdx)
+         %if LibIsEnumDataType(dTypeId)
+         %%If it is ENUM then cast to INT32 as that is the correspoing 
+         %%matlab data type
+              %assign y0DT = FixPt_GetDataTypeFromIndex(tSS_INT32)
+         %else
+              %assign y0DT = FixPt_GetOutputDataType(portIdx)
+         %endif
+        %assign temp = FixPt_Fix2FixAlwaysOutput(yLabel,y0DT,xLabel,uDT,"Floor","Wrap")
+        }
+       
+    }
+    %endforeach
+    
+} 
+%endfunction %% Outputs
+
+
+%% [EOF] fromspreadsheet.tlc

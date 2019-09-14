@@ -1,0 +1,995 @@
+%%  
+%% 
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+%% Abstract: Transport Delay block helper function target file
+
+
+%% Function: TDelayTypeSetup ===============================================
+%function TDelayTypeSetup(block, system) void
+  %if !EXISTS("HasDelayBlock")
+    %assign ::HasDelayBlock = TLC_FALSE
+  %endif
+
+  %if isRSim || Accelerator
+    %openfile tmpBuf 
+    %if !HasDelayBlock
+      #ifndef __RTW_UTFREE__
+      %if ::GenCPP
+        #ifdef __cplusplus
+        extern "C" {
+        #endif
+      %endif
+      %<LibExternInFcnDecls()>void * utMalloc(size_t);
+      %<LibExternInFcnDecls()>void   utFree(void *); 
+      %assign ::HasDelayBlock= TLC_TRUE    
+      %if ::GenCPP
+        #ifdef __cplusplus
+        }
+        #endif
+      %endif
+      #endif
+    %endif
+    %closefile tmpBuf
+    %<LibCacheExtern(tmpBuf)>
+  %endif
+%endfunction
+
+%% Function: TDelay_CreateBuf ============================================
+%%
+%function TDelay_CreateBuf() void
+  %% Create a string to represent the utility
+  %%
+  %assign utilityName = FixPt_UtilityMakeName("rt_TDelayCreateBuf")
+  %%
+  %% END: Create a string to represent the utility
+  %%
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %% determine if the required utility has already been defined
+  %%   If it has not, then create the definition.
+  %%
+  %if !(ISFIELD(FixPtUtils,utilityName))
+    %%
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils,utilityName,1)
+
+    %<LibPushEmptyStackSharedUtils()>\
+    
+    %openfile tmpBuf
+    %if (isRSim || Accelerator)
+      
+      #ifndef __RTW_UTFREE__  %% defined in rtw/c/src/rtw_modelmap.h   
+      %if ::GenCPP
+        #ifdef __cplusplus
+        extern "C" {
+        #endif
+      %endif
+      %<LibExternInFcnDecls()>void * utMalloc(size_t);
+      %if ::GenCPP
+        #ifdef __cplusplus
+        }
+        #endif
+      %endif
+      #endif
+      
+    %endif
+    %closefile tmpBuf    
+    
+    %%
+    %% open a buffer to hold the utility header comments
+    %%
+    %%
+    %%  Produce header comment for utility
+    %%
+    %openfile fcnAbstract 
+Time delay buffer creation routine
+    %closefile fcnAbstract
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% open a buffer to hold the utility definition
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %openfile utilityDef
+    %%
+    %% create first line of utility macro or function
+    %% 
+    %assign fcnName = "%<utilityName>"
+    %assign fcnReturns = "void *"
+    %assign fcnParams = ["int_T     numBuffer, ", "int_T     bufSz, ", "int_T     elemSz"]
+    %openfile funcDecRoot    
+    %<fcnReturns> %<fcnName>(
+      %<fcnParams[0]>
+      %<fcnParams[1]>
+      %<fcnParams[2]>)
+    %closefile funcDecRoot
+    %%
+    %openfile funcProto
+    %<funcDecRoot>;
+    %closefile funcProto
+    %%
+    %selectfile utilityDef 
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+      Abstract fcnAbstract; Category "utility"; GeneratedBy "tdelay_sup.tlc"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<funcDecRoot>
+    %%
+    {
+         
+      return((void*)utMalloc(numBuffer*bufSz*elemSz)); 
+          
+      %%
+      %% finish header comment
+      %%
+      %%
+      %% finish off utility define
+      %%
+      %selectfile utilityDef
+    }
+    %closefile utilityDef
+    %%
+    %% cause utility define to be included in generated code
+    %%
+    %assign utilityDef = tmpBuf + utilityDef
+    %%
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif  %% definition of utility
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %return utilityName
+%endfunction
+
+%% Function: TDelay_FreeBuf ============================================
+%%
+%function TDelay_FreeBuf() void
+  %% Create a string to represent the utility
+  %%
+  %assign utilityName = FixPt_UtilityMakeName("rt_TDelayFreeBuf")
+  %%
+  %% END: Create a string to represent the utility
+  %%
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %% determine if the required utility has already been defined
+  %%   If it has not, then create the definition.
+  %%
+  %if !(ISFIELD(FixPtUtils,utilityName))
+    %%
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils,utilityName,1)
+
+    %<LibPushEmptyStackSharedUtils()>\
+    
+    %openfile tmpBuf
+    %if (isRSim || Accelerator)
+      
+      #ifndef __RTW_UTFREE__  %% defined in rtw/c/src/rtw_modelmap.h   
+      %if ::GenCPP
+        #ifdef __cplusplus
+        extern "C" {
+        #endif
+      %endif
+      %<LibExternInFcnDecls()>void   utFree(void *); 
+      %if ::GenCPP
+        #ifdef __cplusplus
+        }
+        #endif
+      %endif
+      #endif
+      
+    %endif
+    %closefile tmpBuf
+    
+    %%
+    %% open a buffer to hold the utility header comments
+    %%
+    %%
+    %%  Produce header comment for utility
+    %%
+    %openfile fcnAbstract 
+Time delay buffer deletion routine
+    %closefile fcnAbstract
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% open a buffer to hold the utility definition
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %openfile utilityDef
+    %%
+    %% create first line of utility macro or function
+    %% 
+    %assign fcnName = "%<utilityName>"
+    %assign fcnReturns = "void"
+    %assign fcnParams = ["void *     buf"]
+    %openfile funcDecRoot    
+    %<fcnReturns> %<fcnName>(
+      %<fcnParams[0]>)
+    %closefile funcDecRoot
+    %%
+    %openfile funcProto
+    %<funcDecRoot>;
+    %closefile funcProto
+    %%
+    %selectfile utilityDef 
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+      Abstract fcnAbstract; Category "utility"; GeneratedBy "tdelay_sup.tlc"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<funcDecRoot>
+    %%
+    {
+         
+      utFree(buf); 
+          
+      %%
+      %% finish header comment
+      %%
+      %%
+      %% finish off utility define
+      %%
+      %selectfile utilityDef
+    }
+    %closefile utilityDef
+    %%
+    %% cause utility define to be included in generated code
+    %%
+    %assign utilityDef = tmpBuf + utilityDef
+    %%
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif  %% definition of utility
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %return utilityName
+%endfunction
+
+%% Function: TDelay_Interpolate ==========================================
+%%
+%function TDelay_Interpolate() void
+   
+  %% Create a string to represent the utility
+  %%
+  %assign utilityName = FixPt_UtilityMakeName("rt_TDelayInterpolate")
+  %%
+  %% END: Create a string to represent the utility
+  %%
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %% determine if the required utility has already been defined
+  %%   If it has not, then create the definition.
+  %%
+  %if !(ISFIELD(FixPtUtils,utilityName))
+    %%
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils,utilityName,1)
+
+    %<LibPushEmptyStackSharedUtils()>\
+    %%
+    %% open a buffer to hold the utility header comments
+    %%
+    %%
+    %%  Produce header comment for utility
+    %%
+    %openfile fcnAbstract 
+Time delay interpolation routine
+
+The linear interpolation is performed using the formula:
+
+         (t2 - tMinusDelay)         (tMinusDelay - t1)
+u(t)  =  ----------------- * u1  +  ------------------- * u2
+             (t2 - t1)                  (t2 - t1)
+    %closefile fcnAbstract
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% open a buffer to hold the utility definition
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %openfile utilityDef
+    %%
+    %% create first line of utility macro or function
+    %% 
+    %assign fcnName = "%<utilityName>"
+    %assign fcnReturns = "real_T"
+    %assign fcnParams = ["real_T     tMinusDelay,", "real_T     tStart,", ...
+      "real_T     *tBuf,", "real_T     *uBuf,", "int_T      bufSz,", ...
+      "int_T      *lastIdx,", "int_T      oldestIdx,", "int_T      newIdx,", ...
+      "real_T     initOutput,", "boolean_T  discrete,", ...
+      "boolean_T  minorStepAndTAtLastMajorOutput"]
+    %openfile funcDecRoot    
+    %<fcnReturns> %<fcnName>(
+      %<fcnParams[0]>           /* tMinusDelay = currentSimTime - delay */
+      %<fcnParams[1]>
+      %<fcnParams[2]>
+      %<fcnParams[3]>
+      %<fcnParams[4]>
+      %<fcnParams[5]>
+      %<fcnParams[6]>
+      %<fcnParams[7]>
+      %<fcnParams[8]>
+      %<fcnParams[9]>
+      %<fcnParams[10]>)
+    %closefile funcDecRoot
+    %%
+    %openfile funcProto
+    %<funcDecRoot>;
+    %closefile funcProto
+    %%
+    %selectfile utilityDef 
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+      Abstract fcnAbstract; Category "utility"; GeneratedBy "tdelay_sup.tlc"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<funcDecRoot>
+    %%
+    {
+      
+      int_T i;
+      real_T yout, t1, t2, u1, u2;
+
+      /*
+      * If there is only one data point in the buffer, this data point must be
+      * the t= 0 and tMinusDelay > t0, it ask for something unknown. The best
+      * guess if initial output as well
+      */
+      
+      if ( (newIdx == 0) && (oldestIdx ==0 ) && (tMinusDelay > tStart))  return initOutput;
+      
+      /*
+      * If tMinusDelay is less than zero, should output initial value
+      */
+      
+      if(tMinusDelay <= tStart) return initOutput;
+      
+      /* For fixed buffer extrapolation: 
+      * if tMinusDelay is small than the time at oldestIdx, if discrete, output
+      * tailptr value,  else use tailptr and tailptr+1 value to extrapolate
+      * It is also for fixed buffer. Note: The same condition can happen for transport delay block where 
+      * use tStart and and t[tail] other than using t[tail] and t[tail+1]. 
+      * See below
+      */
+      
+      if ( (tMinusDelay <= tBuf[oldestIdx] ) ) {
+        if (discrete){
+          return(uBuf[oldestIdx]);
+        }else{
+          int_T tempIdx=oldestIdx + 1;
+          if(oldestIdx == bufSz-1) tempIdx = 0;
+          t1=tBuf[oldestIdx];
+          t2=tBuf[tempIdx];
+          u1=uBuf[oldestIdx];
+          u2=uBuf[tempIdx];
+          
+          if (t2 == t1) {
+            if (tMinusDelay >= t2) {
+              yout = u2;
+            }else {
+              yout = u1;
+            }
+          }
+          else{
+            real_T f1 = (t2-tMinusDelay) / (t2-t1);
+            real_T f2 = 1.0 - f1;
+            
+            /*
+            * Use Lagrange's interpolation formula.  Exact outputs at t1, t2.
+            */
+            yout = f1*u1 + f2*u2;
+          }
+          return yout;
+        }
+      }
+        
+      /*
+      * When block does not have direct feedthrough, we use the table of
+      * values to extrapolate off the end of the table for delays that are less
+      * than 0 (less then step size).  This is not completely accurate.  The
+      * chain of events is as follows for a given time t.  Major output - look 
+      * in table.  Update - add entry to table.  Now, if we call the output at 
+      * time t again, there is a new entry in the table. For very small delays,
+      * this means that we will have a different answer from the previous call 
+      * to the output fcn at the same time t.  The following code prevents this 
+      * from happening.
+      */
+        
+      if (minorStepAndTAtLastMajorOutput) {
+        /* pretend that the new entry has not been added to table */
+        if (newIdx != 0) {
+          if (*lastIdx == newIdx) {
+            (*lastIdx)--;
+          }
+          newIdx--;
+        } else {
+          if (*lastIdx == newIdx) {
+            *lastIdx = bufSz-1;
+          }
+          newIdx = bufSz - 1;
+        }
+      }
+          
+      i = *lastIdx;
+      if (tBuf[i] < tMinusDelay) {
+        /* Look forward starting at last index */
+        while (tBuf[i] < tMinusDelay) {
+          
+          /* May occur if the delay is less than step-size - extrapolate */
+          if (i == newIdx) break;
+          
+          i = ( i < (bufSz-1) ) ? (i+1) : 0; /* move through buffer */
+              
+        }
+      } else {
+        /*
+        * Look backwards starting at last index which can happen when the
+        * delay time increases.
+        */
+        while (tBuf[i] >= tMinusDelay) {
+          
+          /*
+          * Due to the entry condition at top of function, we
+          * should never hit the end.
+          */
+          
+          i = (i > 0) ? i-1 : (bufSz-1); /* move through buffer */
+          
+        }
+        i = ( i < (bufSz-1) ) ? (i+1) : 0;
+      }
+          
+      *lastIdx = i;
+      
+      if (discrete) {
+        /*
+        * tempEps = 128 * eps;
+        * localEps = max(tempEps, tempEps*fabs(tBuf[i]))/2;
+        */
+        double tempEps  = %<LibGetMathConstant("EPSILON",tSS_DOUBLE)> * 128.0;
+        double localEps = tempEps * %<LibGenSharedMathFcnCall("abs",tSS_DOUBLE,"tBuf[i]","")>;
+        if (tempEps > localEps) {
+          localEps = tempEps;
+        }
+        localEps = localEps / 2.0;
+        
+        if (tMinusDelay >= (tBuf[i] - localEps)) {
+          yout = uBuf[i];
+        } else {
+          if (i == 0) {
+            yout = uBuf[bufSz-1];
+          } else {
+            yout = uBuf[i-1];
+          }
+        }
+      } else {
+        if (i == 0) {
+          t1 = tBuf[bufSz-1];
+          u1 = uBuf[bufSz-1];
+        } else {
+          t1 = tBuf[i-1];
+          u1 = uBuf[i-1];
+        }
+        
+        t2 = tBuf[i];
+        u2 = uBuf[i];
+        
+        if (t2 == t1) {
+          if (tMinusDelay >= t2) {
+            yout = u2;
+          } else {
+            yout = u1;
+          }
+        } else {
+          real_T f1 = (t2-tMinusDelay) / (t2-t1);
+          real_T f2 = 1.0 - f1;
+          
+          /*
+          * Use Lagrange's interpolation formula.  Exact outputs at t1, t2.
+          */
+          yout = f1*u1 + f2*u2;
+        }
+      }
+         
+      return(yout); 
+          
+      %%
+      %% finish header comment
+      %%
+      %%
+      %% finish off utility define
+      %%
+      %selectfile utilityDef
+    }
+    %closefile utilityDef
+    %%
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif  %% definition of utility
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %return utilityName
+%endfunction  %% TDelay_Interpolate
+    
+    
+%% Function: rt_VTDelayfindtDInterpolate ==========================================
+%%
+%function VTDelay_FindtDInterpolate() void
+  
+  %% Create a string to represent the utility
+  %%
+  %assign utilityName = FixPt_UtilityMakeName("rt_VTDelayfindtDInterpolate")
+  %%
+  %% END: Create a string to represent the utility
+  %%
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %% determine if the required utility has already been defined
+  %%   If it has not, then create the definition.
+  %%
+  %if !(ISFIELD(FixPtUtils,utilityName))
+    %%
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils,utilityName,1)
+    %<LibPushEmptyStackSharedUtils()>\
+    %%
+    %%  Produce header comment for utility
+    %%
+    %assign fcnAbstract = "For variable transport delay block, find the real delay time"
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% open a buffer to hold the utility definition
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %openfile utilityDef
+    %%
+    %% create first line of utility macro or function
+    %%
+    %assign fcnName = "%<utilityName>"
+    %assign fcnParams = [ ...
+      "real_T        x,",  ...
+      "real_T*       tBuf,",  ...
+      "real_T*       uBuf,",  ...
+      "real_T*       xBuf,",  ...
+      "int_T         bufSz,", ...
+      "int_T         head,",  ...
+      "int_T         tail,",  ...
+      "int_T*        pLast,", ...
+      "real_T        t,",  ...
+      "real_T        tStart,",  ...
+      "boolean_T     discrete,",  ...
+      "boolean_T     minorStepAndTAtLastMajorOutput,", ...
+      "real_T        initOutput,",  ...
+      "real_T*       appliedDelay"]
+    %assign fcnReturns = "real_T"
+    %assign funcDecRoot = fcnReturns + " " + utilityName + "(\n"
+    %foreach idx = SIZE(fcnParams, 1)
+      %assign funcDecRoot = funcDecRoot + fcnParams[idx]
+    %endforeach
+    %assign funcDecRoot = funcDecRoot + ")"
+    %%   
+    %openfile funcProto
+    %<funcDecRoot>;
+    %closefile funcProto
+    %%
+    %selectfile utilityDef
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+      Abstract fcnAbstract; Category "utility"; GeneratedBy "tdelay_sup.tlc"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<funcDecRoot>
+    %%
+    {
+      int_T n, k;
+      real_T f;
+      int_T kp1;
+      real_T tminustD, tL, tR, uD, uL, uR, fU;
+      
+      if (minorStepAndTAtLastMajorOutput) {
+        /* pretend that the entry at head has not been added */
+        if (*pLast == head) {
+          *pLast = (*pLast == 0) ? bufSz-1 : *pLast-1;
+        }
+        head = (head == 0) ? bufSz-1 : head-1;
+      }
+      
+      /*
+      * The loop below finds k such that:
+      *      x(t)-x(tminustD) =1 or
+      *      x - xBuf[k+1] <= 1.0 < x - xBuf[k]
+      *
+      * Note that we have:
+      *
+      * tStart = tBuf[0] < tBuf[1] < ... < tBuf[tail] < ... tBuf[head] <= t
+      *      0 = xBuf[0] < xBuf[1] < ... < xBuf[tail] < ... xBuf[head] <  x
+      *
+      * This is true if we assume the direction of transport is always positive
+      * such as a flow goes through a pipe from one end to another. However, for
+      * model such as convey belt, the transportation can change direction. For
+      * this case, there will be more than one solution to x(t)-x(tminustD) = 1,
+      * should found the minimum tminustD and tminustD > 0. The search will not
+      * be as efficient as the following code.
+      */
+      
+      /*
+      * when x<=1, physically it means the flow didn't reach the output yet, 
+      * t-tD will be less then zero, so force output to be the initial output
+      */
+      
+      if (x <= 1)
+      {
+        return initOutput; 
+      }
+      
+      /*
+      * if the x is monoton increase, only one solution. use k=pLast for now
+      */
+      
+      k=*pLast;
+      
+      n = 0;
+      
+      for(;;) {
+        
+        n++;
+        if(n>bufSz)break;
+        
+        if (x - xBuf[k] > 1.0) {
+          /* move k forward, unless k = head */
+          
+          if (k == head) {
+            /* xxx this situation means tD= appliedDelay = 0
+            *
+            * linearly interpolate using (tBuf[head], xBuf[head])
+            * and (t,x) to find (tD,xD) such that: x - xD = 1.0
+            */
+            int_T km1;
+            f = (x - 1.0 - xBuf[k]) / (x - xBuf[k]);
+            tminustD = (1.0-f)*tBuf[k] + f*t;
+            
+            km1 = k-1; if (km1 < 0) km1 = bufSz-1;
+            tL = tBuf[km1];
+            tR = tBuf[k];
+            uL = uBuf[km1];
+            uR = uBuf[k];
+            break;
+          }
+        
+          kp1 = k+1; if (kp1 == bufSz) kp1 = 0;
+          
+          if (x - xBuf[kp1] <= 1.0){
+            /*
+            * linearly interpolate using (tBuf[k], xBuf[k])
+            * and  (tBuf[k+1], xBuf[k+1]) to find (tminustD,xD)
+            * such that: x - xD = 1.0
+            */
+            f = (x - 1.0 - xBuf[k]) / (xBuf[kp1] - xBuf[k]);
+            
+            tL = tBuf[k];
+            tR = tBuf[kp1];
+            uL = uBuf[k];
+            uR = uBuf[kp1];
+            
+            tminustD = (1.0-f)*tL + f*tR;
+            break;
+          }
+          k = kp1;
+          
+        } else {
+          /* moved k backward, unless k = tail */
+        
+          if (k == tail) {
+            /* This situation means tminustD <= Ttail*/
+            f = (x - 1.0)/xBuf[k];
+            
+            if (discrete){
+              return(uBuf[tail]);
+            }
+            
+            kp1 = k+1; if (kp1 == bufSz) kp1 = 0;               
+            
+            /* * linearly interpolate using (tStart, 0)
+            * and  (tBuf[tail], xBuf[tail]) to find (tminustD,xD)
+            * such that: x - xD = 1.0
+            */
+            
+            /* Here it is better to use Tstart because since x>1, tminustD
+            * must > 0. Since x is monotone increase, its linearity is 
+            * better. 
+            */
+            
+            tminustD = (1-f)*tStart + f*tBuf[k];
+            
+            
+            /* linearly interpolate using (t[tail], x[tail])
+            * and  (tBuf[tail+1], xBuf[tail+1]) to find (tminustD,xD)
+            * such that: x - xD = 1.0. 
+            * For time delay block, use t[tail] and t[tail+1], not good
+            * for transport delay block since it may give tminstD < 0
+            */
+        
+            /*  f = (tBuf[kp1]-tBuf[k])/(xBuf[kp1]-xBuf[k]);
+            *  tminustD = tBuf[kp1]-f*(1+xBuf[kp1]-x);
+            */
+            
+            tL = tBuf[k];
+            tR = tBuf[kp1];
+            uL = uBuf[k];
+            uR = uBuf[kp1];
+            break;
+          }
+          k = k - 1; if (k < 0)  k = bufSz-1;
+        }
+      }
+      *pLast = k;     
+      
+      if(tR == tL) {
+        fU =1.0;
+      }else{
+        fU = (tminustD-tL)/(tR-tL);
+      }
+      
+      /* for discrete signal, no interpolation, use either uL or uR
+      * depend on wehre tminustD is.
+      */
+      if (discrete) {
+        uD= (fU > (1.0-fU))? uR: uL;
+      } else {
+        uD = (1.0-fU)*uL + fU*uR;
+      }
+      
+      /* we want return tD= t-(t-tD);*/
+      *appliedDelay = t-tminustD; 
+      
+      return uD; 
+      
+      %%
+      %% finish header comment
+      %%
+      %% finish off utility define
+      %%
+      %selectfile utilityDef
+    }
+    %closefile utilityDef
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif  %% definition of utility
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %return utilityName
+%endfunction  %% VTDelay_FindtDInterpolate
+
+
+
+%% Function: TDelay_UpdateTailOrGrowBuf ==========================================
+%%
+%function TDelay_UpdateTailOrGrowBuf() void
+  
+  %% Create a string to represent the utility
+  %%
+  %assign utilityName = FixPt_UtilityMakeName("rt_TDelayUpdateTailOrGrowBuf")
+  %%
+  %% END: Create a string to represent the utility
+  %%
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %% determine if the required utility has already been defined
+  %%   If it has not, then create the definition.
+  %%
+  %if !(ISFIELD(FixPtUtils,utilityName))
+    %%
+    %% register that utility is being defined
+    %%
+    %assign tmpRet = SETFIELD(FixPtUtils,utilityName,1)
+    %<LibPushEmptyStackSharedUtils()>\
+    
+    %openfile tmpBuf
+    %if (isRSim || Accelerator)
+      
+      #ifndef __RTW_UTFREE__  %% defined in rtw/c/src/rtw_modelmap.h   
+      %if ::GenCPP
+        #ifdef __cplusplus
+        extern "C" {
+        #endif
+      %endif
+      %<LibExternInFcnDecls()>void * utMalloc(size_t);
+      %<LibExternInFcnDecls()>void   utFree(void *); 
+      %if ::GenCPP
+        #ifdef __cplusplus
+        }
+        #endif
+      %endif
+      #endif
+      
+    %endif
+    %closefile tmpBuf
+    
+    %%
+    %%  Produce header comment for utility
+    %%
+    %assign fcnAbstract = "Buffer management routine for variable delay block"
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% open a buffer to hold the utility definition
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+    %openfile utilityDef
+    %%
+    %% create first line of utility macro or function
+    %% 
+    %assign fcnName = "%<utilityName>"
+    %assign fcnReturns = "boolean_T"
+    %assign fcnParams = [ ...
+      "int_T       *bufSzPtr,", ...
+      "int_T       *tailPtr,", ...
+      "int_T       *headPtr,", ...
+      "int_T       *lastPtr,", ...
+      "real_T      tMinusDelay,", ...
+      "real_T      **tBufPtr,", ...
+      "real_T      **uBufPtr,", ...
+      "real_T      **xBufPtr,", ...
+      "boolean_T   isfixedbuf,", ...
+      "boolean_T istransportdelay,", ...
+      "int_T     *maxNewBufSzPtr"]
+      
+    %assign funcDecRoot = ...
+      fcnReturns + "  " + fcnName +"(\n" + ...
+      fcnParams[0] + "        /* in/out - circular buffer size                 */\n" + ...
+      fcnParams[1] + "         /* in/out - tail of circular buffer              */\n" + ...
+      fcnParams[2] + "         /* in/out - head of circular buffer              */\n" + ...
+      fcnParams[3] + "         /* in/out - same logical 'last' referenced index */\n" + ...
+      fcnParams[4] + "      /* in     - last point we are looking at   */\n" + ...
+      fcnParams[5] + "        /* in/out - larger buffer for time         */\n" + ...
+      fcnParams[6] + "        /* in/out - larger buffer for input        */\n" + ...
+      fcnParams[7] + "        /* in/out - larger buffer for state        */\n" + ...
+      fcnParams[8] + "       /* in     - fixed buffer size enable       */\n" + ...
+      fcnParams[9] + "   /* in     - block acts as transport dela y */\n" + ...
+      fcnParams[10] + ")" 
+    %%
+  
+    %openfile funcProto
+    %<funcDecRoot>;
+    %closefile funcProto
+    %%
+    %selectfile utilityDef 
+    %createrecord fcnRec {Name fcnName; Returns fcnReturns; Params fcnParams; ...
+      Abstract fcnAbstract; Category "utility"; GeneratedBy "tdelay_sup.tlc"}
+    %<SLibDumpFunctionBanner(fcnRec)>
+    %undef fcnRec
+    %<funcDecRoot>
+    %%
+    %assign nulldef = SLibGetNullDefinitionFromTfl()
+    {
+      
+      int_T  testIdx;
+      int_T  tail  = *tailPtr;
+      int_T  bufSz = *bufSzPtr;
+      real_T *tBuf = *tBufPtr;
+      real_T *xBuf = %<nulldef>; 
+      
+      int_T    numBuffer = 2;
+      if (istransportdelay){
+        numBuffer =3 ;
+        xBuf= *xBufPtr;
+      }
+      
+      /*    Get testIdx, the index of the second oldest data point and
+      *    see if this is older than current sim time minus applied delay,
+      *    used to see if we can move tail forward 
+      */
+      testIdx = (tail < (bufSz - 1)) ? (tail + 1) : 0;
+      
+      if ( (tMinusDelay <= tBuf[testIdx]) && !isfixedbuf) {
+        int_T  j;
+        real_T *tempT;
+        real_T *tempU;
+        real_T *tempX = %<nulldef>;    
+        
+        real_T *uBuf     = *uBufPtr;
+        int_T  newBufSz  = bufSz + 1024;
+        
+        if (newBufSz > *maxNewBufSzPtr) {
+          *maxNewBufSzPtr = newBufSz; /* save for warning*/
+        }
+        
+        tempU = (real_T*)utMalloc(numBuffer*newBufSz*sizeof(real_T));        
+        
+        if (tempU == %<nulldef>){
+          return (%<GET_TYPE_ID_REPLACEMENT("false")>);
+        }     
+        tempT = tempU + newBufSz;
+        if(istransportdelay) tempX = tempT + newBufSz;
+        
+        for (j = tail; j < bufSz; j++) {
+          tempT[j - tail] = tBuf[j];
+          tempU[j - tail] = uBuf[j];
+          if (istransportdelay)  
+          tempX[j - tail] = xBuf[j];
+        }
+        for (j = 0; j < tail; j++) {
+          tempT[j + bufSz - tail] = tBuf[j];
+          tempU[j + bufSz - tail] = uBuf[j];
+          if (istransportdelay)  
+          tempX[j + bufSz - tail] = xBuf[j];
+        }
+        
+        if (*lastPtr> tail) 
+        {
+          *lastPtr -= tail;
+        } else {
+          *lastPtr += (bufSz - tail);
+        }
+        *tailPtr= 0;
+        *headPtr = bufSz;
+        
+        utFree(uBuf);
+        
+        *bufSzPtr = newBufSz;
+        *tBufPtr  = tempT;
+        *uBufPtr  = tempU;
+        if (istransportdelay) *xBufPtr  = tempX;
+        
+      }else {
+        *tailPtr = testIdx; /* move tail forward */
+      }
+      
+      return(%<GET_TYPE_ID_REPLACEMENT("true")>);      
+
+
+      %% finish off utility define
+      %%
+      %selectfile utilityDef
+    }
+    %closefile utilityDef
+    %%
+    %% cause utility define to be included in generated code
+    %%
+    %assign utilityDef = tmpBuf + utilityDef
+    %%
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+  %endif  %% definition of utility
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %return utilityName
+%endfunction  %% TDelay_Interpolate
+
+%% Function: TDelay_Terminate ========================================================
+%% Abstract:
+%%      Free PWorks used with RSim target
+%%
+%function TDelay_Terminate(block, system) Output
+  %if isRSim
+    %assign localRollThreshold = 2
+    %assign rollVars = ["<pwork>/TUbufferPtrs"]
+    
+    %roll idx = RollRegions, lcv = localRollThreshold, block, "Roller", rollVars      
+      %assign pUbuf = LibBlockPWork(TUbufferPtrs, "", lcv, idx)	
+      %%
+      %% first call unitility to generate rt_TDelayCreateBuf
+      %% This is called instead of utFree() in order to avoid Windows-specific 
+      %% crash due to mallocing and freeing in different libs.
+      %assign utilName = TDelay_FreeBuf()
+      %<utilName>(%<pUbuf>);    
+    %endroll
+  %endif %% end of RSim section
+  
+%endfunction %% TDelay_Terminate

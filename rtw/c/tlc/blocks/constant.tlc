@@ -1,0 +1,45 @@
+%% 
+%% 
+%% 
+%%
+%% Copyright 1994-2015 The MathWorks, Inc.
+%%
+%% Abstract: Constant block target file
+
+%implements Constant "C"
+
+
+%% Function: BlockInstanceSetup ================================================
+%% Abstract:
+%%      Set expression folding compliant
+%%
+%function BlockInstanceSetup(block,system) void
+  %<LibBlockSetIsExpressionCompliant(block)>
+%endfunction
+
+
+%% Function: BlockOutputSignal =================================================
+%% Abstract:
+%%      Return the appropriate reference to the parameter.  This function *may*
+%%      be used by Simulink when optimizing the Block IO data structure.
+%%
+%function BlockOutputSignal(block,system,portIdx,ucv,lcv,idx,retType) void
+  %switch retType
+    %case "Signal"
+      %return LibBlockParameter(Value,ucv,lcv,idx)
+    %case "SignalAddr"
+      %assign idNum = SLibGetReimAndIdx(idx) 
+      %if ucv == "" && lcv == "" && idNum[0] == "" && idNum[1] == 0
+        %return SLibBlockParameterBaseAddrAsOutputExpr(Value)
+      %else
+        %return SLibBlockParameterAddrAsOutputExpr(Value, ucv, lcv, idx)
+      %endif
+      %%START_ASSERT
+    %default
+      %assign errTxt = "Unsupported return type: %<retType>"
+      %<LibBlockReportError(block,errTxt)>
+      %%END_ASSERT
+  %endswitch
+%endfunction
+
+%% [EOF] constant.tlc

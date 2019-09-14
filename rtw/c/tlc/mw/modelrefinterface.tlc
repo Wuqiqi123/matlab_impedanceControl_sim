@@ -1,0 +1,2447 @@
+%% ============================================================================
+%% 
+%% 
+%%
+%% Abstract:
+%%   This system file contains helper functions to create an 
+%% S-Function wrapper for any target.
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+
+%if EXISTS("_MODELREFINTERFACE_") == 0
+%assign _MODELREFINTERFACE_ = 1
+
+%% Function: SLibAddModelReferenceModelInterface
+%% Abstract:
+%%     Cache model reference target specific data in the MAT file
+%function SLibAddModelReferenceModelInterface(blkInterface) void
+   %assert(EXISTS(blkInterface) && !ISEMPTY(blkInterface))
+   %assert(IsModelReferenceTarget())
+   %with ::CompiledModel  
+      %% mdlRTW: no code is generated. this information is cached in binfo.mat
+      %assign rootIdx    = NumSystems-1
+      %assign sysIdx = NumSystems-2
+      %assign thisSystem = System[sysIdx]
+      %assign interface  = thisSystem.Interface
+      %assign fileName   = SLibGetSystemOutputHdrFileBaseName(System[sysIdx])
+
+      %with interface            
+         %if ::ProtectedModelReferenceTarget
+           %addtorecord blkInterface ProtectedModelReferenceTarget 1
+         %else
+           %addtorecord blkInterface ProtectedModelReferenceTarget 0
+         %endif
+         
+         %if CompiledModel.GenProtectedModelOrSubmodel
+           %addtorecord blkInterface ProtectingModelOrSubmodel 1
+         %else
+           %addtorecord blkInterface ProtectingModelOrSubmodel 0
+         %endif
+           
+         %if SLibSingleTasking()
+           %addtorecord blkInterface SingleTasking 1
+         %else
+           %addtorecord blkInterface SingleTasking 0
+         %endif
+         
+         %addtorecord blkInterface Tid01Eq %<Tid01Eq>
+      
+         %if ModelrefBlockNeedsDwork() && IsModelReferenceSimTarget()
+           %addtorecord blkInterface DWorkType "%<tsysMdlrefDWorkType>"
+         %endif
+      
+         %assign numInputs  = ExternalInputs.NumExternalInputs
+         %assign numOutputs = ExternalOutputs.NumExternalOutputs
+      
+         %addtorecord blkInterface HasNonContOutput %<HasNonContSigFeedingOutport()>
+         %addtorecord blkInterface NonContOutports %<GetNonContOutputPorts()>
+      
+         %assert(%<numInputs> >= %<NumCanonicalInputArgDefs>)
+         %assert(%<numOutputs> >= %<NumCanonicalOutputArgDefs>)
+
+         %if( EXISTS(ExternalInputs.VirtualBusExpandedInports))
+           %addtorecord blkInterface VirtualBusExpandedInports %<ExternalInputs.VirtualBusExpandedInports>
+         %else
+           %addtorecord blkInterface VirtualBusExpandedInports []
+         %endif
+         
+         %if( EXISTS(ExternalOutputs.VirtualBusExpandedOutports))
+           %addtorecord blkInterface VirtualBusExpandedOutports %<ExternalOutputs.VirtualBusExpandedOutports>
+         %else
+           %addtorecord blkInterface VirtualBusExpandedOutports []
+         %endif
+
+         %if( EXISTS(ExternalInputs.OriginalPortBusTypesInports))
+           %assign numInfos = ExternalInputs.NumOriginalPortBusTypesInports
+           %foreach idx = numInfos
+             %addtorecord blkInterface OriginalInputPortBusTypes {\
+             Port    ExternalInputs.OriginalPortBusTypesInports[idx].Port;\
+             BusType ExternalInputs.OriginalPortBusTypesInports[idx].BusType\
+             }
+           %endforeach
+         %else
+           %addtorecord blkInterface OriginalInputPortBusTypes []
+         %endif
+
+         %if( EXISTS(ExternalOutputs.OriginalPortBusTypesOutports))
+           %assign numInfos = ExternalOutputs.NumOriginalPortBusTypesOutports
+           %foreach idx = numInfos
+             %addtorecord blkInterface OriginalOutputPortBusTypes {\
+             Port    ExternalOutputs.OriginalPortBusTypesOutports[idx].Port;\
+             BusType ExternalOutputs.OriginalPortBusTypesOutports[idx].BusType\
+             }
+           %endforeach
+         %else
+           %addtorecord blkInterface OriginalOutputPortBusTypes []
+         %endif
+
+         %addtorecord blkInterface NumInputs %<numInputs>
+         %addtorecord blkInterface NumOutputs %<numOutputs>
+
+         %addtorecord blkInterface OkToMultiInstance %<OkToMultiInstanceModelref>
+         %assign thisModule = ::CompiledModel.RTWCGModules.RTWCGModule[thisSystem.CGIRModuleIdx]
+         %assign fcnIdx = ISFIELD(thisModule,"SystemFunctionTypes") && ISFIELD(thisModule.SystemFunctionTypes,"ModelConstructor") ...
+           ? GETFIELD(thisModule.SystemFunctionTypes,"ModelConstructor") : -1
+         %assign nonDefaultCtor = TLC_FALSE
+         %if fcnIdx > -1 && ::GenerateClassInterface
+           %assign ctorFcn = thisModule.Function[fcnIdx]
+           %if ctorFcn.NumArgs > 0
+             %assign nonDefaultCtor = TLC_TRUE
+           %endif
+         %endif
+         %addtorecord blkInterface hasNonDefaultCtor %<nonDefaultCtor>
+         %assign hasSynthesizedSelf = SLibGetSelfCoderDataGroupVarGroupIndex() > -1 && ...
+           ::CompiledModel.CoderDataGroup[SLibGetSelfCoderDataGroupIndex()].IsSynthesized
+         %addtorecord blkInterface modelHasSynthesizedSelf %<hasSynthesizedSelf>
+         %addtorecord blkInterface usesSimplifiedInterface %<thisModule.SimplifiedInterface>
+         %addtorecord blkInterface simplifiedInterfaceReason %<simplifiedInterfaceReason>
+         %assign allocatedInParent = FcnRTMAllocateInParent()
+         %addtorecord blkInterface rtmAllocateInParent %<allocatedInParent>
+
+         %addtorecord blkInterface NonFiniteInfo [%<NeedRealInf>, %<NeedRealMinusInf>, %<NeedRealNaN>] 
+         %addtorecord blkInterface FileName "%<fileName>"
+         %addtorecord blkInterface AncestorAllocatesCoderDataGroups ::CompiledModel.AncestorAllocatesCoderDataGroups
+         %if !IsModelRefScalableBuild()
+           %addtorecord blkInterface xDataType    "%<FcnSysVarGroupType(System[sysIdx],"ContStates")>"
+           %addtorecord blkInterface xDotDataType "%<FcnSysVarGroupType(System[sysIdx],"ContStatesDerivative")>"
+           %addtorecord blkInterface xDisDataType "%<FcnSysVarGroupType(System[sysIdx],"ContStatesDisabled")>"
+           %addtorecord blkInterface xAbsTolDataType "%<FcnSysVarGroupType(System[sysIdx],"ContStatesAbsoluteTolerance")>"
+           %addtorecord blkInterface xOptWidth    1
+           %addtorecord blkInterface zcOptWidth 1
+           %addtorecord blkInterface zcDataType "%<FcnSysVarGroupType(System[sysIdx],"ZCSV")>"
+           %addtorecord blkInterface IsScalableBuild 0
+         %else
+           %addtorecord blkInterface xDataType    "real_T"
+           %addtorecord blkInterface xDotDataType "real_T"
+           %addtorecord blkInterface xDisDataType "boolean_T"
+           %addtorecord blkInterface xAbsTolDataType "real_T"
+           %addtorecord blkInterface xOptWidth    %<::CompiledModel.NumContStates>
+           %addtorecord blkInterface zcOptWidth   %<::CompiledModel.ZCVectorlength>
+           %addtorecord blkInterface zcDataType   "real_T"
+           %addtorecord blkInterface IsScalableBuild 1
+           %addtorecord blkInterface HideChildDefineSymbol "%<GetHideChildDefineSymbol("define")>"
+         %endif
+         %if IsModelReferenceForASimstructBasedTarget()
+	   %addtorecord blkInterface StopReqAccessed "0"                
+         %else
+           %% Either this model has used the stopReq flag, or there is a model
+           %% block that is using the flag.
+           %assign stopReqAcc = RTMStopReqAccessed() || ::CompiledModel.ModelBlocksUseStopReq
+	   %addtorecord blkInterface StopReqAccessed %<stopReqAcc>
+         %endif
+         %addtorecord blkInterface ContTimeOutputInconsistentWithStateAtMajorStepAccessed %<ISFIELD(::CompiledModel, "HasContTimeOutputInconsistentWithStateAtMajorStep")>
+      
+         %% Absolute tolerance control flag for referenced model
+         %if IsVariableStepModelReferenceTarget() && NumContStates > 0
+           %addtorecord blkInterface refAbsTolControl %<VariableStepOpts.AbsTolControl>
+         %endif
+      
+         %% Adding NumDataTransfers from top model
+         %if ISFIELD(::CompiledModel, "NumDataTransfers") 
+           %assign numDataTransfers = ::CompiledModel.NumDataTransfers
+           %addtorecord blkInterface NumDataTransfers %<numDataTransfers>
+         %endif
+                      
+         %% clock Tick
+         %assign  clockTicksReq = CreateVectorWithValue(NumSampleTimes, 0)
+         %foreach tidIdx = NumSampleTimes
+	   %assign clockTicksReq[tidIdx] = ClockTickForTIDIsReqFcn(tidIdx)
+         %endforeach
+         %addtorecord blkInterface ClockTicksReq  %<clockTicksReq>
+      
+         %% Long clock Tick
+         %assign  longClockTicksReq = CreateVectorWithValue(NumSampleTimes, 0)
+         %foreach tidIdx = NumSampleTimes
+   	%assign longClockTicksReq[tidIdx] = LongClockTickForTIDIsReqFcn(tidIdx)
+         %endforeach
+         %addtorecord blkInterface LongClockTicksReq  %<longClockTicksReq>
+      
+         %% NeedFloatTime
+         %assign needFloatTime = CreateVectorWithValue(NumSampleTimes, 0)
+         %foreach tidIdx = NumSampleTimes
+           %assign needFloatTime[tidIdx] = ::CompiledModel.SampleTime[tidIdx].NeedFloatTime == "yes"
+         %endforeach
+         %addtorecord blkInterface NeedFloatTime %<needFloatTime>
+         
+         %addtorecord blkInterface RequireMultiRateSampleHits %<ERTPerTaskSampleHitsIsReqFcn()>
+     
+         %% Rate interactions
+         %addtorecord blkInterface ActualRateInteraction  %<::CompiledModel.MatrixOfRequireRateInteraction>
+            
+         %addtorecord blkInterface  HasInternalParameterRate %<MdlRefHasInternalParameterRate()>
+         
+         %addtorecord blkInterface HasParameterRateOutput %<MdlRefHasParameterRateOutput()>
+         
+         %% CAPI Flag
+         %addtorecord blkInterface RegFcnNeedsCAPIArgs %<::CompiledModel.RTWCAPI>
+      
+         %if ::CompiledModel.RTWCAPI
+           %% ModelRefCanonicalInputNeededByCAPI Flag
+           %addtorecord blkInterface ModelRefCanonicalInputNeededByCAPI %<IsModelRefCanonicalInputNeededByCAPI()>
+         %else
+           %addtorecord blkInterface ModelRefCanonicalInputNeededByCAPI TLC_FALSE
+         %endif
+      
+         %% presence of Inline Variants 
+         %addtorecord blkInterface HaveInlineVariants %<::CompiledModel.HasInlineVariants>
+         
+         %% Has a function-call subsystem that is set to inherited
+         %with InheritedFunctionCallSystems
+           %assign numInhSys = NumInheritedFunctionCallSystems
+           %if numInhSys > 0
+             %foreach idx = numInhSys
+               %addtorecord blkInterface InheritedFcnCallSystems { \
+               FcnCallSystemName InheritedFunctionCallSystem[idx].FcnCallSystemName;\
+               IsStateflowChart InheritedFunctionCallSystem[idx].IsStateflowChart\
+               }
+             %endforeach
+           %else
+             %addtorecord blkInterface InheritedFcnCallSystems []
+           %endif
+         %endwith
+
+         %addtorecord blkInterface NeedsTIDArgs %<::tMdlRefNeedTIDArgs>
+         %addtorecord blkInterface NeedCtrlRateMdlRefTiming %<SLibModelHasControllableRate()>
+
+         %addtorecord blkInterface NeedsErrorStatus %<!SuppressErrorStatus>
+      
+         %addtorecord blkInterface InitInternalMem %<SLibZeroMemory("RTM")>
+      
+         %addtorecord blkInterface RTMAccessed %<RealTimeModelAccessed>
+         
+         %addtorecord blkInterface RTMTypeName "%<tSimStructType>"
+      
+         %if !EXISTS(::NamespaceName)
+           %addtorecord blkInterface ModelNamespace ""
+         %else
+           %addtorecord blkInterface ModelNamespace "%<::NamespaceName>"
+         %endif
+
+         %if SelfCoderDataGroupIndex > -1 && ...
+           ((GenerateClassInterface && (NumSimulinkFunctions > 0 || SLibGetSelfVarGroupIndex() > 0 )) || ...
+           (OkToMultiInstanceModelref && IsModelReferenceSimTarget()))
+           %addtorecord blkInterface ClassDWorkAllocation TLC_FALSE
+         %else
+           %addtorecord blkInterface ClassDWorkAllocation TLC_TRUE
+         %endif
+
+         %% use SLibGetNeedFirstTime() instead of SLibIncludeERTFirstTime()
+         %% since it is the final word on whether or not we actually used
+         %% firstTime and include it in the argument list in SLibModelFcnArgs()
+         %addtorecord blkInterface NeedsFirstTime SLibGetNeedFirstTime()
+
+      %endwith %% interface
+
+       %<SLibWriteIOAttributes(blkInterface)>
+
+      %if IsModelReferenceRTWTarget()
+         %<SLibWriteVarsAndParamsUsed(blkInterface)>
+       %endif
+
+       %if MdlRefHasConstantOutput() 
+         %addtorecord blkInterface HasConstantOutput TLC_TRUE      
+       %else 
+         %addtorecord blkInterface HasConstantOutput TLC_FALSE
+       %endif
+    
+       %addtorecord blkInterface CodeVariants %<SLibGetCodeVariants()>
+
+       %% write out some things common to SIM and Simulink Coder targets                    
+       %<SLibWriteZeroCrossingInfo(blkInterface)>
+       %<SLibWriteTunableParameters(blkInterface)>
+
+       %if (IsModelReferenceSimTarget())
+         %% Cache the const output code buf for writing out the mdlOutputs function
+         %if ISFIELD(::CompiledModel, "TmpCodeBufForMdlOutputs")
+           %addtorecord blkInterface TmpCodeBufForMdlOutputs "%<::CompiledModel.TmpCodeBufForMdlOutputs>"
+         %endif
+      
+         %<SLibWriteDWorks(blkInterface)>      
+         %<SLibWriteParameters(blkInterface)>
+         %<SLibWriteModelCanonicalParams(blkInterface)>      
+         %<SLibWriteModelTestpointedParams(blkInterface)>
+         %<SLibWriteVariableSampleTimeInfo(blkInterface)>
+         %<SLibWriteControllableRateInfo(blkInterface)>
+         %<SLibWriteMultiInstanceInfo(blkInterface)>
+         %<SLibWriteForEachInfo(blkInterface)>
+       %endif
+
+       %% Always add the DenormalBehavior setting to the block interface.
+       %% See g1761204 for details.
+       %addtorecord blkInterface DenormalBehavior ...
+            "%<::CompiledModel.ConfigSet.DenormalBehavior>"
+
+  %endwith %% ::CompiledModel
+%endfunction
+
+/* Computes Simulink Variant objects' Name, Condition and IsImported properties
+along with AUTOSAR.Parameters'(which are associated with AUTOSAR.SystemConstant 
+CSC) name and value */
+%function SLibGetCodeVariants()  void
+   %createrecord VariantData {} 
+  
+   %if ISFIELD(::CompiledModel, "CodeVariants")
+       %assign codeVariants = ::CompiledModel.CodeVariants
+       %with codeVariants
+        %assign numSVIdxs = NumVariantObjectOrderedIndexs
+        %foreach svIdxIdx = numSVIdxs
+            %% get the index of the SV object from the table of indexes,
+            %% which is in SV object dependency order
+            %assign svIdx = VariantObjectOrderedIndexs[svIdxIdx]
+            %with SimulinkVariantObject[svIdx]
+                %createrecord Variant {}             
+                %addtorecord Variant Name Name
+                %addtorecord Variant Condition Condition
+                %addtorecord Variant IsImported IsImported
+                %addtorecord VariantData Variant %<Variant>
+            %endwith
+        %endforeach
+       %endwith
+   %endif
+
+   /* Compute the AUTOSAR Parameters associated with SystemConstant CSC.*/
+   %createrecord ParamData {} 
+  
+   %if ISFIELD(::CompiledModel, "ModelParameters")
+     %assign mdlParams = ::CompiledModel.ModelParameters
+     %foreach pIdx=mdlParams.NumParameters
+       %assign mdlParam = mdlParams.Parameter[pIdx]
+       %if (LibHasCustomStorage(mdlParam) && ...
+             ISEQUAL(LibGetRTWInfoObjectPackage(mdlParam), "AUTOSAR") && ...
+             ISEQUAL(LibGetCustomStorageClassName(mdlParam), "SystemConstant") )
+         %assign paramName = LibGetRecordIdentifier(mdlParam)
+         %assign paramValue = mdlParam.Value[0]
+
+         %createrecord Pair {}             
+         %addtorecord Pair ParamName paramName
+         %addtorecord Pair ParamValue STRING(paramValue)
+
+         %addtorecord ParamData Pair %<Pair>
+       %endif
+     %endforeach
+   %endif
+
+   /* Now get variant controls and parameters from submodels */
+   %if(ISFIELD(::CompiledModel, "SubModelCodeVariants")) 
+     %assign subModelVariants = ::CompiledModel.SubModelCodeVariants.VariantControl 
+     %if(ISFIELD(subModelVariants, "Variant")) 
+       %assign numVars = SIZE(subModelVariants.Variant, 1) 
+
+       %foreach idx = numVars 
+         %assign variant = subModelVariants.Variant[idx] 
+         %addtorecord VariantData Variant %<variant> 
+       %endforeach
+    %endif
+
+     %assign subModelParams = ::CompiledModel.SubModelCodeVariants.VariantParameter
+     %if(ISFIELD(subModelParams, "Pair")) 
+       %assign numParams = SIZE(subModelParams.Pair, 1) 
+          
+       %foreach idx = numParams 
+         %assign paramData = subModelParams.Pair[idx] 
+         %addtorecord ParamData Pair %<paramData> 
+       %endforeach 
+     %endif
+   %endif 
+  
+   /* Combine variant control and variant parameters */
+   %createrecord VariantAndParamsData {} 
+   %addtorecord VariantAndParamsData VariantControl %<VariantData>
+   %addtorecord VariantAndParamsData VariantParameter %<ParamData>
+   %return VariantAndParamsData
+%endfunction 
+
+
+%function FcnRTMAllocateInParent() void
+  %return OkToMultiInstanceModelref && SLibGetUseRTMcgType()
+%endfunction
+
+%function SLibGetNonInlinedSFcnNames() 
+  %createrecord functions {}
+
+  %assign numSFunctions = NumChildSFunctions
+  %foreach idx = numSFunctions
+    %assign thisBlock = ChildSFunctionList[idx]
+    %assign inlined = thisBlock.ParamSettings.Inlined
+    %if inlined == "no"
+      %assign name = thisBlock.ParamSettings.FunctionName
+      %addtorecord functions Function { Name STRING(name) }
+    %endif
+  %endforeach
+  
+  %if(ISFIELD(::CompiledModel, "SubModelNonInlinedSFunctions"))
+    %assign subModelSFcns = ::CompiledModel.SubModelNonInlinedSFunctions
+    %assign numSFcns = SIZE(subModelSFcns.Function, 1)
+    
+    %foreach idx = numSFcns
+      %assign sfcn = subModelSFcns.Function[idx]
+      %addtorecord functions Function %<sfcn>
+    %endforeach
+  %endif
+    
+  %return functions
+%endfunction
+
+%function SLibWriteIOAttributes(blkInterface) void
+  %assign numInputs  = ExternalInputs.NumExternalInputs
+  %assign numOutputs = ExternalOutputs.NumExternalOutputs
+  
+  %assign globalVec = []
+  %assign notReuseVec = []
+  %assign alignVec = [] 
+  %foreach portIdx = numOutputs
+    %assign extOut = ExternalOutputs.ExternalOutput[portIdx]
+    %assign globalVec = globalVec + ((extOut.GlobalInRTW == "yes") ? 1 : 0)
+    %assign notReuseVec = notReuseVec + ((extOut.NotReusable == "yes") ? 1 : 0)
+    %if extOut.Alignment > 0
+      %assign alignVec = alignVec + extOut.Alignment
+    %else
+      %assign alignVec = alignVec + -1
+    %endif
+  %endforeach
+  
+  %addtorecord blkInterface OutputPortGlobal %<globalVec>
+  %addtorecord blkInterface OutputPortNotReusable %<notReuseVec>
+  %addtorecord blkInterface OutputPortAlignment %<alignVec>
+  
+  %assign globalVec = []
+  %assign notReuseVec = []
+  %assign overwritableVec = []
+  %assign alignVec = []  
+  %assign fcnCallInputVec = []
+  %assign directFeedThrough = []
+  %foreach portIdx = numInputs
+    %assign extInp = ExternalInputs.ExternalInput[portIdx]
+    %assign globalVec = globalVec + ((extInp.GlobalInRTW == "yes") ? 1 : 0)
+    %assign notReuseVec = notReuseVec + ((extInp.NotReusable == "yes") ? 1 : 0)
+    %assign overwritableVec = overwritableVec + ((extInp.OverWritable == "yes") ? 1 : 0)
+    %assign fcnCallInputVec = fcnCallInputVec + ((extInp.FunctionCallInitiator == "yes") ? 1 : 0)
+    %assign directFeedThrough = directFeedThrough + ((ExternalInputs.ExternalInput[portIdx].DirectFeedThrough == "yes") ? 1 : 0)
+    %if extInp.Alignment > 0
+      %assign alignVec = alignVec + extInp.Alignment
+    %else
+      %assign alignVec = alignVec + -1
+    %endif    
+  %endforeach
+
+  %addtorecord blkInterface InputPortGlobal %<globalVec>
+  %addtorecord blkInterface InputPortNotReusable %<notReuseVec>
+  %addtorecord blkInterface InputPortOverWritable %<overwritableVec>
+  %addtorecord blkInterface InputPortFcnCallInitiator %<fcnCallInputVec>
+  %addtorecord blkInterface InputPortAlignment %<alignVec>
+  %addtorecord blkInterface DirectFeedThrough %<directFeedThrough>
+%endfunction
+
+
+%% This routine mimics SLibGenModelRefGlobalParamReg() and has
+%% a similar structure
+%function SLibWriteVarsAndParamsUsed(blkInterface) void
+  %%
+  %% By default, create an entry in blkInterface for AUTOSAR specific information
+  %if !ISFIELD(blkInterface, "AutosarParamAccessInfo")
+    %addtorecord blkInterface AutosarParamAccessInfo { \
+      InitializeAccess {}; \
+      OutputAccess     {}  \
+    }
+  %endif
+  
+    %if InlineParameters != 0
+    %% Write out real variables used by the sub-model to the model reference interface
+    %% so that such information can be propagated to the top model.
+    %with ::CompiledModel.ModelParameters
+      %foreach prmIdx=NumParameters
+        %assign param = Parameter[prmIdx]
+        %if param.Tunable == "yes" && ...
+          !ISEMPTY(param.WorkspaceVarName) && ...
+          !param.IsPublic && param.IsGlobal
+          
+          %assign identifier = LibGetRecordVarName(param)
+          %assign dims = LibBlockParameterDimensions(param)
+          %assign nDims = SIZE(dims, 1)
+          %assign isComplex = LibGetRecordIsComplex(param)
+          %assign dtId = LibCGTypeToSLType(param.CGTypeIdx)
+          %assert (dtId != -1)
+          %assign dtName = LibGetDataTypeSLNameFromId(dtId)
+          %assign parentDtId = -10
+          %assign dtChecksum = []
+          %assign isAnonymous = TLC_FALSE
+          %assign isFixpt = TLC_FALSE
+          %assign isScaledFloat = TLC_FALSE
+          %assign isSigned = TLC_FALSE
+          %assign requiredBits = 0
+          %assign fracSlope = 0
+          %assign fixedExp = 0
+          %assign bias = 0
+          %if LibIsBuiltInDataType(dtId)
+            %% Doing nothing whereas SLibGenModelRefGlobalParamReg()
+            %% is able to do something
+          %elseif LibIsEnumDataType(dtId)
+            %% Doing nothing whereas SLibGenModelRefGlobalParamReg()
+            %% is able to do something
+          %elseif LibIsStructDataType(dtId) && !LibIsDataTypeFixpt(dtId)
+            %assign dtName = LibGetDataTypeNameFromId(dtId)
+            %assign dtChecksum = DataTypes.DataType[dtId].StructDtChecksum
+            %assign isAnonymous = LibDataTypeIsAnonymousStruct(dtId)
+          %else %% Fixed-point (we hope)
+            %assign curDT = FixPt_GetDataTypeFromIndex(dtId)
+            %%
+            %if curDT.IsFixedPoint
+              %assign isFixpt = TLC_TRUE
+              %assign isScaledFloat = FixPt_DataTypeIsFloat(curDT)
+              %assign isSigned = (curDT.IsSigned == 1.0)
+              %assign requiredBits = curDT.RequiredBits
+              %assign fracSlope = curDT.FracSlope
+              %assign fixedExp = curDT.FixedExp
+              %assign bias = curDT.Bias
+            %else
+              %assign errTxt = ...
+                "User-defined data types not supported for interface parameters."
+              %<LibReportFatalError(errTxt)>
+            %endif
+          %endif
+          %addtorecord blkInterface GlobalParams { \
+            Identifier    identifier; \
+            NDims         nDims; \
+            Dims          dims; \
+            Complex       isComplex; \
+            DtChecksum    dtChecksum; \
+            DataTypeName  dtName; \
+            IsAnonymous   isAnonymous; \
+            IsFixpt       isFixpt; \
+            IsScaledFloat isScaledFloat; \
+            IsSigned      isSigned; \
+            RequiredBits  requiredBits; \
+            FracSlope     fracSlope; \
+            FixedExp      fixedExp; \
+            Bias          bias \
+          }
+          %%
+          %% If this param were a AUTOSAR parameter (declared using AUTOSAR.Parameter),
+          %% it will have some additional information. This information needs to be 
+          %% propagated up via blkInterface
+          %if ISFIELD(param, "RunnableAccessInfo")
+            %assign pAccessInfo = blkInterface.AutosarParamAccessInfo
+            %if ISFIELD(param.RunnableAccessInfo, "MdlRefInitializeFcn")
+              %addtorecord pAccessInfo.InitializeAccess %<identifier> 1
+            %endif
+            %if ISFIELD(param.RunnableAccessInfo, "MdlRefOutputFcn")
+              %addtorecord pAccessInfo.OutputAccess %<identifier> 1
+            %endif
+          %endif
+        %endif %% (param.Tunable == "yes")
+      %endforeach %% prmIdx=NumParameters
+    %endwith %% ::CompiledModel.ModelParameters
+  %endif %% InlineParameters
+
+  %assign globalVars = ::CompiledModel.ModelParameters.GlobalParamsList
+  %foreach idx = SIZE(globalVars, 1)
+    %addtorecord blkInterface GlobalVars { \
+      Identifier globalVars[idx] \
+    }
+  %endforeach
+    
+  %% Loop through model reference blocks and gather up their Autosar specific info
+  %assign mdlRefBlks = ISFIELD(::CompiledModel,"ModelReferenceBlocks") ? ...
+    ::CompiledModel.ModelReferenceBlocks : []
+  %if !ISEMPTY(mdlRefBlks)
+    %foreach rowIdx = SIZE(mdlRefBlks,0)
+      %assign mdlRefInfo  = mdlRefBlks[rowIdx]
+      %assign mSysIdx     = mdlRefInfo[0]
+      %assign bIdx        = mdlRefInfo[1]
+      %assign subMdlIntrf = GetModelrefInterface(System[mSysIdx].Block[bIdx])
+      %assign pAccessInfo = blkInterface.AutosarParamAccessInfo
+      %%
+      %% Add Init Runnable Access
+      %assign initAccess = ...
+        FIELDNAMES(subMdlIntrf.AutosarParamAccessInfo.InitializeAccess)
+      %assign numInitAccess = SIZE(initAccess, 1)
+      %foreach pIdx = numInitAccess
+         %assign paramName = initAccess[pIdx]
+         %addtorecord pAccessInfo.InitializeAccess %<paramName> 1
+       %endforeach
+       %%
+       %% Add Out Runnable Access
+       %assign outAccess = ...
+         FIELDNAMES(subMdlIntrf.AutosarParamAccessInfo.OutputAccess)
+       %assign numOutAccess = SIZE(outAccess, 1)
+       %foreach pIdx = numOutAccess
+         %assign paramName = outAccess[pIdx]
+         %addtorecord pAccessInfo.OutputAccess %<paramName> 1
+       %endforeach 
+     %endforeach
+  %endif
+
+%endfunction
+
+%function SLibWriteDWorks(blkInterface) void
+  %with ::CompiledModel
+    %with DWorks
+      %addtorecord blkInterface DWorks { \
+      NumSFcnWrapperDWorks NumSFcnWrapperDWorks \
+    }
+    %endwith
+  %endwith
+%endfunction
+
+
+%function SLibWriteGlobalParamList(blkInterface) void
+  %assign globalVars = ::CompiledModel.ModelParameters.GlobalParamsList
+  %foreach idx = SIZE(globalVars, 1)
+    %addtorecord blkInterface GlobalVars { \
+      Identifier globalVars[idx] \
+    }
+  %endforeach
+%endfunction
+
+
+
+%% This function has similar logic to SLibGenModelRefGlobalParamReg
+%function SLibWriteParameters(blkInterface) void
+  %with ::CompiledModel.ModelParameters
+    %assert (NumInrtP == (NumParameters - NumConstPrmsWithInit - NumConstPrms))    
+    %foreach prmIdx=NumInrtP
+      %assign param = Parameter[prmIdx]
+      %if param.Tunable == "yes" && ...
+        !ISEMPTY(param.WorkspaceVarName) && ...
+        (param.TestpointIndex < 0)
+        %<SLibWriteParams(blkInterface, param, prmIdx, "Parameters")>
+      %endif
+    %endforeach
+  %endwith
+%endfunction
+
+%function SLibWriteTunableParameters(blkInterface) void
+  %<writeStringVector(blkInterface, ::CompiledModel.ModelParameters.TunableParamsList, "TunableParamsList")>
+%endfunction
+
+%function writeStringVector(blkInterface, varList, recordName) void
+  %foreach idx = SIZE(varList, 1)
+    %addtorecord blkInterface %<recordName> { \
+      Identifier varList[idx] \
+    }
+  %endforeach
+%endfunction
+
+%function SLibWriteModelCanonicalParams(blkInterface) void
+  %assign baseIdx = GetBaseSystemIdx()
+  %with System[baseIdx].Interface
+    %foreach argIdx=NumCanonicalPrmArgDefs
+      %assign param = CanonicalPrmArgDef[argIdx]
+      %<SLibWriteParams(blkInterface, param, argIdx, "CanonicalParameters")>
+    %endforeach
+  %endwith
+%endfunction
+
+%function SLibWriteModelTestpointedParams(blkInterface) void
+  %assign tpSrcs = ::CompiledModel.TestPointedBlockParametersLogicalSrc
+  %assign numTp = SIZE(tpSrcs, 1)
+  %foreach tpIdx = numTp
+    %assign id = IDNUM(tpSrcs[tpIdx])
+    %assign param = ::CompiledModel.ModelParameters.Parameter[id[1]]
+    %<SLibWriteParams(blkInterface, param, tpIdx, "TestpointedParameters")>
+  %endforeach
+%endfunction
+
+
+%function SLibWriteParams(blkInterface, param, prmIdx, recordName) void
+  %assign identifier = LibGetRecordIdentifier(param)
+  
+  %assign dims = LibBlockParameterDimensions(param)
+  %assign nDims = SIZE(dims, 1)
+  
+  %assign dtId = param.OriginalDataTypeIdx
+  
+  %% For model reference
+  %assign isComplex = LibGetRecordIsComplex(param)
+  %assign isBuiltin = LibIsBuiltInDataType(dtId)
+  %assign isEnum = TLC_FALSE      
+  %assign isStruct = TLC_FALSE
+  %assign isFixpt = TLC_FALSE
+    
+  isTunable = TLC_FALSE
+  %if ISFIELD(param, "Tunable")
+    %assign isTunable = (param.Tunable == "yes")
+  %else
+    %assign isTunable = TLC_FALSE
+  %endif
+
+  %assign testpointIndex = -1
+  %if recordName == "TestpointedParameters"
+    %if ISFIELD(param, "TestpointIndex")  
+      %assign testpointedParam = param
+      %assign testpointIndex = param.TestpointIndex
+    %endif
+  %elseif recordName == "CanonicalParameters"
+    %assign modelArgIndex = ::CompiledModel.TestPointedModelArgumentsLogicalSrc[prmIdx]
+    %if modelArgIndex != "NONE"
+      %assign id = IDNUM(modelArgIndex)
+      %assign testpointedParam = ::CompiledModel.ModelParameters.Parameter[id[1]]
+      %assign testpointIndex = testpointedParam.TestpointIndex
+    %endif
+  %endif
+   
+  %if (ISFIELD(param, "IsUsed") && (param.IsUsed == "yes")) || ...
+    (testpointIndex >= 0)
+    %assign isUsed = TLC_TRUE
+  %else
+    %assign isUsed = TLC_FALSE
+  %endif 
+
+  %if recordName == "TestpointedParameters"
+    %if ISEMPTY(param.WorkspaceVarName)
+      %assign identifier = param.Identifier  
+    %else
+      %assign identifier = param.WorkspaceVarName
+    %endif
+  %endif
+
+  %assign coderGroup  = ""
+  %if ISFIELD(param, "ModelParamGroup")
+    %assign coderGroup = param.ModelParamGroup
+    %assign identifier = param.Identifier
+  %endif
+
+  %assign dtName = ""
+  %if dtId >= 0
+    %if isComplex
+      %assign dtName = LibGetDataTypeComplexNameFromId(dtId)
+    %else
+      %assign dtName = LibGetDataTypeNameFromId(dtId)
+    %endif
+    %assign dtEnum = ""
+  %endif
+
+  %% For structured param
+  %assign dtChecksum = []
+  %assign isAnonymous = TLC_FALSE
+  
+  %% For fixed-point param
+  %assign isFloat = TLC_FALSE
+  %assign isSigned = TLC_FALSE
+  %assign requiredBits = 0
+  %assign fracSlope = 0
+  %assign fixedExp = 0
+  %assign bias = 0      
+  
+  %if LibIsBuiltInDataType(dtId)
+    %if dtId > -1
+      %assign dtEnum = LibGetDataTypeEnumFromId(dtId)
+    %else
+      %assign dtEnum = "DYNAMICALLY_TYPED"
+    %endif
+  %elseif LibIsEnumDataType(dtId)
+    %assign dtName = LibGetDataTypeNameFromId(dtId)
+    %assign isEnum = LibIsEnumDataType(dtId)
+  %elseif LibIsStructDataType(dtId) && !LibIsDataTypeFixpt(dtId)        
+    %assign dtName = LibGetDataTypeNameFromId(dtId)
+    %assign isStruct = LibIsStructDataType(dtId)
+    %assign dtChecksum = DataTypes.DataType[dtId].StructDtChecksum
+    %assign isAnonymous = LibDataTypeIsAnonymousStruct(dtId)
+  %else %% Fixed-point (we hope)
+    %assign curDT = FixPt_GetDataTypeFromIndex(dtId)
+    %%
+    %if curDT.IsFixedPoint
+      %assign isFixpt = TLC_TRUE
+      %assign isFloat = FixPt_DataTypeIsFloat(curDT)
+      %assign isSigned = (curDT.IsSigned == 1.0)
+      %assign requiredBits = curDT.RequiredBits
+      %assign fracSlope = curDT.FracSlope
+      %assign fixedExp = curDT.FixedExp
+      %assign bias = curDT.Bias
+    %else
+      %assign errTxt = ...
+        "User-defined data types not supported for interface parameters."
+      %<LibReportFatalError(errTxt)>
+    %endif
+  %endif
+
+  %addtorecord blkInterface %<recordName> { \
+    Identifier    identifier; \ 
+    NDims         nDims; \
+    Dims          dims; \
+    IsBuiltin     isBuiltin; \
+    IsEnum        isEnum; \
+    Complex       isComplex; \
+    IsStruct      isStruct; \
+    IsUsed        isUsed; \
+    Tunable       isTunable; \
+    DtChecksum    dtChecksum; \
+    DataTypeId    dtId; \
+    DataTypeName  dtName; \
+    DataTypeEnum  dtEnum; \
+    IsAnonymous   isAnonymous; \
+    IsFixpt       isFixpt; \
+    IsScaledFloat isFloat; \
+    IsSigned      isSigned; \
+    RequiredBits  requiredBits; \
+    FracSlope     STRING(fracSlope); \
+    FixedExp      fixedExp; \
+    Bias          STRING(bias); \
+    TestpointIndex testpointIndex; \
+    CoderGroup    coderGroup \
+  }
+%endfunction
+
+%function SLibWriteExternalInputs(blkInterface) void
+  %% Write information for Inports
+  %foreach idx = ExternalInputs.NumExternalInputs
+    %assign inport = ExternalInputs.ExternalInput[idx]
+    %with inport
+
+      %% A subset of the information for Inports is always emitted, including
+      %% for the "right-click/subsystem build" case
+
+      %if SLibGetRecordIsUnitsEnabled()
+        %assign unitExpr = SLibGetRecordASCIIEscapedUnitExpr(inport)
+      %else
+        %assign unitExpr = ""
+      %endif
+
+      %assign recordDataTypeId = LibGetRecordDataTypeId(inport)
+      %assign dataTypeEnumFromId = LibGetDataTypeEnumFromId(recordDataTypeId)
+      %assign isFcnCall        = dataTypeEnumFromId == "SS_FCN_CALL"
+
+      %% process the rest of the information only for ModelRefTarget or 
+      %% "non-right-click / non-subsystem" builds
+      %if !CompiledModel.RightClickBuild
+      %assign sigID            = LibGetRecordIdentifier(inport) + ":"
+      %assign dims             = LibGetRecordDimensions(inport)
+      %assign symbolicDims     = LibGetRecordSymbolicDimensions(inport)
+      %assign numDimensions    = SIZE(%<dims>,1)
+      %assign isFunctionCallInitiator = !(inport.FunctionCallInitiator == "no")
+      
+      %assign dataTypeIdx      = recordDataTypeId
+      %assign portWidth        = LibGetRecordWidth(inport)
+      %assign symbPortWidth    = LibGetRecordSymbolicWidth(inport)
+      %if TYPE(TID) == "Number" && TID != -2
+        %assign sampleTime       = SampleTime[TID].PeriodAndOffset[0]
+        %assign offsetTime       = SampleTime[TID].PeriodAndOffset[1]
+        %assert(TID==SampleTime[TID].TID)
+      %else
+        %% Inport block could get constant sample time. see 
+        %% tmg1247472_VC1.m:testGeneratedCode
+        %assign sampleTime    = "mxGetInf()"
+        %assign offsetTime    = 0
+      %endif     
+      
+      %assign isBuiltin        = LibIsFundamentalBuiltInDataType(dataTypeIdx)
+      %assign isComplex        = LibGetRecordIsComplex(inport)
+      %assign isFrame          = (FrameData == "yes")
+      %assign directFT         = (DirectFeedThrough == "yes")
+      %assign isAlias          = LibIsAliasDataType(dataTypeIdx)
+      %assign isBus            = LibDataTypeIsBus(dataTypeIdx)
+      %assign isString         = LibIsStringDataType(dataTypeIdx)
+      %assign stringMaxLength  = LibGetStringTypeMaxLength(dataTypeIdx)
+      %assign OriPrtIdx = inport.OriginalPortIndex
+      %if IsModelReferenceTarget()
+         %assign isReusable       = !(NotReusable == "yes")
+         %assign isGlobalInRTW    = GlobalInRTW == "yes"
+         %assign overwritable     = OverWritable == "yes" ? "true" : "false"
+      %else
+         %% For now, specify default values for these properties
+         %% which maintains previous Model block SIL/PIL behavior
+         %assign isReusable    = TLC_FALSE
+         %assign isGlobalInRTW = TLC_TRUE
+         %assign overwritable  = "false"
+      %endif
+      %assign isAsyncTriggered   = LibAsynchronousTriggeredTID(TID) && !SLibNonInlinedModelWideEventTID(TID)
+      %assign isUnion            = SLibUnionSampletimeTID(TID)
+      %if isUnion 
+        %assign containedTs = ::CompiledModel.SampleTime[TID].ContainedTs
+      %else
+        %assign containedTs = TID
+      %endif
+      %assign isControllableRate = SLibControllableRateTID(TID)
+      %assign isZeroBased        = LibBlockIsIndexZeroBased(inport)
+      %assign isOneBased         = LibBlockIsIndexOneBased(inport)
+      %assign isVarDim           = SLibGetExternalIOIsVarDims(inport)
+      %assign dataTypeName       = getDataTypeName(dataTypeIdx)
+      %assign dataEnum           = dataTypeEnumFromId
+      
+      %assign isPointer        = dataEnum == "SS_POINTER"
+      %assign isInteger        = dataEnum == "SS_INTEGER"
+      
+      %% For fixed-point data
+      %assign curDT = FixPt_GetDataTypeFromIndex(dataTypeIdx)
+      %if curDT.IsFixedPoint
+        %assign isFixpt = TLC_TRUE
+        %assign isScaledFloat = FixPt_DataTypeIsFloat(curDT)
+        %assign isSigned = (curDT.IsSigned == 1.0)
+        %assign requiredBits = curDT.RequiredBits
+        %assign fracSlope = curDT.FracSlope
+        %assign fixedExp = curDT.FixedExp
+        %assign bias = curDT.Bias        
+      %else
+        %assign isFixpt = TLC_FALSE
+        %assign isScaledFloat = TLC_FALSE
+        %assign isSigned = TLC_FALSE
+        %assign requiredBits = 0
+        %assign fracSlope = 0
+        %assign fixedExp = 0
+        %assign bias = 0
+      %endif
+      
+      %% For Messages
+      %assign isMsg = inport.IsMessage
+      %if isMsg
+        %assign msgQueueLen  = inport.MessageQueueLength
+        %assign msgQueueType = inport.MessageQueueType
+        %assign msgQueuePOrder = inport.MessageQueuePriorityOrder
+        %assign msgQueueID = inport.MessageQueueID
+        %assign msgQueueExInportIdx = inport.MessageExInportID
+      %else
+        %assign msgQueueLen  = -1
+        %assign msgQueueType = ""
+        %assign msgQueuePOrder = ""
+        %assign msgQueueID = -1
+        %assign msgQueueExInportIdx = -1
+      %endif
+      
+      %endif
+    %endwith    
+        
+    %% Always add UnitExpr and IsFcnCall to the interface Inports: this is to
+    %% provide features that work with generated code (for example, SIL) with
+    %% information on Simulink Units for inports, even in the case of
+    %% "right-click/subsystem" builds, as this is not available in CodeInfo
+    %addtorecord blkInterface Inports { \
+      UnitExpr                  unitExpr; \
+      IsFcnCall                 isFcnCall }
+    %% add the other fields only for 'non-right-click/non-subsystem' builds
+    %if !CompiledModel.RightClickBuild
+       %assign designMin = STRING(inport.DesignMin[0])
+       %assign designMax = STRING(inport.DesignMax[0])
+    %% Some fields are not generated for the RTW target
+    %if IsModelReferenceSimTarget()
+      %assign feedsDerivPort = inport.FeedsDerivPort
+    %else
+      %assign feedsDerivPort = []
+    %endif
+
+      %addtorecord blkInterface.Inports[idx] \
+      SID                       sigID; \
+      FeedsDerivPort            feedsDerivPort; \                
+      DesignMin                 designMin; \                
+      DesignMax                 designMax; \                
+      FunctionCallInitiator     isFunctionCallInitiator; \
+      Dims                      dims; \
+      SymbolicDims              symbolicDims; \
+      NDims                     numDimensions; \
+      DataTypeName              dataTypeName; \
+      DataEnum                  dataEnum; \
+      PortWidth                 portWidth; \
+      SymbolicPortWidth         symbPortWidth; \
+      IsBuiltin                 isBuiltin; \
+      IsComplex                 isComplex; \
+      IsFrame                   isFrame; \
+      IsStruct                  isBus; \
+      IsString                  isString; \
+      StringMaxLength           stringMaxLength; \
+      IsPointer                 isPointer; \
+      IsInteger                 isInteger; \
+      DirectFeedThrough         directFT; \
+      SampleTime                {Period STRING(sampleTime); \
+                                 Offset STRING(offsetTime)}; \
+      IsReusable                isReusable; \
+      OverWritable              overwritable; \
+      IsAsyncTriggered          isAsyncTriggered; \
+      IsUnion                   isUnion; \
+      ContainedTs               containedTs; \
+      IsControllableRate        isControllableRate; \
+      IsZeroBased               isZeroBased; \
+      IsOneBased                isOneBased; \
+      IsVarDim                  isVarDim; \
+      IsAlias                   isAlias; \
+      IsConstant                TLC_FALSE; \
+      GlobalInRTW               isGlobalInRTW; \
+      IsFixpt                   isFixpt; \
+      IsScaledFloat             isScaledFloat; \
+      IsSigned                  isSigned; \
+      RequiredBits              requiredBits; \
+      FracSlope                 STRING(fracSlope); \
+      FixedExp                  fixedExp; \
+      Bias                      STRING(bias); \
+      OriginalPortIndex         OriPrtIdx \
+      IsMessage                 isMsg \
+      MessageData { \
+          QueueLength           msgQueueLen \
+          QueueType             msgQueueType \
+          QueuePriorityOrder    msgQueuePOrder \
+          QueueID               msgQueueID \
+          QueueExInportIdx      msgQueueExInportIdx \
+      } \
+   
+    %endif
+  %endforeach          
+%endfunction
+
+
+%function SLibWriteExternalOutputs(blkInterface) void
+  %% do this outside of the loop because this is a costly operation that
+  %% loops over all inputs
+  %assign modelOutputSizeDependOnlyInputSize = SLibModelOutputSizeDependOnlyInputSize()
+
+  %foreach idx = ExternalOutputs.NumExternalOutputs        
+    %with ExternalOutputs 
+      %% Need cache this information since we can't not get the correct portWidth information 
+      %% from CodeInfo.
+      %assign outport       = ExternalOutput[idx]
+      %assign sysIdx        = outport.Block[0]
+      %assign blkIdx        = outport.Block[1]
+      %assign outportBlock  = System[sysIdx].Block[blkIdx]
+      %with System[sysIdx]
+        %with outportBlock   
+          %% A subset of the information for Outports is always emitted,
+          %% including for the "right-click/subsystem build" case
+
+          %if SLibGetRecordIsUnitsEnabled()
+            %assign unitExpr      = LibBlockInputSignalASCIIEscapedUnitExpr(0)
+          %else
+            %assign unitExpr      = ""
+          %endif
+
+          %assign blockInputSignalDataTypeId = LibBlockInputSignalDataTypeId(0)
+          %assign dataTypeEnumFromId = LibGetDataTypeEnumFromId(blockInputSignalDataTypeId)
+          %assign isFcnCall = (dataTypeEnumFromId == "SS_FCN_CALL")
+        %endwith
+      %endwith
+
+      %% process the rest of the information only for ModelRefTarget or 
+      %% for "non-right-click / non-subsystem" builds
+      %if !CompiledModel.RightClickBuild
+      %assign sigID         = ""
+      %assign dims          = LibGetRecordDimensions(outport)
+      %assign numDimensions = SIZE(%<dims>,1)
+      
+      %assign isZeroBased      = LibBlockIsIndexZeroBased(outport)
+      %assign isOneBased       = LibBlockIsIndexOneBased(outport)
+      
+      %if ISFIELD(ExternalOutput[idx],"BlkIOUpdatedInAnotherExecContext")
+        %if ExternalOutput[idx].BlkIOUpdatedInAnotherExecContext == "yes"
+          %assign updatedInAnotherCtx = "true"
+        %else
+          %assign updatedInAnotherCtx = "false"
+        %endif
+      %else
+        %assign updatedInAnotherCtx = ""
+      %endif          
+          
+      %if EXISTS(ExternalOutput[idx].ICAttributes)
+        %assign hasICAtributes = TLC_TRUE
+        %assign icaStart           = (ExternalOutput[idx].ICAttributes.Start == "yes")
+        %assign icaFirstInitialize = (ExternalOutput[idx].ICAttributes.FirstInitialize == "yes")
+        %assign icaDisable         = (ExternalOutput[idx].ICAttributes.Disable == "yes")
+      %else
+        %assign hasICAtributes = TLC_FALSE
+        %assign icaStart = TLC_FALSE
+        %assign icaFirstInitialize = TLC_FALSE
+        %assign icaDisable = TLC_FALSE
+      %endif
+      
+      %with System[sysIdx]
+        %with outportBlock
+          %assign portWidth     = LibBlockInputSignalWidth(0)
+          %assign symbPortWidth = LibBlockInputSignalSymbolicWidth(0)
+          %assign dims          = LibBlockInputSignalDimensions(0)
+          %assign symbolicDims  = LibBlockInputSignalSymbolicDimensions(0)
+          %assign dataTypeIdx   = blockInputSignalDataTypeId
+          %% get the data type name
+          %assign dtName        = getDataTypeName(dataTypeIdx)          
+          %assign numDimensions = LibBlockInputSignalNumDimensions(0)
+	  %assign isComplex     = LibBlockInputSignalIsComplex(0)
+	  %assign isFrame       = LibBlockInputSignalIsFrameData(0)
+          %if TYPE(TID) == "Number" && !SLibParameterChangeEventTID(TID)
+            %assign sampleTime    = SampleTime[TID].PeriodAndOffset[0]
+	    %assign offsetTime    = SampleTime[TID].PeriodAndOffset[1]
+            %assert(TID==SampleTime[TID].TID)
+            %assign isConstant    = 0
+          %elseif SLibParameterChangeEventTID(TID)
+            %assign sampleTime    = "mxGetInf()"
+	    %assign offsetTime    = 0
+            %assign isConstant    = 1
+            %% At least for now, parameter and constant are both
+            %% treated like legacy constant
+          %else
+            %assign sampleTime    = "mxGetInf()"
+            %assign offsetTime    = "mxGetInf()"
+            %assign isConstant    = 1
+          %endif
+          %assign isBus = LibDataTypeIsBus(dataTypeIdx)
+          %assign isString           = LibIsStringDataType(dataTypeIdx)
+          %assign stringMaxLength  = LibGetStringTypeMaxLength(dataTypeIdx)
+          %assign isAsyncTriggered   = LibAsynchronousTriggeredTID(TID) && !SLibNonInlinedModelWideEventTID(TID)
+          %assign isUnion            = SLibUnionSampletimeTID(TID)
+          %if isUnion 
+            %assign containedTs = ::CompiledModel.SampleTime[TID].ContainedTs
+          %else
+            %assign containedTs = TID
+          %endif
+          %assign isControllableRate = SLibControllableRateTID(TID)
+          %assign designMin = STRING(ExternalOutputs.ExternalOutput[idx].DesignMin[0])
+          %assign designMax = STRING(ExternalOutputs.ExternalOutput[idx].DesignMax[0])
+
+          %% Some fields are not generated for the RTW target
+          %if IsModelReferenceSimTarget()
+            %assign discreteValuedOutput = (outport.DiscreteValuedOutput == "yes")
+            %assign okToMerge = outport.OkToMerge
+            %assign fedByBlockWithModesNoZCs = ExternalOutputs.ExternalOutput[idx].FedByBlockWithModesNoZCs
+            %assign nonContinuous = ExternalOutputs.ExternalOutput[idx].NonContinuous
+          %else
+            %assert(!ISFIELD(outport,"DiscreteValuedOutput"))
+            %assert(!ISFIELD(outport,"OkToMerge"))    
+            %assert(!ISFIELD(outport,"fedByBlockWithModesNoZCs"))
+            %assert(!ISFIELD(outport,"nonContinuous")) 
+            %assign discreteValuedOutput = []
+            %assign okToMerge = []
+            %assign fedByBlockWithModesNoZCs = []
+            %assign nonContinuous = []
+          %endif
+
+          %assign OriPrtIdx    = outport.OriginalPortIndex
+          %if IsModelReferenceTarget()
+             %assign isReusable  = !(outport.NotReusable == "yes")
+             %assign globalInRTW = outport.GlobalInRTW == "yes"
+          %else
+             %% For now, specify default values for these properties
+             %% which maintains previous Model block SIL/PIL behavior
+             %assign isReusable  = TLC_FALSE
+             %assign globalInRTW = TLC_TRUE
+          %endif
+          
+          %assign isBuiltin = LibIsFundamentalBuiltInDataType(dataTypeIdx)
+          %assign isAlias = LibIsAliasDataType(dataTypeIdx)
+          %assign curDT = FixPt_GetDataTypeFromIndex(dataTypeIdx)
+          %if curDT.IsFixedPoint
+            %assign isFixpt = TLC_TRUE
+            %assign isScaledFloat = FixPt_DataTypeIsFloat(curDT)
+            %assign isSigned = (curDT.IsSigned == 1.0)
+            %assign requiredBits = curDT.RequiredBits
+            %assign fracSlope = curDT.FracSlope
+            %assign fixedExp = curDT.FixedExp
+            %assign bias = curDT.Bias        
+          %else
+            %assign isFixpt = TLC_FALSE
+            %assign isScaledFloat = TLC_FALSE
+            %assign isSigned = TLC_FALSE
+            %assign requiredBits = 0
+            %assign fracSlope = 0
+            %assign fixedExp = 0
+            %assign bias = 0
+          %endif         
+
+          %assign dtEnum = dataTypeEnumFromId
+          %assign isPointer = (dtEnum == "SS_POINTER")
+          %assign isInteger = (dtEnum == "SS_INTEGER")
+          
+          %% Copy the logic from SLibDumpRegisterSetOutputSizeRuleTerms()
+          %assign isVarDim  = SLibGetExternalIOIsVarDims(outport)
+          %assign NumInputsDimsDependRules = []
+          %assign DimsDependRulesInputIndices = []
+          %if modelOutputSizeDependOnlyInputSize
+            %if isVarDim
+              %assign NumInputsDimsDependRules = outport.NumInputsDimsDependRules
+              %assign DimsDependRulesInputIndices = outport.DimsDependRulesInputIndices
+            %endif
+          %endif
+          
+          %% For Messages
+          %assign isMsg = outport.IsMessage
+          
+        %endwith
+      %endwith             
+      %endif        
+    %endwith
+    
+    %% Always add UnitExpr and IsFcnCall to the interface Outports: this is to
+    %% provide features that work with generated code (for example, SIL) with
+    %% information on Simulink Units for inports, even in the case of
+    %% "right-click/subsystem" builds, as this is not available in CodeInfo
+    %addtorecord blkInterface Outports { \
+      UnitExpr                       unitExpr; \
+      IsFcnCall                      isFcnCall }
+    %% add the other fields only for 'non-right-click/non-subsystem' builds
+    %if !CompiledModel.RightClickBuild
+      %addtorecord blkInterface.Outports[idx]  \
+      SID                            sigID; \
+      Dims                           dims; \
+      SymbolicDims                   symbolicDims; \
+      NDims                          numDimensions; \
+      DataTypeIdx                    dataTypeIdx; \
+      OkToMerge                      okToMerge; \
+      FedByBlockWithModesNoZCs       fedByBlockWithModesNoZCs; \
+      NonContinuous                  nonContinuous; \
+      DesignMin                      designMin; \                
+      DesignMax                      designMax; \                
+      PortWidth                      portWidth; \
+      SymbolicPortWidth              symbPortWidth; \      
+      IsComplex                      isComplex; \
+      IsFrame                        isFrame; \
+      IsBuiltin                      isBuiltin; \
+      IsStruct                       isBus; \
+      IsString                       isString; \
+      StringMaxLength                stringMaxLength; \
+      IsPointer                      isPointer; \
+      IsInteger                      isInteger; \
+      DataTypeName                   dtName; \
+      IsReusable                     isReusable; \
+      GlobalInRTW                    globalInRTW; \
+      HasICAtributes                 hasICAtributes; \
+      ICAttributes { \
+        Start           icaStart \
+        FirstInitialize icaFirstInitialize \
+        Disable         icaDisable \
+      }; \
+      IsConstant                       isConstant; \
+      SampleTime                       {Period STRING(sampleTime); \
+                                        Offset STRING(offsetTime)  }; \
+      BlkIOUpdatedInAnotherExecContext updatedInAnotherCtx; \
+      IsAsyncTriggered                 isAsyncTriggered; \
+      IsUnion                          isUnion; \
+      ContainedTs                      containedTs; \
+      IsControllableRate               isControllableRate; \
+      IsZeroBased                      isZeroBased; \
+      IsOneBased                       isOneBased; \
+      IsVarDim                         isVarDim; \
+      IsAlias                          isAlias; \
+      DiscreteValuedOutput             discreteValuedOutput; \
+      IsFixpt                   isFixpt; \
+      IsScaledFloat             isScaledFloat; \
+      IsSigned                  isSigned; \
+      RequiredBits              requiredBits; \
+      FracSlope                 STRING(fracSlope); \
+      FixedExp                  fixedExp; \
+      Bias                      STRING(bias); \
+      NumInputsDimsDependRules  NumInputsDimsDependRules; \
+      DimsDependRulesInputIndices DimsDependRulesInputIndices; \
+      OriginalPortIndex         OriPrtIdx \    
+      IsMessage                 isMsg \
+
+    %endif
+  %endforeach
+%endfunction
+
+%% Function: SLibCreateModelInterface
+%% Abstract:
+%%     Cache cross-target data in the MAT file
+%%     This data is applicable to model reference and standalone
+%%     code generation targets.
+%function SLibCreateModelInterface()
+   %createrecord blkInterface { Name  "%<Name>"}
+   
+   %% check for a model reference build or for 
+   %% "non-right-click / non-subsystem" builds
+   %if !CompiledModel.RightClickBuild
+
+   %addtorecord blkInterface ParameterChangeEventTID %<SLibTidOfParameterChangeEvent()>
+         
+   %if MdlRefDisallowSampleTimeInheritance() && ...
+      ISFIELD(::CompiledModel, "NumMdlRefSampleTimeMapStructs")
+      %% Sample Time Map Structs
+      %assign numStructs = ::CompiledModel.NumMdlRefSampleTimeMapStructs 
+        
+      %foreach structIdx = numStructs
+         %addtorecord blkInterface MdlRefSampleTimeMapStruct { \
+            srcIdx MdlRefSampleTimeMapStruct[structIdx].srcIdx; \
+            numDsts MdlRefSampleTimeMapStruct[structIdx].numDsts; \
+            dstIdx MdlRefSampleTimeMapStruct[structIdx].dstIdx \
+         }
+      %endforeach                     
+   %endif
+
+   %addtorecord blkInterface DisallowSampleTimeInheritance %<MdlRefDisallowSampleTimeInheritance()>
+
+   %% StartTime
+   %addtorecord blkInterface StartTime "%<StartTime>"
+   %% StopTime
+   %addtorecord blkInterface StopTime "%<StopTime>"
+   %% EvaledLifeSpan
+   %addtorecord blkInterface EvaledLifeSpan ...
+            "%<::CompiledModel.ConfigSet.EvaledLifeSpan>"      
+   %% Signal logging save format
+   %addtorecord blkInterface CompiledSignalLoggingSaveFormat ...
+            "%<::CompiledModel.DataLoggingOpts.CompiledSignalLoggingSaveFormat>"   
+   %% Logging save format
+   %addtorecord blkInterface CompiledLoggingSaveFormat ...
+            "%<::CompiledModel.DataLoggingOpts.CompiledLoggingSaveFormat>"   
+
+   %addtorecord blkInterface FixedStepSizeBasedOnHeuristic (::CompiledModel.FixedStepSizeBasedOnHeuristic == "yes")
+
+   %% It's possible that the SIM and Coder targets have different requirements
+   %% for absolute time, so we store it in the interface. (See InitCond block)
+   %addtorecord blkInterface NeedAbsoluteTime SLibNeedAbsoluteTime()
+
+   %% It's possible that the SIM and Coder targets have different results for
+   %% for inheritance allowed, so we store it in the interface. (For example, 
+   %% If a model has no inports and only prmTs outports, for sim targets it is
+   %% disallowed, but for rtw targets the outports can be the fundTs and then
+   %% inheritance can be allowed (see g1497319)
+   %addtorecord blkInterface ModelRefTsInheritanceAllowed ::CompiledModel.ModelSampleTimeInheritanceDetails.AllowedOverall == "yes" ? TLC_TRUE : TLC_FALSE
+
+   %addtorecord blkInterface ModelRefTsInheritance      "%<ModelRefTsInheritance>"
+
+   %if IsModelReferenceTarget()
+      %addtorecord blkInterface IsConstant %<MdlRefIsConstSampleBlock()>
+   %else
+      %% IsConstant: Currently only available for referenced models, but
+      %% SIL/PIL doesn't support constant Model blocks anyway (g753925)
+      %% so for now, hardcode to false.
+      %addtorecord blkInterface IsConstant TLC_FALSE
+   %endif
+
+   %addtorecord blkInterface HasRootTriggerPort         "%<::CompiledModel.HasRootTriggerPort>"
+   %addtorecord blkInterface HasRootEnablePort          "%<::CompiledModel.HasRootEnablePort>"
+   %addtorecord blkInterface RootTriggerType            "%<::CompiledModel.RootTriggerType>"
+   %addtorecord blkInterface RootTriggerTsType          "%<::CompiledModel.RootTriggerTsType>"
+   %addtorecord blkInterface IsExportFcnDiagram         SLibIsExportFcnDiagram()
+
+   %addtorecord blkInterface IsAPeriodicTriggered %<MdlRefIsAPERTriggeredBlock()>
+   %addtorecord blkInterface MatrixDimensionThreshhold  matrixDimensionThreshhold
+
+   %<SLibWriteDescExpFcnMdlInfo(blkInterface)>
+   %<SLibWriteExternalPortGroups(blkInterface)>
+   %<SLibWriteFunctionCallInfo(blkInterface)>   
+   %<SLibWriteStateAccessInfo(blkInterface)>
+   %addtorecord blkInterface HasStatesModifiedInOutputUpdate HasStatesModifiedInOutputUpdate
+   %endif
+   %% process this information also for a subsystem build
+   %<SLibWriteSimulinkFunctions(blkInterface)>
+   %<SLibWriteServicePorts(blkInterface)>
+   %<SLibWriteExternalOutputs(blkInterface)>  
+   %<SLibWriteExternalInputs(blkInterface)>
+
+   %<SLibWriteModelWideEventsInfo(blkInterface)>
+   %return blkInterface
+%endfunction
+
+%function SLibAddCommonModelInterface(blkInterface) void
+   %% Add information common to model reference and top model interfaces
+   %% to modelInterface.
+   %% 
+
+   %% Non-inlined s-function
+   %addtorecord blkInterface HasNonInlinedSfcn SLibModelHierarchyContainsNoninlinedSfcn()
+   %addtorecord blkInterface NonInlinedSFcnNames %<SLibGetNonInlinedSFcnNames()>
+
+   %% FirstInitCond flag
+   %addtorecord blkInterface FirstInitConditionReq SLibGetIsFirstInitCondAccessed()
+
+   %% FcnCallMdlRefTriggerTIDIsReq
+   %if (IsModelReferenceTarget() || HasModelReferenceBlocks())
+     %addtorecord blkInterface FcnCallMdlRefTriggerTIDIsReq SLibModelNeedsTriggerTIDArg()
+   %else
+     %addtorecord blkInterface FcnCallMdlRefTriggerTIDIsReq TLC_FALSE
+   %endif
+
+   %% Global DSM declarations
+   %addtorecord blkInterface GlobalDSMDeclarations      %<SLibGetModelRefGlobalDSMDeclarations()>
+
+   %% Needs global timing engine
+   %addtorecord blkInterface NeedsGlobalTimingEngine %<::tMdlRefTimingBridgeAccessed>
+   
+   %% RateGrouped
+   %if SLibIsPeriodicRateGrouping()
+     %addtorecord blkInterface RateGrouped 1
+   %else
+     %addtorecord blkInterface RateGrouped 0
+   %endif
+
+   %% HasDWork - ModelrefBlockNeedsDwork() does not give the correct answer
+   %% if called from SLibAddModelReferenceModelInterface because 
+   %% EmptyRealTimeObject is not set to its final value at that point.
+   %addtorecord blkInterface HasDWork %<ModelrefBlockNeedsDwork()>
+
+   %%----------
+   %% Even though we don't inline function calls to "Top Model"
+   %% code through a model block in generated code these records must be 
+   %% added for the Top Model code interface as well as the Model Reference 
+   %% code interface, to trigger the inlining of the correct calls back 
+   %% into Simulink when simulating a Top Model in Accelerator mode that
+   %% contains one or more Model Blocks configured for SIL/PIL with a
+   %% Top Model code interface *when using an ERT (or ERT-derived) target*.
+   %assign needFunctionInfoInModelInterface = ...
+            IsModelReferenceTarget() || SLibIsERTTarget()
+   %if !needFunctionInfoInModelInterface
+     %% Return early if the function info is not needed in modelInterface.
+     %return blkInterface
+   %endif
+
+   %assign sysIdx = GetBaseSystemIdx()
+   %if IsModelReferenceTarget()
+     %assign rootIdx = sysIdx+1
+   %else
+     %assign rootIdx = sysIdx
+   %endif
+   %assign baseSystem = ::CompiledModel.System[sysIdx]
+
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "SystemInitialize", "", blkInterface)>
+
+   %% Do not add the Initialize or Enable methods to the interface for 
+   %% models with Enable port at the root.  This is because the enabling
+   %% behavior is controlled internally by the model, and shouldn't be called
+   %% by the parent.
+   %if (::CompiledModel.HasRootEnablePort == "no")
+     %<FcnAppendToBlockInterface(sysIdx, rootIdx, "SystemReset", "", blkInterface)>
+     %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Enable", "", blkInterface)>
+   %endif
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "SetupRuntimeResources", "", blkInterface)>
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Start", "", blkInterface)>
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Disable", "", blkInterface)>
+   
+   %if IsModelReferenceTarget()
+     %% Write out the arguments for the registration function, this
+     %% will be called from the parent registration function.
+     %if !SLibGetEmptyModelRefInitializeFcn()
+       %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Registration", "", blkInterface)>
+     %endif
+   %endif
+
+   %foreach idx = SLibNumTidsWithModelEntryPoints()
+     %assign tid = SLibModelEntryPointTid(idx, TLC_TRUE)
+     %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Output", tid, blkInterface)>
+   %endforeach
+   %%
+
+   %foreach idx = SLibNumTidsWithModelEntryPoints()
+     %assign tid = SLibModelEntryPointTid(idx, TLC_TRUE)
+     %<FcnAppendToBlockInterface(sysIdx, rootIdx, "OutputUpdate", tid, blkInterface)>
+   %endforeach
+   %%
+
+   %foreach idx = SLibNumTidsWithModelEntryPoints()
+     %assign tid = SLibModelEntryPointTid(idx, TLC_TRUE)
+     %% Model wide events do not have update functions.
+     %if !SLibNonInlinedIRTEventTID(tid)
+       %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Update",tid, blkInterface)>
+     %endif
+   %endforeach
+   
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "SetDims", "", blkInterface)>
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "FinalizeDims", "", blkInterface)>
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Projection", "", blkInterface)>
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "ZeroCrossing", "", blkInterface)>
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Derivative", "", blkInterface)>
+
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "MassMatrix", "", blkInterface)>
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "ForcingFunction", "", blkInterface)>
+
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "Terminate", "", blkInterface)>
+   %<FcnAppendToBlockInterface(sysIdx, rootIdx, "CleanupRuntimeResources", "", blkInterface)>
+   %%
+   %%----------
+   %return blkInterface
+%endfunction
+
+%function SLibWriteModelSettings(blkInterface) void
+  %% Coder Data Groups local to this model
+  %<SLibWriteCoderDataGroupsInfo(blkInterface)>
+  %% process this information only for ModelRefTarget or 
+  %% "non-right-click / non-subsystem" builds
+  %if !CompiledModel.RightClickBuild
+    %addtorecord blkInterface LibSystemFcnIsEmpty LibSystemFcnIsEmpty(System[GetBaseSystemIdx()], "FinalizeDims")
+
+    %if ISFIELD(::CompiledModel, "SignalSizeComputeType")
+      %addtorecord blkInterface SignalSizeComputeType ISEQUAL(::CompiledModel.SignalSizeComputeType, "FromInputSize")
+    %endif
+    
+    %if (IsModelReferenceTarget())    
+      %addtorecord blkInterface GlobalScopeTid "%<::CompiledModel.GlobalScope.tTID>"
+      %addtorecord blkInterface DisallowsMdlRefFromVarStepTop "%<::CompiledModel.DisallowsMdlRefFromVarStepTop>"
+      %addtorecord blkInterface MdlGenRateGroupingCode     "%<::CompiledModel.MdlGenPeriodicRateGroupingCode>"
+      %addtorecord blkInterface ModelMassMatrixType        %<::CompiledModel.ModelMassMatrixType> 
+      %addtorecord blkInterface ModelMassMatrixNzMax       %<::CompiledModel.ModelMassMatrixNzMax>
+      %addtorecord blkInterface NumContStates              %<::CompiledModel.NumContStates>
+      %assign numPeriodicContStates = ::CompiledModel.NumPeriodicContStates
+      %addtorecord blkInterface NumPeriodicContStates      %<numPeriodicContStates>
+      %if numPeriodicContStates > 0
+        %addtorecord blkInterface PeriodicCStateIndices      %<::CompiledModel.PeriodicCStateIndices>
+        %addtorecord blkInterface PeriodicCStateRanges       %<::CompiledModel.PeriodicCStateRanges>
+      %endif
+
+      %addtorecord blkInterface NumSLBuiltInDataTypes      ::CompiledModel.DataTypes.NumSLBuiltInDataTypes  
+      %addtorecord blkInterface UsePortBasedTs             SLibUsePortBasedSampleTime()
+    %endif
+  
+      %% Referenced models can support multithreading if they
+      %%  1. Don't use any global or shared DSMs
+      %%  2. Don't have any Simulink Functions or Callers
+      %%  3. Don't contain a Model block that doesn't support multi-threading
+      %%  4. The model is not completely constant
+      %%  5. Don't have any to or from file blocks
+      %assign hasToFromFile = SIZE(UniqueToFiles, 1) > 0 || SIZE(UniqueFromFiles, 1) > 0
+      %assign supportsMultiThreading = IsModelReferenceTarget() && ...
+        (::CompiledModel.NumDataStoresPushedToTopModel == 0) && ...
+        (::CompiledModel.NumSimulinkFunctions == 0) && ...
+        !::CompiledModel.ContainsMultiThreadBlocker && ...
+        !MdlRefIsConstSampleBlock() && ...
+        !hasToFromFile
+      %addtorecord blkInterface SupportsMultiThreading %<supportsMultiThreading>
+    
+    %% For mdlInitSystemMatrices
+    %addtorecord blkInterface ModelIsLinearlyImplicit (ModelIsLinearlyImplicit == "yes")
+    %if (ModelIsLinearlyImplicit == "yes")
+      %addtorecord blkInterface ModelMassMatrixJc %<ModelMassMatrixJc>
+      %addtorecord blkInterface ModelMassMatrixIr %<ModelMassMatrixIr>
+    %endif
+    
+    %% For StateEnableSubsystem feature
+    %if EXISTS(AllowInStateEnabledSubsystem) 
+      %addtorecord blkInterface AllowInStateEnabledSubsystem (AllowInStateEnabledSubsystem == "yes")
+    %endif
+    
+    %if ISFIELD(::CompiledModel, "IndexMode")
+      %addtorecord blkInterface IndexMode           "%<::CompiledModel.IndexMode>"
+    %endif      
+    
+    %addtorecord blkInterface SolverName     "%<Solver>"
+    %if SolverType == "FixedStep"
+      %addtorecord blkInterface FixedStepOpts {FixedStep STRING(FixedStepOpts.FixedStep) SolverMode FixedStepOpts.SolverMode}
+    %else    
+      %if SolverType == "VariableStep" && NumContStates > 0
+        %assign AbsTolControl = VariableStepOpts.AbsTolControl
+      %else
+        %assign AbsTolControl = []
+      %endif
+      
+      %addtorecord blkInterface VariableStepOpts { \
+      MaxOrder      STRING(VariableStepOpts.MaxOrder); \
+      RelTol        STRING(VariableStepOpts.RelTol); \
+      MaxStep       STRING(VariableStepOpts.MaxStep); \
+      MinStep       STRING(VariableStepOpts.MinStep); \
+      InitialStep   STRING(VariableStepOpts.InitialStep); \
+      AbsTolControl AbsTolControl \
+      }
+    
+      %% Cache SolverResetInfo
+      %assign NumNonContOutputSignals = []
+      %if SolverType == "VariableStep" && EXISTS(SolverResetInfo.NonContOutputSignals)
+        %foreach idx = ExternalOutputs.NumExternalOutputs
+          %assign nonContOut = SolverResetInfo.NonContOutputSignals.NonContOutput[idx]
+          %assign NumNonContOutputSignals = NumNonContOutputSignals + nonContOut.NumNonContOutputSignals
+        %endforeach
+      %endif
+      
+      %addtorecord blkInterface SolverResetInfo { \
+      ZCCacheNeedsReset SolverResetInfo.ZCCacheNeedsReset; \
+      DerivCacheNeedsReset SolverResetInfo.DerivCacheNeedsReset \
+      NumNonContOutputSignals NumNonContOutputSignals \
+      }    
+    %endif    
+
+    %% For mdlStart S-function
+    %if (IsModelReferenceTarget())
+      %addtorecord blkInterface SFcnNonFiniteBuffer SLibGetSFcnNonFinite()
+      %addtorecord blkInterface RealNonFinitesRequired SLibRealNonFinitesRequired()
+      %addtorecord blkInterface IsModelRefScalableBuild IsModelRefScalableBuild()
+    %endif
+
+    %if !::GenerateClassInterface && IsModelReferenceSimTarget()
+      %addtorecord blkInterface SFcnDWorkIdentifier FcnGetSFcnDWorkIdentifier(System[GetBaseSystemIdx()])
+    %endif  
+
+    %% - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - |
+    %% We must call these two functions from the S-function to allow 
+    %% loading and saving of SimState from accelerator mode models
+    %%
+    %addtorecord blkInterface ...
+      ModelGetDWorkFcnName SLibCreateGetDWorkFcnNameForModel(Name)
+    %addtorecord blkInterface ...
+      ModelSetDWorkFcnName SLibCreateSetDWorkFcnNameForModel(Name)
+    
+    %% - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - |
+    %% We also need to find out which models, if any, have disallowed blocks,
+    %% and report a reason why they are disallowed.
+    %%
+    %addtorecord blkInterface ...
+      ModelGetSimStateDisallowedBlocksFcnName ...
+      SLibCreateGetSimStateDisallowedBlocksFcnNameForModel(Name)
+    
+    %% - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - |
+    %% We obtain the checksum directly from the model. This prevents structural
+    %% changes that do not affect the interface from triggering rebuilds of
+    %% models that reference the current target. This also allows changes to the
+    %% SimState checksum to be pulled up to the top model without regenerating
+    %% the code for intermediate models. Thus, only the name of the function
+    %% called to get the checksum goes into the interface, and not the
+    %% checksum itself.
+    %%
+    %addtorecord blkInterface ...
+      ModelRegisterSimStateChecksumFcnName ...
+      SLibCreateRegisterSimStateChecksumFcnNameForModel(Name)
+
+    %% Need to cache the fundamental sample time for function-call modelref
+    %assign mdlRefFundTsVal = SampleTime[0].PeriodAndOffset
+    %addtorecord blkInterface FundamentalSampleTime {SamplePeriod STRING(mdlRefFundTsVal[0]); SampleOffset STRING(mdlRefFundTsVal[1])}
+
+    %% Cache tofile and fromfile information
+    %foreach idx = SIZE(UniqueFromFiles,1)
+      %addtorecord blkInterface UniqueFromFiles {Name STRING(UniqueFromFiles[idx])}
+    %endforeach
+
+    %foreach idx = SIZE(UniqueToFiles,1)
+      %addtorecord blkInterface UniqueToFiles {Name STRING(UniqueToFiles[idx])}
+    %endforeach
+
+    %% Write HasDataLoggedInLegacyFormat
+    %if EXISTS(ExternalPortGroups)
+      %with ExternalPortGroups
+        %addtorecord blkInterface HasDataLoggedInLegacyFormat \
+        (HasDataLoggedInLegacyFormat == "true")
+      %endwith
+    %endif
+  %endif
+
+  %% Local message queues
+  %if ISFIELD(::CompiledModel, "LocalMessageQueues")
+    %foreach locQIdx = ::CompiledModel.LocalMessageQueues.NumLocalMessageQueues
+        %assign qSpec = ::CompiledModel.LocalMessageQueues.MessageQueue[locQIdx]
+        %assign qType = STRING(qSpec.QueueType)
+        %assign qLen = qSpec.QueueLength
+        %assign qOrder = STRING(qSpec.PriorityOrder)
+        %assign qDType = qSpec.DataType
+        %assign qDSize = qSpec.DataSize
+        %assign qDCplx = STRING(qSpec.DataComplexity)
+        %assign qDDims = qSpec.DataDims
+        %assign qExtInpIdx = qSpec.ExternalInputIdx
+        %createrecord LocalMessageQueueInfo {}
+        %addtorecord LocalMessageQueueInfo QueueType qType
+        %addtorecord LocalMessageQueueInfo QueueLength qLen
+        %addtorecord LocalMessageQueueInfo PriorityOrder qOrder
+        %addtorecord LocalMessageQueueInfo DataType qDType
+        %addtorecord LocalMessageQueueInfo DataSize qDSize
+        %addtorecord LocalMessageQueueInfo DataComplexity qDCplx
+        %addtorecord LocalMessageQueueInfo DataDims qDDims
+        %addtorecord LocalMessageQueueInfo ExternalInputIdx qExtInpIdx
+        %addtorecord blkInterface LocalMessageQueueInfo %<LocalMessageQueueInfo>
+    %endforeach
+  %endif
+%endfunction
+
+%function SLibWriteCoderDataGroupsInfo(blkInterface) void
+  %% Coder Data Groups local to this model
+  %assign baseIdx = GetBaseSystemIdx()
+  %assign numGroups = ::CompiledModel.NumCoderDataGroups
+  %assign singleInstMdlRef = IsModelReferenceTarget() && ...    
+    !::CompiledModel.OkToMultiInstanceModelref
+  %if numGroups > 0
+    %assign groupIdx = 0
+    %foreach gIdx = numGroups
+      %assign group = ::CompiledModel.CoderDataGroup[gIdx]
+      %assign groupInstanceInParent = SLibAccessViaPointerInSelf(group) && IsModelReferenceTarget()
+      %assign selfPointerInit = FcnGetCoderGroupSelfPointerInit(group)
+      %if !SLibAllocatesCoderDataGroup(group) || !IsModelReferenceTarget()
+        %if (((group.IsInstanceSpecific && SLibDataGroupStaticInit(group)) || ...
+          groupInstanceInParent))
+          %if !SLibCoderGroupPackageAsStruct(group) ...
+            || (LibCoderDataGroupStructIsEmpty(group) ...
+            && !SLibHaveRootDataGroupVarGroup(group))
+            %continue
+          %endif
+          
+          %% Populate Self related attributes for Coder Group
+          %assign selfCoderGroupIndex = SLibGetSelfCoderDataGroupIndex()
+          %assign groupSelfInstanceName = ""
+          %if gIdx == selfCoderGroupIndex
+            %assign selfVarGroupIndex = SLibGetSelfVarGroupIndex()
+            %assert selfVarGroupIndex != -1
+            %assign selfVarGroup = ::CompiledModel.VarGroups.VarGroup[selfVarGroupIndex]
+            %assign groupSelfInstanceName = selfVarGroup.SelfStructureInstanceName
+          %endif                
+
+          %if group.IsSelf
+            %assign path = ""
+          %elseif IsModelReferenceTarget()        
+            %if ::CompiledModel.OkToMultiInstanceModelref
+              %if ::CompiledModel.ModelRefSimpInterface || FcnRTMAllocateInParent()
+                %assign path = SLibCoderDataGroupRTMFieldName(group)
+              %else
+                %assign path = "rtm." + SLibCoderDataGroupRTMFieldName(group)
+              %endif
+            %else
+              %assign path = SLibCoderDataGroupInstance(group)
+            %endif
+          %elseif MultiInstanceERTCode
+            %assign path = SLibGetCoderDataGroupPointerFromRTM(group, 0)
+          %else
+            %assign path = SLibCoderDataGroupInstance(group)
+          %endif
+          %assign groupToken = "CoderDataGroup" + group.Name
+          %if group.AsStructure == "InParent"
+            %assign groupPath = ""
+          %elseif SLibIsAutosarPIMCoderGroup(group)
+            %%Omit the first _ for AutosarPIM coder group, otherwise, a PIM name with double underscore 
+            %%is created, and it is not valid for Autosar.
+            %assign len = SIZE(group.Name, 1)
+            %assign groupPath = Substring(group.Name, 1, len)
+          %else
+            %assign groupPath = group.Name
+          %endif
+          %assign type = FcnSysVarGroupType(::CompiledModel.System[baseIdx], groupToken)
+          %createrecord dynamicInit%<gIdx> {}
+          %assign isImportedFromFile = SLibCoderDataGroupIsImportedFromFile(group)
+          %if isImportedFromFile && !::CompiledModel.GenerateImportedDataGroupsTypes
+            %assign initializer = ""
+          %else
+            %assign initializer = FcnGetDataGroupInitializer(group, path, dynamicInit%<gIdx>)
+          %endif
+          %addtorecord ::CompiledModel.CoderDataGroups CoderDataGroup { \
+          Name group.Name \
+          UserProvidedName group.UserProvidedName \
+          Description group.Description \
+          Identification group.Identification \
+          Type type \
+          Depth 0 \
+          PointerPath path \
+          InstancePath "" \
+          GraphicalPath "" \
+          GroupPath groupPath \
+          DataInit group.DataInit \
+          SelfPointerInit selfPointerInit \
+          SingleInstMdlRef singleInstMdlRef \
+          IsInstanceSpecific group.IsInstanceSpecific \
+          Initializer initializer \
+          IsMemorySectionConst group.IsMemorySectionConst \
+          IsMemorySectionVolatile group.IsMemorySectionVolatile \
+          MemorySectionQualifier group.MemorySectionQualifier \
+          MemorySection group.MemorySection \
+          MemorySectionIsLegacy group.MemorySectionIsLegacy \
+          DynamicInitializer dynamicInit%<gIdx> \
+          IsImportedFromFile isImportedFromFile \
+          AsStructure group.AsStructure \
+          IsSelf group.IsSelf \
+          IsSynthesized group.IsSynthesized \
+          SynthesizedNamePrefix group.SynthesizedNamePrefix \
+          IsOpaque group.IsOpaque \
+          IsPolymorphic group.IsPolymorphic \
+          ImplementationType group.ImplementationType \
+          SelfStructureInstanceName groupSelfInstanceName \
+          CompiledModelBlockIndex -1 \
+          CoderDataGroupIndex group.GroupIndex \
+          ContainsInstanceSpecificParameter group.ContainsInstanceSpecificParameter \
+          HasAccessMethod group.HasAccessMethod \
+          IsDataTransferGroup group.IsDataTransferGroup \
+	      GroupContains group.GroupContains \
+          }
+          %if group.Name == "_MsgServices"
+            %<FcnSetServiceDataGroupElements(groupToken, baseIdx, groupIdx)>
+          %endif
+          %assign groupIdx = groupIdx + 1
+        %endif
+      %endif
+    %endforeach
+  %endif
+
+  %if !ISEMPTY(::CompiledModel.CoderDataGroups)
+    %addtorecord blkInterface CoderDataGroups ::CompiledModel.CoderDataGroups
+  %endif
+   
+%endfunction
+
+
+%function SLibWriteZeroCrossingInfo(blkInterface) void %% TODO: Fix this funciton
+  %assign zcVectorLen = ::CompiledModel.ZCVectorlength
+  %addtorecord blkInterface ZCVectorLength %<zcVectorLen>
+  %assign blkZcIdx = FEVAL("zeros", zcVectorLen, 2)
+  %if zcVectorLen > 1
+    %foreach idx = ::CompiledModel.ZcRec.NumBlkZcRecs    
+      %assign blkZcRec = ::CompiledModel.ZcRec.BlkZcRec[idx]   
+      %foreach jdx = blkZcRec.NumZcSignalInfos
+        %assign zcSignalInfo = blkZcRec.ZcSignalInfo[jdx]
+        %foreach zcIdx = SIZE(zcSignalInfo.ZcVectorIndices)[1] 
+          %assign blkZcIdx[zcSignalInfo.ZcVectorIndices[zcIdx]][0] = idx
+          %assign blkZcIdx[zcSignalInfo.ZcVectorIndices[zcIdx]][1] = jdx
+        %endforeach
+      %endforeach
+    %endforeach
+  %endif
+  
+  %assign idx = 0
+  %foreach idx = zcVectorLen
+    %if zcVectorLen == 1
+      %assign zcSignalInfo = ::CompiledModel.ZcRec.BlkZcRec[blkZcIdx[0]].ZcSignalInfo[blkZcIdx[1]]
+      %assign zcBlkRecId = blkZcIdx[0]
+      %assign zcSignalInfoId = blkZcIdx[1] 
+    %else
+      %if blkZcIdx[idx][0] < 0
+        %continue
+      %else
+        %assign zcSignalInfo = ::CompiledModel.ZcRec.BlkZcRec[blkZcIdx[idx][0]].ZcSignalInfo[blkZcIdx[idx][1]]
+        %assign zcBlkRecId = blkZcIdx[idx][0]
+        %assign zcSignalInfoId = blkZcIdx[idx][1] 
+      %endif
+    %endif
+    
+    %if !ISFIELD(zcSignalInfo, "IsElementDisc")
+      %assign isElementDisc = []
+    %else
+      %assign isElementDisc = zcSignalInfo.IsElementDisc
+    %endif    
+    
+    %addtorecord blkInterface ZcSignalInfos { \
+      ZcBlkRecId      zcBlkRecId; \
+      ZcSignalInfoId  zcSignalInfoId; \
+      Width           zcSignalInfo.Width; \
+      Name            zcSignalInfo.Name; \
+      ZcEventType     zcSignalInfo.ZcEventType; \
+      ZcSignalType    zcSignalInfo.ZcSignalType; \
+      IsElementDisc   isElementDisc; \
+      ZcVectorIndices zcSignalInfo.ZcVectorIndices \
+    }
+  %endforeach
+%endfunction
+
+
+%function SLibWriteVariableSampleTimeInfo(blkInterface) void 
+  %assign VariableSampleTime = []
+  %assign uid = ""
+  %foreach idx = NumSampleTimes        
+    %if ISFIELD(SampleTime[idx], "VCRFullUID")
+      %assign uid = SampleTime[idx].VCRFullUID      
+    %endif
+    %addtorecord blkInterface VariableSampleTime {uid uid}
+  %endforeach                  
+%endfunction
+
+%function SLibWriteControllableRateInfo(blkInterface) void 
+  %assign ControllableRateUIDs = []
+  %assign uid = ""
+  %assign ctrlRateOffset = -1
+  %foreach idx = NumSampleTimes        
+    %if ISFIELD(SampleTime[idx], "CtrlRateFullUID")
+      %assign uid = SampleTime[idx].CtrlRateFullUID      
+      %assign ctrlRateOffset = SampleTime[idx].PeriodAndOffset[1]
+    %endif
+    %addtorecord blkInterface ControllableRateUIDs {ctrlRateOffset %<ctrlRateOffset>;  uid uid}
+  %endforeach                  
+%endfunction
+
+%function SLibWriteModelWideEventsInfo(blkInterface) void 
+  %assign ModelWideEvents = []
+  %assign id = ""
+  %assign tid = -1
+  %assign eventType = "" %% eventType could be "PowerUpEvent", "ResetEvent", "ResetWithInitEvent", and "PowerDownEvent"
+  %foreach idx = NumSampleTimes        
+    %if SLibModelWideEventTID(idx)
+      %if ISFIELD(SampleTime[idx], "EventSourceName")
+        %assign id = SampleTime[idx].EventSourceName 
+      %else
+        %assign id = SampleTime[idx].EventSourceType
+      %endif
+      %assign tid = SampleTime[idx].TID
+      %assign offset = SampleTime[idx].PeriodAndOffset[1]
+      %assign eventType = SampleTime[idx].EventSourceType
+      %addtorecord blkInterface ModelWideEvents {offset %<offset>; tid %<tid>; id id; eventType eventType}
+    %endif    
+  %endforeach                  
+%endfunction
+
+%function SLibWriteMultiInstanceInfo(blkInterface) void
+  %% Write out information for multiple exec instances
+  %if ISFIELD(::CompiledModel,"ModelSupportsMultipleExecInstances") && ...
+    ::CompiledModel.ModelSupportsMultipleExecInstances
+    %addtorecord blkInterface ModelSupportsMultipleExecInstances ModelSupportsMultipleExecInstances
+  %else
+    %addtorecord blkInterface ModelMultipleExecInstancesNoSupportMsg STRING(::CompiledModel.ModelMultipleExecInstancesNoSupportMsg)
+  %endif
+%endfunction
+
+
+%function SLibWriteForEachInfo(blkInterface) void
+  %% For ForEach
+  %if ISFIELD(::CompiledModel,"ModelHasStateInsideForEachSS") && ...
+    ::CompiledModel.ModelHasStateInsideForEachSS
+    %addtorecord blkInterface ModelHasStateInsideForEachSS ModelHasStateInsideForEachSS
+  %endif
+%endfunction
+
+
+%function SLibWriteFunctionCallInfo(blkInterface) void
+  %with ::CompiledModel
+    %assign thisSystem = System[GetBaseSystemIdx()]
+    
+    %if LibIsSystemField(thisSystem, "FcnCallInputInfo")
+      %<WriteFunctionCallInputInfo(blkInterface, thisSystem)>
+    %endif
+  %endwith      
+%endfunction
+
+%function FcnGenArgCGTypeDetails(i, symbId) void
+  %% Generate a record for a type used by a Simulink
+  %% function argument.
+  %assign dims = LibCGTypeDimensions(i)
+  %assign nDims = LibCGTypeNumDimensions(i)  
+  %assign width = LibCGTypeWidth(i)
+  %% For model reference
+  %assign isComplex = LibCGTypeIsComplex(i)
+  %assign isBuiltin = TLC_FALSE
+  %assign isEnum = TLC_FALSE
+  %assign isStruct = TLC_FALSE
+  %assign isFixpt = TLC_FALSE
+  %assign dtName = ""  
+  %assign flatName = LibCGTypeName(i)
+  %% For structured param
+  %assign dtChecksum = []
+  %assign isAnonymous = TLC_FALSE  
+  %% For fixed-point param
+  %assign isFloat = TLC_FALSE
+  %assign isSigned = TLC_FALSE
+  %assign requiredBits = 0
+  %assign fracSlope = 0
+  %assign fixedExp = 0
+  %assign bias = 0      
+  %assign dtId = LibCGTypeToSLType(i)
+  %assign isAlias = LibIsAliasDataType(dtId)
+  
+  %assign dataEnum = LibGetDataTypeEnumFromId(dtId)
+  %assign isPointer = dataEnum == "SS_POINTER"
+  %assign isInteger = dataEnum == "SS_INTEGER"
+  %assign isFcnCall = dataEnum == "SS_FCN_CALL"
+  
+  %assign hasSymbDims = TLC_FALSE
+  %assign symbDimsStr = ""
+  %assign cgSymbTypeRec = ::CompiledModel.CGTypes.CGType[symbId]
+  %if ISFIELD(cgSymbTypeRec, "SymbolicWidth")
+    %assign hasSymbDims = TLC_TRUE
+    %assign symbDims = cgSymbTypeRec.SymbolicDimensions
+    %assign sep = ""
+    %foreach symbDimsIdx = SIZE(symbDims,1)
+      %assign symbDimsStr = symbDimsStr + sep + symbDims[symbDimsIdx]
+      %assign sep = ","
+    %endforeach
+    %assign symbDimsStr = "[" + symbDimsStr + "]"
+  %endif
+  %if dtId == -1
+  %elseif LibIsBuiltInDataType(dtId)
+    %assign isBuiltin = LibIsBuiltInDataType(dtId)
+    %if dtId > -1
+      %assign dtName = LibGetDataTypeEnumFromId(dtId)
+    %else
+      %assign dtName = "DYNAMICALLY_TYPED"
+    %endif
+  %elseif LibIsEnumDataType(dtId)
+    %assign dtName = LibGetDataTypeNameFromId(dtId)
+    %assign isEnum = LibIsEnumDataType(dtId)
+  %elseif LibIsStructDataType(dtId) && !LibIsDataTypeFixpt(dtId)        
+    %assign dtName = LibGetDataTypeNameFromId(dtId)
+    %assign isStruct = LibIsStructDataType(dtId)
+    %assign dtChecksum = DataTypes.DataType[dtId].StructDtChecksum
+    %assign isAnonymous = LibDataTypeIsAnonymousStruct(dtId)
+  %else %% Fixed-point
+    %assign curDT = FixPt_GetDataTypeFromIndex(dtId)
+    %%
+    %if curDT.IsFixedPoint
+      %assign isFixpt = TLC_TRUE
+      %assign isFloat = FixPt_DataTypeIsFloat(curDT)
+      %assign isSigned = (curDT.IsSigned == 1.0)
+      %assign requiredBits = curDT.RequiredBits
+      %assign fracSlope = curDT.FracSlope
+      %assign fixedExp = curDT.FixedExp
+      %assign bias = curDT.Bias
+    %else
+      %assign errTxt = ...
+        "User-defined data types not supported for interface parameters."
+     %<LibReportFatalError(errTxt)>
+    %endif
+  %endif
+  
+  %createrecord CGTypeRec { \
+    NDims         nDims; \
+    Dims          dims; \
+    Width         width; \
+    IsBuiltin     isBuiltin; \
+    IsEnum        isEnum; \
+    Complex       isComplex; \
+    IsStruct      isStruct; \
+    DtChecksum    dtChecksum; \
+    DataTypeId    dtId; \
+    DataTypeName  dtName; \
+    FlatName      flatName; \
+    HasSymbDims   hasSymbDims; \
+    SymbDimsStr   STRING(symbDimsStr); \
+    IsAnonymous   isAnonymous; \
+    IsAlias       isAlias; \
+    IsPointer     isPointer; \
+    IsFcnCall     isFcnCall; \
+    IsInteger     isInteger; \
+    IsFixpt       isFixpt; \
+    IsScaledFloat isFloat; \
+    IsSigned      isSigned; \
+    RequiredBits  requiredBits; \
+    FracSlope     STRING(fracSlope); \
+    FixedExp      fixedExp; \
+    Bias          STRING(bias) \
+  }
+  
+  %return CGTypeRec
+  
+%endfunction
+
+%function FcnCacheArgCTTypeIdx(blkInterface, origCGTypeIdx, symbCGTypeIdx) Output
+  %% We create a single list of CG types of all arguments.
+  %with blkInterface
+  %foreach i = NumSimulinkFunctionArgType
+    %if SimulinkFunctionArgType[i].OrigCGTypeIdx == origCGTypeIdx && ...
+      SimulinkFunctionArgType[i].SymbCGTypeIdx == symbCGTypeIdx
+      %return i
+    %endif
+  %endforeach
+  %% The given CGTypeIdx was not already cached
+  %assign cgTypeDetails = FcnGenArgCGTypeDetails(origCGTypeIdx, symbCGTypeIdx)
+  %addtorecord blkInterface SimulinkFunctionArgType { \
+  OrigCGTypeIdx origCGTypeIdx; \
+  SymbCGTypeIdx symbCGTypeIdx; \
+  CGTypeDetails  %<cgTypeDetails> \
+  }
+  %assign blkInterface.NumSimulinkFunctionArgType = NumSimulinkFunctionArgType + 1
+  %return NumSimulinkFunctionArgType-1
+  %endwith
+%endfunction
+
+
+%function SLibWriteServicePorts(blkInterface) void
+  %if !EXISTS(NumServicePorts)
+    %% ServiceFunction feature is off
+    %return
+  %endif
+  %addtorecord blkInterface NumServicePorts NumServicePorts
+  %with ServicePortInfoMap
+  %foreach portIdx = NumServicePorts
+    %assign thisPort = ServicePort[portIdx]
+    %assign blockPath = thisPort.BlockPath
+    %assign aSID = thisPort.SID
+    %assign aServicePortType = thisPort.ServicePortType
+    %assign aServicePortIdx = thisPort.ServicePortIdx
+    %assign aExternalPortIdx = thisPort.ExternalPortIdx
+    %addtorecord blkInterface ServicePort { \
+      BlockPath blockPath \
+      SID aSID \
+      ServicePortType aServicePortType \
+      ServicePortIdx aServicePortIdx \
+      ExternalPortIdx aExternalPortIdx \
+    }
+    %assign aRequestingService = thisPort.RequestingService
+    %if !ISEMPTY(aRequestingService)
+      %assign numRequestingSvc = SIZE(aRequestingService)[1]
+      %if numRequestingSvc == 1
+        %assign name = aRequestingService.Name
+        %assign numInArgs = aRequestingService.NumInArgs
+        %assign numOutArgs = aRequestingService.NumOutArgs
+        %addtorecord blkInterface.ServicePort[portIdx] RequestingService { \
+          Name name; \
+          NumInArgs numInArgs; \
+          NumOutArgs numOutArgs \
+        }
+      %else
+        %foreach i=numRequestingSvc
+          %assign name = aRequestingService[i].Name
+          %assign numInArgs = aRequestingService[i].NumInArgs
+          %assign numOutArgs = aRequestingService[i].NumOutArgs
+          %addtorecord blkInterface.ServicePort[portIdx] RequestingService { \
+            Name name; \
+            NumInArgs numInArgs; \
+            NumOutArgs numOutArgs \
+          }
+        %endforeach
+      %endif
+    %endif
+    %assign aProvidingService = thisPort.ProvidingService
+    %if !ISEMPTY(aProvidingService)
+      %assign numProvidingSvc = SIZE(aProvidingService)[1]
+      %if numProvidingSvc == 1
+        %assign name = aProvidingService.Name
+        %assign numInArgs = aProvidingService.NumInArgs
+        %assign numOutArgs = aProvidingService.NumOutArgs
+        %assign dworkIdx = aProvidingService.DworkIdx
+        %assign cgFcnName = aProvidingService.CGFcnName
+        %addtorecord blkInterface.ServicePort[portIdx] ProvidingService { \
+          Name name; \
+          NumInArgs numInArgs; \
+          NumOutArgs numOutArgs \
+          DWorkIdx dworkIdx \
+          CGFcnName cgFcnName \
+        }
+      %else
+        %foreach i=numProvidingSvc
+          %assign name = aProvidingService[i].Name
+          %assign numInArgs = aProvidingService[i].NumInArgs
+          %assign numOutArgs = aProvidingService[i].NumOutArgs
+          %assign dworkIdx = aProvidingService[i].DworkIdx
+          %assign cgFcnName = aProvidingService[i].CGFcnName
+          %addtorecord blkInterface.ServicePort[portIdx] ProvidingService { \
+            Name name; \
+            NumInArgs numInArgs; \
+            NumOutArgs numOutArgs \
+            DWorkIdx dworkIdx \
+            CGFcnName cgFcnName \
+          }
+        %endforeach
+      %endif
+    %endif
+  %endforeach
+  %endwith
+%endfunction
+
+%function SLibWriteSimulinkFunctions(blkInterface) void
+  %% Create a record in binfo, to write out model reference S-Function
+  %% wrappers and registration methods for Simulink Functions.
+  
+  %<SLibWriteCallerToStateAccessInfoMap(blkInterface)>
+  
+  %addtorecord blkInterface NumSimulinkFunctions NumSimulinkFunctions
+  %addtorecord blkInterface NumSimulinkFunctionArgType 0
+  %addtorecord blkInterface NumPortlessSimulinkFunctionPortGroups %<::CompiledModel.NumPortlessSimulinkFunctionPortGroups> 
+  %foreach groupIdx = NumSimulinkFunctions
+    %with SimulinkFunction[groupIdx]
+      
+      %assign arginCGTypeIdx = ArginCGTypeIdx
+      %assign argoutCGTypeIdx = ArgoutCGTypeIdx
+      %assign arginCGTypeIdxFlat = ArginCGTypeIdxFlat
+      %assign argoutCGTypeIdxFlat = ArgoutCGTypeIdxFlat
+
+      %% Add input argument CGTYpeInfo
+      %foreach i = SIZE(ArginCGTypeIdx)[1]
+        %assign arginCGTypeIdx[i] = FcnCacheArgCTTypeIdx(blkInterface,  arginCGTypeIdx[i], ArginCGTypeIdxSymb[i])
+      %endforeach
+
+      %% Add output argument CGTYpeInfo
+      %foreach i = SIZE(ArgoutCGTypeIdx)[1]
+        %assign argoutCGTypeIdx[i] = FcnCacheArgCTTypeIdx(blkInterface,  argoutCGTypeIdx[i], ArgoutCGTypeIdxSymb[i])
+      %endforeach
+
+      %% Add input argument flat CGTYpeInfo
+      %foreach i = SIZE(ArginCGTypeIdxFlat)[1]
+        %assign arginCGTypeIdxFlat[i] = FcnCacheArgCTTypeIdx(blkInterface,  arginCGTypeIdxFlat[i], ArginCGTypeIdxSymb[i])
+      %endforeach
+      
+      %% Add output argument flat CGTYpeInfo
+      %foreach i = SIZE(ArgoutCGTypeIdxFlat)[1]
+        %assign argoutCGTypeIdxFlat[i] = FcnCacheArgCTTypeIdx(blkInterface,  argoutCGTypeIdxFlat[i], ArgoutCGTypeIdxSymb[i])
+      %endforeach
+
+      %assign AUTOSARPortName = ""
+      %assign AUTOSAROperationName = ""
+      %if SLibAutosarActive()
+        %if (IsCalled == "yes") && (IsSupportedForAUTOSAR == "yes")
+          %assign AUTOSARPortName = CallerPortName
+          %assign AUTOSAROperationName = CallerOperationName
+          %assert(!ISEMPTY(AUTOSARPortName))
+          %assert(!ISEMPTY(AUTOSAROperationName))
+        %endif
+       %endif 
+
+      %if NumChildCallers > 0
+        %assign childCallers = ChildCaller
+      %else
+        %assign childCallers = []
+      %endif
+
+      %assign slFcnPrototype = ""
+      %if ISFIELD(SimulinkFunction[groupIdx],"Prototype")
+        %assign slFcnPrototype = SimulinkFunction[groupIdx].Prototype
+      %endif
+      
+      %assign slFcnIsFromMapping = "no"
+      %if ISFIELD(SimulinkFunction[groupIdx],"IsFromMapping")
+        %assign slFcnIsFromMapping = SimulinkFunction[groupIdx].IsFromMapping
+      %endif
+      
+      %assign isSlFcnFPCSynthesized = "no"
+      %if ISFIELD(SimulinkFunction[groupIdx],"IsSynthesizedFPC")
+        %assign isSlFcnFPCSynthesized = SimulinkFunction[groupIdx].IsSynthesizedFPC
+      %endif
+      
+      %addtorecord blkInterface SimulinkFunction { \
+      Name Name; \
+      CGFunctionName CGFunctionName; \
+      FullPathToFunction FullPathToFunction; \
+      CallerTIDs CallerTIDs; \
+      IsScoped (IsGlobal == "yes" ? "no" : "yes"); \
+      IsDefined IsDefined; \
+      IsDefinedInThisModel IsDefinedInThisModel; \
+      IsCalled  IsCalled; \
+      IsMultiInstance IsMultiInstance; \
+      InoutArgs InoutArgs; \
+      ArginCGTypeIdx arginCGTypeIdx; \
+      ArgoutCGTypeIdx argoutCGTypeIdx; \
+      ArginCGTypeIdxFlat arginCGTypeIdxFlat; \
+      ArgoutCGTypeIdxFlat argoutCGTypeIdxFlat; \
+      ArgIndices    ArgIndices; \
+      ReturnArgIndex ReturnArgIndex; \
+      ReturnArgName ReturnArgName; \
+      SlArginNames  SlArginNames; \
+      SlArgoutNames SlArgoutNames; \
+      RefBlockPaths RefBlockPaths; \
+      NumStateOwnersInFcn NumStateOwnersInFcn; \
+      StateOwnerPathVect  StateOwnerPathVect;  \
+      NumStateAccessorsInFcn NumStateAccessorsInFcn; \
+      StateAccessorPathVect  StateAccessorPathVect;  \
+      AllowMultiCaller AllowMultiCaller; \      
+      AUTOSARPortName "%<AUTOSARPortName>"; \      
+      AUTOSAROperationName "%<AUTOSAROperationName>"; \      
+      Prototype "%<slFcnPrototype>"; \
+      IsFromMapping "%<slFcnIsFromMapping>" \
+      IsSynthesizedFPC "%<isSlFcnFPCSynthesized>" \
+    }          
+    
+    %assign numSimulinkFunctions = SIZE(blkInterface.SimulinkFunction)[1]
+    %foreach i=NumChildCallers
+      %assign calledFcn = ChildCaller[i].CalledFcn
+      %assign calledFcnPath = ChildCaller[i].CalledFcnPath
+      %assign callerPath = ChildCaller[i].CallerPath
+      %addtorecord blkInterface.SimulinkFunction[numSimulinkFunctions-1] ChildCaller { \
+        CalledFcn calledFcn; \
+        CalledFcnPath calledFcnPath; \
+        CallerPath callerPath \
+      }
+    %endforeach
+    
+    %endwith
+  %endforeach
+%endfunction
+
+%function SLibWriteStateAccessInfo(blkInterface) void
+  %if EXISTS(StateOwnerToAccessorsMap)
+    %with StateOwnerToAccessorsMap
+      %addtorecord blkInterface StateOwnerToAccessorsMap { \
+         NumStateOwners NumStateOwners; \
+         StateOwnersVect StateOwnersVect; \
+         NumStateAccessorsVect NumStateAccessorsVect; \
+         StateAccessorsVect StateAccessorsVect \
+      }   
+    %endwith
+  %endif
+%endfunction
+
+%function SLibWriteCallerToStateAccessInfoMap(blkInterface) void
+  %if EXISTS(CallerToStateAccessInfoMap)
+    %with CallerToStateAccessInfoMap
+      %addtorecord blkInterface CallerToStateAccessInfoMap { \
+         NumCallers NumCallers; \
+         CallerPathVect CallerPathVect; \
+         NumStateOwnersVect NumStateOwnersVect; \
+         StateOwnerPathVect StateOwnerPathVect; \
+         NumStateAccessorsVect NumStateAccessorsVect; \
+         StateAccessorPathVect StateAccessorPathVect  \
+      }   
+    %endwith
+  %endif
+%endfunction
+
+%function SLibWriteExternalPortGroups(blkInterface) void
+  %if EXISTS(ExternalPortGroups)
+    %with ExternalPortGroups
+      %addtorecord blkInterface NumInportFcnCallPortGroups NumInportFcnCallPortGroups
+      %% Write FcnCallPortGroup
+      %foreach groupIdx = NumFcnCallPortGroups
+        %with FcnCallPortGroup[groupIdx]
+          %addtorecord blkInterface ExternalPortGroups { \
+            IsAsync (IsAsync == "true"); \
+            FcnCallInputPort FcnCallInputPort; \
+            CallerNames CallerNames; \
+            CallerFullPaths CallerFullPaths; \
+            SimulinkFunctionName SimulinkFunctionName; \
+            SimulinkFunctionFullPath SimulinkFunctionFullPath; \
+            DataInputPorts DataInputPorts; \
+            LatchedDataInputPorts LatchedDataInputPorts; \
+            DataInputPortsWithMultiDsts DataInputPortsWithMultiDsts; \
+            PortGroupsWithDataTransferConnection PortGroupsWithDataTransferConnection;\
+            DataOutputPorts DataOutputPorts; \
+            SrcPortGroups SrcPortGroups; \
+            MuxedPortGroups MuxedPortGroups; \
+            Tid Tid; \
+            HasTaskPriority HasTaskPriority; \
+            TaskPriority TaskPriority; \
+            SchedulingPriority SchedulingPriority; \
+            IsSimulinkFunction IsSimulinkFunction; \
+            HasEnableMethod HasEnableMethod; \
+            HasDisableMethod HasDisableMethod; \
+            NeedAbsoluteTime NeedAbsoluteTime; \
+            SpecifiedTsPeriodAndOffset SpecifiedTsPeriodAndOffset \
+            IsPeriodicFcnCall IsPeriodicFcnCall \
+          }
+        %endwith
+      %endforeach
+      
+      %% Write DataPortGroup
+      %with DataPortGroup
+        %addtorecord blkInterface DataPortGroup { \
+          DataInputPorts DataInputPorts; \
+          DataOutputPorts DataOutputPorts; \
+          SrcPortGroups SrcPortGroups \
+        }
+      %endwith
+      
+      %% Write port groups in same rate
+      %if EXISTS(PortGroupsInSameRate)
+        %with PortGroupsInSameRate
+          %addtorecord blkInterface PortGroupsInSameRate { \
+            RootMergeVect RootMergeVect; \
+            MergedPortGroupIdxVect MergedPortGroupIdxVect; \
+            DSMBlkNameVect DSMBlkNameVect; \
+            DSMPortGroupIdxVect DSMPortGroupIdxVect; \            
+            GlobalDSMNameVect GlobalDSMNameVect; \
+            GlobalDSMPortGroupIdxVect GlobalDSMPortGroupIdxVect \
+          }
+        %endwith
+      %endif
+    %endwith
+  %endif
+%endfunction
+
+%function SLibWriteDescExpFcnMdlInfo(blkInterface) void
+  %addtorecord blkInterface HasDescExpFcnMdl HasDescExpFcnMdl
+  %addtorecord blkInterface HasDescAdaptedMdl HasDescAdaptedMdl
+  %if EXISTS(CompTsOfGlobalDSMAccessedByDescExpFcnMdl)
+    %with CompTsOfGlobalDSMAccessedByDescExpFcnMdl
+      %foreach dsmIdx = NumGlobalDSMAccessedByDescExpFcnMdl
+        %with CompTsOfGlobalDSM[dsmIdx]
+          %addtorecord blkInterface CompTsOfGlobalDSMAccessedByDescExpFcnMdl { \
+            GlobalDSMName   GlobalDSMName; \
+            NumGlobalDSMTs  NumGlobalDSMTs;\
+            GlobalDSMCompTsPeriodVect GlobalDSMCompTsPeriodVect; \
+            GlobalDSMCompTsOffsetVect GlobalDSMCompTsOffsetVect; \
+            DescExpFcnMdlsAccessingGlobalDSM DescExpFcnMdlsAccessingGlobalDSM \
+          }
+        %endwith
+      %endforeach
+    %endwith
+  %endif
+%endfunction
+
+%function getDataTypeName(dataTypeIdx)
+  %if LibIsFundamentalBuiltInDataType(dataTypeIdx)
+    %assign dtName = LibGetDataTypeEnumFromId(dataTypeIdx)
+  %else
+    %assign curDT = FixPt_GetDataTypeFromIndex(dataTypeIdx)
+    %if curDT.IsFixedPoint && !LibIsAliasDataType(dataTypeIdx)
+      %assign dtName = "fixed"
+    %else
+      %assign dtEnum = LibGetDataTypeEnumFromId(dataTypeIdx)
+      %if dtEnum == "SS_POINTER" || dtEnum == "SS_INTEGER" || dtEnum == "SS_FCN_CALL"
+        %assign dtName = LibGetDataTypeEnumFromId(dataTypeIdx)
+      %else
+        %assign dtName = LibGetDataTypeNameFromId(dataTypeIdx)
+      %endif              
+    %endif
+  %endif
+  %return dtName
+%endfunction
+
+
+%function WriteFunctionCallInputInfo(blkInterface, currentSystem) void
+  %assign fcnCallInfo = LibGetSystemField(currentSystem, "FcnCallInputInfo")
+  %foreach idx = SIZE(fcnCallInfo.FcnCallInfo,1)
+    %assign info = fcnCallInfo.FcnCallInfo[idx]
+    %assign fcnRec = CreateModelReferenceFcnRec(GetBaseSystemIdx(), info.FcnType, info.TaskName, info.TID, blkInterface, TLC_TRUE)
+    %addtorecord blkInterface FcnCallInputs %<info>
+    %addtorecord blkInterface.FcnCallInputs[idx] TaskFcnInfo %<fcnRec>
+  %endforeach
+%endfunction
+
+
+%% Abstract:
+%%   This function optionally add CanonicalInputNeededByCAPI flag to ::CompiledModel
+%%   if and only if all of the following are true:
+%%      1. ModelRef target(s)
+%%      2. CAPI needs to access canonical inputs due to
+%%         various reasons: e.g., RTWCAPISignals being true and 
+%%         one of the signals is being test pointed and its signal source is a 
+%%         Canonical inpput.
+%%
+%function FcnOptionallyAddModelRefCanonicalInputNeededByCAPIFlag(sigRec) void
+  %if !IsModelReferenceTarget()
+      %return
+  %endif
+  %if !ISEMPTY(sigRec) && ISFIELD(sigRec, "RecordType") && sigRec.RecordType == "ExternalInput"
+    %% Find canonical input corresponding to sigRec
+    %assign baseSysIdx = GetBaseSystemIdx()
+    %with System[baseSysIdx].Interface
+      %foreach ciIdx = NumCanonicalInputArgDefs
+        %assign ci = CanonicalInputArgDef[ciIdx]
+        %assign inputPortInfo = ci.SignalSrc
+        %assign u_str_idx     = IDNUM(inputPortInfo[0])
+        %if (u_str_idx[0] != "U")
+          %<LibReportFatalError("CI Error")>
+        %endif
+        %assign u_idx = u_str_idx[1]
+        %assign ei = ::CompiledModel.ExternalInputs.ExternalInput[u_idx]
+        %if ei==sigRec
+          %% Register the canonical input as argument of model_initialize 
+          %% function
+          %<SLibAccessArgHelper(ci,"","")>
+          %break
+        %endif
+      %endforeach
+    %endwith
+    %if ISFIELD(::CompiledModel, "ModelRefCanonicalInputNeededByCAPI") && ...
+      ::CompiledModel.ModelRefCanonicalInputNeededByCAPI == "yes"
+      %% only need to mark it once
+      %return
+    %else
+      %<LibAddToCompiledModel("ModelRefCanonicalInputNeededByCAPI", "yes")>
+    %endif
+  %endif
+%endfunction
+
+%% Abstract:
+%%   Function to query if a canonical input is needed by CAPI for a modelref
+%%   target after the flag has been populated.
+%%
+%function IsModelRefCanonicalInputNeededByCAPI() void
+  %if ISFIELD(::CompiledModel, "ModelRefCanonicalInputNeededByCAPI") && ...
+      ::CompiledModel.ModelRefCanonicalInputNeededByCAPI == "yes"
+      %return TLC_TRUE
+  %elseif !IsModelReferenceTarget()
+      %return TLC_FALSE
+  %else
+      %% Even if this model itself does not have any canonical input
+      %% needed by capi, its canonical inputs can still be needed
+      %% by capi, if there are referenced models
+      %% whose inputs are connected to this model's canonical inputs
+      %% and that referenced model's block interface  
+      %% ModelRefCanonicalInputNeededByCAPI is true
+       %if ISFIELD(::CompiledModel, "NumModelReferenceBlocks")
+           %foreach idIdx = NumModelReferenceBlocks
+              %assign blkIdx    = ModelReferenceBlocks[idIdx]
+              %assign mdlBlock  = System[blkIdx[0]].Block[blkIdx[1]]
+              %assign blockInterface = GetModelrefInterface(mdlBlock)
+              %if !blockInterface.ModelRefCanonicalInputNeededByCAPI
+                %continue
+              %endif
+              %foreach portIdx = mdlBlock.NumDataInputPorts
+                %assign port = mdlBlock.DataInputPort[portIdx]
+                %assign idNum = IDNUM(port.SignalSrc[0])
+                %if idNum[0] == "u"
+                  %return TLC_TRUE
+                %endif
+              %endforeach
+           %endforeach
+       %endif
+       
+       %return TLC_FALSE
+  %endif
+%endfunction
+
+%endif %% _MODELREFINTERFACE_
+%% [EOF] modelrefinterface.tlc
+

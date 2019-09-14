@@ -1,0 +1,38 @@
+%% ============================================================================
+%% 
+%%  
+%% 
+%%
+%% Abstract:
+%%   Utilities for managing TLC compile stats.
+%%
+%% Copyright 1994-2010 The MathWorks, Inc.
+%%
+
+%% Function: SLibAddTLCCompileStatsCheckPoint()
+%% Abstract:
+%%   Adds a checkpoint to the TLC compile stats
+%%
+%% The _COMPILESTATS_ needs to be checked so that this file can be included 
+%% in other TLC files like commonsetup.tlc and genmap.tlc
+%if EXISTS("_COMPILESTATS_") == 0
+%assign _COMPILESTATS_ = 1
+
+%function SetCompileStatsEnabled() void
+    %% The following check is needed to make sure TLCCSTargetType is avaialble.
+    %% This parameter is set by tlc_c.m file
+    %if EXISTS(TLCCompileStats)
+        %assign ::CompileStatsEnabled = TLC_TRUE
+    %endif
+%endfunction
+
+%function SLibAddTLCCompileStatsCheckPoint(startOrEnd,checkPointName) void
+  %if (::CompileStatsEnabled == TLC_TRUE)
+    %%  %if EXISTS(TLCCompileStats)
+    %% Must enter a valid name for the checkpoint
+    %assert (!ISEMPTY(checkPointName))
+    %assign errTxt = FEVAL("coder.internal.TLCPerfLogger", "TLC", ...
+      ::CompiledModel.OrigName, TLCCSTargetType, checkPointName, startOrEnd)
+  %endif
+%endfunction
+%endif %% _COMPILESTATS_

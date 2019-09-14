@@ -1,0 +1,447 @@
+%% ==============================================================================
+%% 
+%% 
+%%
+%% Abstract:
+%%   Output file template library
+%%
+%% Copyright 1994-2014 The MathWorks, Inc.
+%%
+%selectfile NULL_FILE
+
+%% =============================================================================
+%% Public functions
+%% =============================================================================
+
+%% SLibGetNumPeriodicTasks ======================================================
+%% Abstract:
+%%   Return the number of periodic tasks in generated code.
+%%
+%function SLibGetNumPeriodicTasks() 
+  %assign numTasks = 0 
+  %if LibIsDeploymentDiagram() 
+    %assign numTasks = SLibDeploymentGetNumPeriodicTasks()
+  %else
+    %% Note: we use LibGetNumSyncPeriodicTasks instead of LibGetNumRuntimeExportedTasks
+    %assign numTasks = LibGetNumSyncPeriodicTasks()
+  %endif
+  %return numTasks
+%endfunction
+
+%% SLibGetNumPeriodicTriggers ======================================================
+%% Abstract:
+%%   Return the number of periodic triggers in generated code.
+%%
+%function SLibGetNumPeriodicTriggers() 
+  %assign numTriggers = 0 
+  %if LibIsDeploymentDiagram()  
+    %foreach ehIdx = LibGetNumTriggers()
+      %assign evType = LibGetTriggerType(ehIdx)
+      %if ISEQUAL(evType, "PeriodicTrigger")
+        %assign numTriggers = numTriggers+1
+      %endif
+    %endforeach
+  %else   
+    %if LibGetNumSyncPeriodicTasks() > 0
+      %assign numTriggers = 1
+    %endif
+  %endif
+  %return numTriggers
+%endfunction
+
+%% SLibGetNumAperiodicTasks =====================================================
+%% Abstract:
+%%   Return the number of aperiodic tasks in generated code.
+%%
+%function SLibGetNumAperiodicTasks()
+  %assign retVal = 0
+  %if LibIsDeploymentDiagram()
+    %assign retVal = SLibDeploymentGetNumAperiodicTasks() 
+  %endif
+  %return retVal
+%endfunction
+
+%% SLibGetNumPeriodicMappedEntities ============================================
+%% Abstract:
+%% Returns the number of periodic tasks and periodic triggers which
+%% have blocks mapped to it.
+%%
+%function SLibGetNumPeriodicMappedEntities() 
+  %if LibIsDeploymentDiagram()
+    %return SLibDeploymentGetNumPeriodicMappedEntities()
+  %else
+    %return SLibGetNumPeriodicTasks()
+  %endif
+%endfunction
+
+%% SLibIsTaskProfilingOn =======================================================
+%% Abstract:
+%% Returns the number of periodic tasks and periodic triggers which
+%% have blocks mapped to it.
+%%
+%function SLibIsTaskProfilingOn() void
+  %return ISFIELD(::CompiledModel, "ConcurrentExecutionProfileGenCode") && ...
+    ISEQUAL(::CompiledModel.ConcurrentExecutionProfileGenCode, 1)
+%endfunction
+
+%% SLibIsRateMonotonicScheduling ===============================================
+%% Abstract:
+%% Returns TLC_TRUE if there are rate monotonic tasks and deployment
+%% diagram, or there is multitasking and not deployment diagram
+%%
+%function SLibIsRateMonotonicScheduling() void
+  %assign isRMSTask = TLC_FALSE
+  %if LibIsDeploymentDiagram()  
+    %foreach ehIdx = LibGetNumTriggers()
+      %foreach taskIdx = LibGetNumTriggerTasks(ehIdx)
+        %if ISEQUAL(SLibDeploymentGetTaskSchedulingConstraint(ehIdx, taskIdx), ...
+          "RateMonotonic")
+          %assign isRMSTask = TLC_TRUE
+          %break
+        %endif
+      %endforeach
+      %if isRMSTask 
+        %break
+      %endif
+    %endforeach
+  %endif
+ 
+  %return isRMSTask || ...
+    (!SLibConcurrentTasks() && (LibGetNumSyncPeriodicTasks() > 1))
+%endfunction
+
+%% SLibIsTaskRateMonotonic =====================================================
+%% Abstract:
+%% Returns TLC_TRUE if task is rate monotonic 
+%%
+%function SLibIsTaskRateMonotonic(ehIdx, taskIdx) void 
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign isRMSTask = TLC_FALSE
+  %if LibIsDeploymentDiagram()  
+    %if ISEQUAL(SLibDeploymentGetTaskSchedulingConstraint(ehIdx, taskIdx), ...
+      "RateMonotonic")
+      %assign isRMSTask = TLC_TRUE 
+    %endif
+  %else
+    %assert ISEQUAL(ehId, 0)
+  %endif    
+  %return isRMSTask
+%endfunction
+
+
+%% SLibGetNumClockTicksForTrigger ==============================================
+%% Abstract:
+%% Returns the number of clock ticks required by a periodic trigger to increment
+%% the task counter for the tasks belonging to that periodic trigger.
+%%
+%function SLibGetNumClockTicksForTrigger(ehIdx)
+  %assign nClockTicks = LibGetTriggerBaseRate(ehIdx)/FundamentalStepSize + 0.5
+  %assign nClockTicks = CAST("Number",FEVAL("floor", nClockTicks))
+  %return nClockTicks
+%endfunction
+
+%% SLibGetMaxNumberOfCoresPerTask ==============================================
+%% Abstract:
+%% Returns the maximum number of cores assigned to one of the tasks 
+%%
+%function SLibGetMaxNumberOfCoresPerTask()
+  %assign maxNumberOfCoresPerTask = -1
+  %foreach ehIdx = LibGetNumTriggers()
+    %assign evType = LibGetTriggerType(ehIdx)
+    %if ISEQUAL(evType, "AperiodicTrigger")
+      %continue
+    %endif
+    %foreach taskIdx = LibGetNumTriggerTasks(ehIdx) 
+      %assign affinity = LibGetTaskCoreAffinity(ehIdx, taskIdx)
+      %assign affinitySize = SIZE(affinity, 1)
+      %if affinitySize > maxNumberOfCoresPerTask
+        %assign maxNumberOfCoresPerTask = affinitySize
+      %endif
+    %endforeach         
+  %endforeach
+  %return maxNumberOfCoresPerTask
+%endfunction
+  
+%% DocFunction{Advanced Functions}: LibCallRateScheduler() =====================
+%% Abstract:
+%%   Returns the code to call the model's rate scheduler function for concurrent 
+%%   execution
+
+%function LibCallRateScheduler()
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign buf = ""
+  %if LibIsDeploymentDiagram()  
+    %assign buf = LibDeploymentCallAdvanceTaskCounters()
+  %elseif !SLibSingleTasking() 
+    %if IsMultiInstanceERTOrModelReference()
+      %assign buf = "%<FcnGetMulirateSchedulerName()>(%<::tSimStruct>);"
+    %else
+      %assign buf = "%<FcnGetMulirateSchedulerName()>();"
+    %endif
+  %endif
+  %return buf
+%endfunction
+
+
+%% DocFunction{Advanced Functions}: LibGetNumTriggers() ========================
+%% Abstract:
+%%   Returns the number of triggers for a model configured for concurrent 
+%%   execution
+
+%function LibGetNumTriggers() 
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign numEH = 1 %% At least one periodic event handler
+  %if LibIsDeploymentDiagram()
+    %assign numEH = LibDeploymentGetNumTaskGroups()
+  %endif
+  %return numEH
+%endfunction
+
+
+%% DocFunction{Advanced Functions}: LibGetTriggerType() ========================
+%% Abstract:
+%%   Returns trigger type for a model configured for concurrent execution
+%%
+%% Returns: 
+%%    "periodic"  - PeriodicTrigger trigger
+%%    "aperiodic" - AperiodicTrigger trigger
+
+%function LibGetTriggerType(ehId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign evType = ""
+  %if LibIsDeploymentDiagram()
+    %assign evType = SLibDeploymentGetEventType(ehId)
+  %else
+    %assert ISEQUAL(ehId, 0)
+    %assign evType = "PeriodicTrigger"
+  %endif
+  %return evType
+%endfunction
+
+
+%% DocFunction{Advanced Functions}: LibGetTriggerName() ========================
+%% Abstract:
+%%   Returns trigger name for a model configured for concurrent execution
+
+%function LibGetTriggerName(ehId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign retVal = ""
+  %if LibIsDeploymentDiagram()
+    %assign retVal = SLibDeploymentGetEventHandlerName(ehId) 
+  %else
+    %assert ISEQUAL(ehId, 0)
+    %assign retVal = "baseRate"
+  %endif
+  %return retVal
+%endfunction
+
+%% LibGetTaskName() ============================================================
+%% Abstract:
+%%   Return the name of a task
+%function LibGetTaskName(ehId, taskId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign retVal = ""
+  %if LibIsDeploymentDiagram()
+    %assign retVal = SLibDeploymentGetTaskName(ehId, taskId) 
+  %else
+    %assert ISEQUAL(ehId, 0)
+    %assign retVal = "task%<taskId>" 
+  %endif
+  %return retVal
+%endfunction
+
+%% DocFunction{Advanced Functions}: LibGetTriggerTargetObject() ===============
+%% Abstract:
+%%   Returns the target customization object associated with a trigger for a 
+%%   model configured for concurrent execution
+
+%function LibGetTriggerTargetObject(ehId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign retVal = ""
+  %assign evType = LibGetTriggerType(ehId)   
+  %if ISEQUAL(evType, "PeriodicTrigger")
+    %assign errTxt = "Target object for periodic event handler is not supported"
+    %<LibReportError(errTxt)>
+  %else
+    %assert LibIsDeploymentDiagram()
+    %assign retVal = SLibDeploymentGetEventHandlerTargetObject(ehId) 
+  %endif
+  %return retVal
+%endfunction
+
+%% DocFunction{Advanced Functions}: LibGetTriggerBaseRate() ====================
+%% Abstract:
+%%   Returns the base rate associated with a periodic trigger for a 
+%%   model configured for concurrent execution
+
+%function LibGetTriggerBaseRate(ehId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign retVal = ""
+  %assign evType = LibGetTriggerType(ehId)   
+  %if ISEQUAL(evType, "AperiodicTrigger")
+    %assign errTxt = "Base rate for aperiodic trigger is not supported"
+    %<LibReportError(errTxt)>
+  %else
+    %if LibIsDeploymentDiagram()
+      %assign retVal = ::CompiledModel.EventHandler[ehId].Periodicity.BasePeriod
+    %else
+      %assign retVal = LibGetSampleTimePeriodAndOffset(LibGetTID01EQ(), 0)
+    %endif
+  %endif
+  %return retVal
+%endfunction
+
+
+%% DocFunction{Advanced Functions}: LibGetTriggerHandlerType ===================
+%% Abstract:
+%%   Returns the trigger handler type for a model configured for concurrent 
+%%   execution
+%%
+%% Returns:
+%%    "isr"  - Map to an operating system event handler 
+%%    "task" - Map to an operating system thread
+
+%function LibGetTriggerHandlerType(ehId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign retVal = ""
+  %if LibIsDeploymentDiagram()
+    %assign retVal = SLibDeploymentGetEventHandlerType(ehId) 
+  %else
+    %assert ISEQUAL(ehId, 0)
+    %assign retVal = "task"
+  %endif
+  %return retVal
+%endfunction
+
+
+%% DocFunction{Advanced Functions}: LibCallTriggerTask =========================
+%% Abstract:
+%%   Returns the code to call a task function associated with a trigger for a 
+%%   model configured for concurrent execution
+
+%function LibCallTriggerTask(ehId, taskId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign retVal = ""
+  %assign evType = LibGetTriggerType(ehId)   
+  %if ISEQUAL(evType, "PeriodicTrigger")
+    %assign errTxt = "LibCallTriggerTask for periodic event handler is not supported"
+    %<LibReportError(errTxt)>
+  %else
+    %assert LibIsDeploymentDiagram() 
+    %assign retVal = SLibDeploymentEmitCallToEventHandlerTask(ehId, taskId) 
+  %endif
+  %return retVal
+%endfunction
+
+
+%% DocFunction{Advanced Functions}: LibCallTriggerISR ==========================
+%% Abstract:
+%%   Returns the code to call an event handler function for a model configured 
+%%   for concurrent execution
+
+%function LibCallTriggerISR(ehId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign retVal = ""
+  %assign evType = LibGetTriggerType(ehId)   
+  %if ISEQUAL(evType, "PeriodicTrigger") && !LibIsDeploymentDiagram()
+    %assign errTxt = "LibCallTriggerISR for periodic event handler is not supported"
+    %<LibReportError(errTxt)>
+  %else
+    %assert LibIsDeploymentDiagram()  
+    %assign retVal = SLibDeploymentEmitCallToEventHandler(ehId) 
+  %endif
+  %return retVal
+%endfunction
+
+
+%% DocFunction{Advanced Functions}: LibGetNumTriggerTasks ======================
+%% Abstract:
+%%   Returns the number of tasks triggered by the event associated with a trigger
+%%   for a model configured for concurrent execution
+
+%function LibGetNumTriggerTasks(ehId) void
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign numTasks = 0 %% assume
+  %if LibIsDeploymentDiagram() 
+    %assign numTasks = SLibDeploymentGetNumEventHandlerTasks(ehId)
+  %else   
+    %assert ISEQUAL(ehId, 0)
+    %assign numTasks = LibGetNumSyncPeriodicTasks()
+  %endif
+  %return numTasks
+%endfunction
+
+
+%% DocFunction{Advanced Functions}: LibGetTriggerTaskSampleTimeIndex ===========
+%% Abstract:
+%%    Returns the sample time index for a task triggered by the event associated 
+%%    with a trigger for a model configured for concurrent execution
+
+%function LibGetTriggerTaskSampleTimeIndex(ehId, taskId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign stId   = -1
+  %assign retVal = ""
+  %assign evType = LibGetTriggerType(ehId)   
+  %if ISEQUAL(evType, "AperiodicTrigger")
+   %assign errTxt = "Target object for aperiodic event handler is not supported"
+    %<LibReportError(errTxt)>
+  %else 
+    %if LibIsDeploymentDiagram() 
+      %assign stId = SLibDeploymentGetTaskSampleTimeIndex(ehId, taskId)
+    %else
+      %assert ISEQUAL(ehId, 0)
+      %assign tid01Eq = ISEQUAL(SolverType, "FixedStep") && FixedStepOpts.TID01EQ
+      %assert (taskId < NumRuntimeExportedRates+tid01Eq)
+      %assign stId   = taskId + tid01Eq 
+    %endif
+  %endif
+  %return stId
+%endfunction
+
+%% DocFunction{Advanced Functions}: LibIsCoreAffinityRequired =====================
+%% Abstract:
+%%    Returns TLC_TRUE if is required to specify core affinity for some tasks
+%function LibIsCoreAffinityRequired()
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram()) 
+  %assign retVal = TLC_FALSE
+  
+  %if LibIsDeploymentDiagram()
+    %foreach ehIdx = LibGetNumTriggers()
+      %assign evType = LibGetTriggerType(ehIdx)
+      %if ISEQUAL(evType, "PeriodicTrigger")
+        %foreach taskIdx = LibGetNumTriggerTasks(ehIdx)
+          %assign affinity = LibGetTaskCoreAffinity(ehIdx, taskIdx)
+          %if !ISEQUAL(affinity[0], -1)
+            %assign retVal = TLC_TRUE
+            %break
+          %endif
+        %endforeach
+      %endif
+      %if retVal
+        %break
+      %endif
+    %endforeach
+  %endif
+  
+  %return retVal
+%endfunction
+
+%% DocFunction{Advanced Functions}: LibGetTaskCoreAffinity =====================
+%% Abstract:
+%%    Returns the core affinity of a task
+%function LibGetTaskCoreAffinity(ehId, taskId)
+  %assert (SLibConcurrentTasks() || LibIsDeploymentDiagram())
+  %assign evType = LibGetTriggerType(ehId)   
+  %if ISEQUAL(evType, "AperiodicTrigger")
+   %assign errTxt = "Core affinity for aperiodic trigger is not supported"
+    %<LibReportError(errTxt)>
+  %else 
+    %if LibIsDeploymentDiagram() 
+      %assign affinity = SLibDeploymentGetTaskCoreAffinity(ehId, taskId)
+    %else
+      %assert ISEQUAL(ehId, 0)
+      %assign affinity = 0
+    %endif
+  %endif
+  %return affinity
+%endfunction

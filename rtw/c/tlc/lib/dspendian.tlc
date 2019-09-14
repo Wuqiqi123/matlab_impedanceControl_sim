@@ -1,0 +1,65 @@
+%%
+%% dspendian.tlc
+%%
+%% Copyright 1995-2014 The MathWorks, Inc.
+%%  
+
+%if EXISTS("_DSPENDIANLIB_") == 0
+%assign _DSPENDIANLIB_ = 1
+
+%if !EXISTS("dspIsLittleEndianUtils")
+  %createrecord dspIsLittleEndianUtils { ...
+  NothingMacro 1}
+%endif
+
+%function dspIsLittleEndian() Output
+  %%
+  %assign utilityName = "isLittleEndianA"
+  
+  %% Register utility name in the Shared Code Manager
+  %if(!EXISTS(block))
+    %assign block = ""
+  %endif
+  %assign utilityName = SLibRegisterSharedUtility(block, utilityName)
+  
+  %<FcnTrackSharedUtilHeaderFileUsage(utilityName + ".h", TLC_FALSE)>
+  %<utilityName>()
+  %%
+  %if !(ISFIELD(dspIsLittleEndianUtils, utilityName))
+    %%
+    %<LibPushEmptyStackSharedUtils()>\
+    %%
+    %% register utility 
+    %%
+    %assign tmpRet = SETFIELD(dspIsLittleEndianUtils,utilityName,1)
+    %%
+    %% utility function prototype
+    %%
+    %assign funcDeclarationRoot = "int_T %<utilityName>(void)"
+    %openfile funcProto
+      %<funcDeclarationRoot>;
+    %closefile funcProto
+    %%
+    %% utility definition
+    %%
+    %openfile utilityDef
+    %<funcDeclarationRoot>
+    {
+      int16_T  endck  = 1;
+      int8_T  *pendck = (int8_T *)&endck;
+      return(pendck[0] == (int8_T)1);
+    }
+    %closefile utilityDef
+    %%
+    %<SLibAddMathIncludeForUtilsSourceCode(utilityDef)>
+    %<SLibDumpUtilsSourceCodeAndCacheFunctionPrototype(utilityName,funcProto,utilityDef)>\
+    %%
+    %assign GSUStackBuf = LibPopStackSharedUtilsIncludes()
+    %%
+  %endif
+  
+%endfunction %% dspIsLittleEndian
+ 
+%endif %% _DSPENDIANLIB_
+
+%% [EOF] dspendian.tlc

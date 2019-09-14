@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<SimscapeMultibodyImportXML version="2.0" xmlns="urn:mathworks:SimscapeMultibody:import" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<Created by="" on="11/24/18||16:41:47" using="Simscape Multibody Link Version 6.0" from="SolidWorks 22.2.0"/>
+<ModelUnits mass="kilogram" length="millimeter"/>
+<DataUnits mass="kilogram" length="meter"/>
+<RootAssembly name="SCARA_Robot" uid="SCARA_Robot" version="196">
+<AssemblyFile name="SCARA_Robot.SLDASM" type="SolidWorks Assembly"/>
+<InstanceTree>
+<Instance name="Link2-1" uid="Link2-1" entityUid="Link2*:*默认">
+<Transform>
+<Rotation>1 1.6653345369377343e-16 0 1.6653345369377343e-16 -1 0 0 0 -1</Rotation>
+<Translation>0.16879638581524842 0.04428614707310289 0.7267500375</Translation>
+</Transform>
+</Instance>
+<Instance name="Rot-1" uid="Rot-1" entityUid="Rot*:*默认">
+<Transform>
+<Rotation>1 0 0 -1.1102230246251565e-16 -1.0000000000000002 0 0 0 -0.99999999999999989</Rotation>
+<Translation>0.31879638581524816 0.044286147073102848 0.38675003750000009</Translation>
+</Transform>
+</Instance>
+<Instance name="Base-1" uid="Base-1" grounded="true" entityUid="Base*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>-0.081203614184751582 -0.00071385292689713224 0.13325003750000003</Translation>
+</Transform>
+</Instance>
+<Instance name="Link1-1" uid="Link1-1" entityUid="Link1*:*默认">
+<Transform>
+<Rotation>1 0 0 0 -1 0 0 0 -0.99999999999999989</Rotation>
+<Translation>-0.081203614184751569 0.044286147073102883 0.4767500375</Translation>
+</Transform>
+</Instance>
+<Instance name="Move-1" uid="Move-1" entityUid="Move*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0.31879638581524816 0.044286147073102827 0.38675003749999998</Translation>
+</Transform>
+</Instance>
+</InstanceTree>
+<Constraints>
+<Concentric name="同心1">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>Base-1</Uid>
+</InstancePath>
+<Position>0 0.045000000000000012 0.17350000000000004</Position>
+<Axis>0 0 1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>Link1-1</Uid>
+</InstancePath>
+<Position>0 0 0.11499999999999999</Position>
+<Axis>0 0 -0.99999999999999989</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Distance name="距离1">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Link1-1</Uid>
+</InstancePath>
+<Position>0 0 0.11499999999999999</Position>
+<Axis>0 0 0.99999999999999989</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Base-1</Uid>
+</InstancePath>
+<Position>0 0.045000000000000012 0.23349999999999999</Position>
+<Axis>0 0 1</Axis>
+</ConstraintGeometry>
+</Distance>
+<Concentric name="同心2">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>Link1-1</Uid>
+</InstancePath>
+<Position>0.25 0 0.020000000000000018</Position>
+<Axis>0 0 -0.99999999999999989</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>Link2-1</Uid>
+</InstancePath>
+<Position>0 0 0.255</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Distance name="距离3">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Link1-1</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>0 0 -0.99999999999999989</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Link2-1</Uid>
+</InstancePath>
+<Position>0 0 0.255</Position>
+<Axis>0 0 1</Axis>
+</ConstraintGeometry>
+</Distance>
+<Concentric name="同心4">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>Move-1</Uid>
+</InstancePath>
+<Position>0 0 0.29999999999999999</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>Rot-1</Uid>
+</InstancePath>
+<Position>0 0 0.010000000000000009</Position>
+<Axis>0 0 -0.99999999999999989</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Distance name="距离5">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Rot-1</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>0 0 -0.99999999999999989</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Move-1</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+</Distance>
+<Coincident name="重合2">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Link2-1</Uid>
+</InstancePath>
+<Position>0.14199999999999996 0.0080000000000000071 0.020000000000000018</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Move-1</Uid>
+</InstancePath>
+<Position>-0.0080000000000000071 -0.0080000000000000002 0.20000000000000001</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Coincident name="重合3">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Link2-1</Uid>
+</InstancePath>
+<Position>0.15799999999999997 0.008000000000000014 0.020000000000000018</Position>
+<Axis>-1 0 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>Move-1</Uid>
+</InstancePath>
+<Position>0.0080000000000000071 0.0080000000000000002 0.20000000000000001</Position>
+<Axis>1 0 0</Axis>
+</ConstraintGeometry>
+</Coincident>
+</Constraints>
+</RootAssembly>
+<Assemblies>
+</Assemblies>
+<Parts>
+<Part name="Base" uid="Base*:*默认" version="165">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="Base.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>7.5403773028631784</Mass>
+<CenterOfMass>0 -0.012209096575251399 0.11193924805374537</CenterOfMass>
+<Inertia>0.067953426036702166 0.046975818815384374 0.04734617776371474 0.0021500310569350935 0 0</Inertia>
+</MassProperties>
+<GeometryFile name="Base_默认_sldprt.STEP" type="STEP"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="1" a="1"/>
+<Diffuse r="1" g="1" b="1" a="1"/>
+<Specular r="0.88" g="0.88" b="0.88" a="1"/>
+<Emissive r="0.20999999999999999" g="0.20999999999999999" b="0.20999999999999999" a="1"/>
+<Shininess>0.20999999999999999</Shininess>
+</VisualProperties>
+</Part>
+<Part name="Link1" uid="Link1*:*默认" version="161">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="Link1.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>3.1293470286336462</Mass>
+<CenterOfMass>0.10893738949451574 0 0.033603791992083999</CenterOfMass>
+<Inertia>0.006548194672905917 0.037291377962055935 0.040489443062110136 0 0.0016409773959237298 0</Inertia>
+</MassProperties>
+<GeometryFile name="Link1_默认_sldprt.STEP" type="STEP"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="1" a="1"/>
+<Diffuse r="1" g="1" b="1" a="1"/>
+<Specular r="0.88" g="0.88" b="0.88" a="1"/>
+<Emissive r="0.20999999999999999" g="0.20999999999999999" b="0.20999999999999999" a="1"/>
+<Shininess>0.20999999999999999</Shininess>
+</VisualProperties>
+</Part>
+<Part name="Link2" uid="Link2*:*默认" version="163">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="Link2.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>2.7999999999999998</Mass>
+<CenterOfMass>0.073025162683071784 0 0.19</CenterOfMass>
+<Inertia>0.016382446541266419 0.029034817182066901 0.021439113308911011 0 0.00054450418602656906 0</Inertia>
+</MassProperties>
+<GeometryFile name="Link2_默认_sldprt.STEP" type="STEP"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="1" a="1"/>
+<Diffuse r="1" g="1" b="1" a="1"/>
+<Specular r="0.88" g="0.88" b="0.88" a="1"/>
+<Emissive r="0.20999999999999999" g="0.20999999999999999" b="0.20999999999999999" a="1"/>
+<Shininess>0.20999999999999999</Shininess>
+</VisualProperties>
+</Part>
+<Part name="Move" uid="Move*:*默认" version="163">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="Move.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>0.065812385965949349</Mass>
+<CenterOfMass>0 0 0.15834767944725139</CenterOfMass>
+<Inertia>0.00050850906231784108 0.00050850906231784108 2.3790630175770465e-06 0 0 0</Inertia>
+</MassProperties>
+<GeometryFile name="Move_默认_sldprt.STEP" type="STEP"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="1" a="1"/>
+<Diffuse r="1" g="1" b="1" a="1"/>
+<Specular r="0.88" g="0.88" b="0.88" a="1"/>
+<Emissive r="0.20999999999999999" g="0.20999999999999999" b="0.20999999999999999" a="1"/>
+<Shininess>0.20999999999999999</Shininess>
+</VisualProperties>
+</Part>
+<Part name="Rot" uid="Rot*:*默认" version="161">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="Rot.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>0.063882891924537208</Mass>
+<CenterOfMass>-0.00011597715826376161 0 0.015314735172082147</CenterOfMass>
+<Inertia>1.6304915698841146e-05 1.6116420870237755e-05 2.2985600319168312e-05 0 -2.3318591256681659e-09 0</Inertia>
+</MassProperties>
+<GeometryFile name="Rot_默认_sldprt.STEP" type="STEP"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="1" a="1"/>
+<Diffuse r="1" g="1" b="1" a="1"/>
+<Specular r="0.88" g="0.88" b="0.88" a="1"/>
+<Emissive r="0.20999999999999999" g="0.20999999999999999" b="0.20999999999999999" a="1"/>
+<Shininess>0.20999999999999999</Shininess>
+</VisualProperties>
+</Part>
+</Parts>
+</SimscapeMultibodyImportXML>

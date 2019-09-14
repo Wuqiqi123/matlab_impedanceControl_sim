@@ -1,0 +1,2365 @@
+%% ============================================================================
+%% 
+%%
+%%
+%%              ModelReference
+%%                    |
+%%      --- -------------------------------------------------
+%%      |                         |                         |
+%%   SIM(SSYes)                  Coder                     NONE
+%% (Model reference sim target)   |                         |
+%%                                |                         |
+%%                        ---------------               ------------
+%%                        |             |               |           |
+%%                        SSYes (rsim)  SSNo(ert,grt)   SSYes(rsim) SSNo(ert)
+%%
+%%
+%%
+%% SS: SimStruct based target
+%% SSNo is equavalent to RTModelYes
+%%
+%% Copyright 1994-2018 The MathWorks, Inc.
+%%
+
+%if EXISTS("_MODELREFUTIL_") == 0
+%assign _MODELREFUTIL_ = 1
+
+%% Function:IsModelReferenceTarget ============================================
+%% Abstract:
+%%    Return true if we are generating code for model reference target
+%%
+%function IsModelReferenceTarget()
+  %if "NONE" != ::CompiledModel.ModelReferenceTargetType
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+%% Function:IsModelReferenceInlineOffTarget ============================================
+%% Abstract:
+%%    Return true if we are generating code for model reference target with inline off
+%%
+%function IsModelReferenceInlineOffTarget()
+  %if IsModelReferenceTarget()
+    %switch InlineParameters
+      %case 0
+        %% Cannot happen
+        %assert(TLC_FALSE)
+        %return TLC_FALSE
+      %case 1
+        %return TLC_FALSE
+      %case 2
+        %return TLC_TRUE
+    %endswitch
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+
+%% Function: IsModelReferenceSimTarget =========================================
+%% Abstract:
+%%    Return true if we are generating code for model reference Sim target
+%%
+%function IsModelReferenceSimTarget()
+  %if "SIM" == ::CompiledModel.ModelReferenceTargetType
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+%% Function: IsModelReferenceForASimstructBasedTarget =========================
+%function IsModelReferenceForASimstructBasedTarget()
+  %return ::ModelReferenceForASimstructBasedTarget
+%endfunction
+
+%% Function: IsModelReferenceNonSimstructBasedRTWTarget =========================
+%% 
+%%  Is this a non-simstruct based target (i.e., this is not RSIM)
+%function IsModelReferenceNonSimstructBasedRTWTarget()
+  %return IsModelReferenceRTWTarget() && !IsModelReferenceForASimstructBasedTarget()
+%endfunction
+
+
+%% Function: IsSimstructBasedTarget ===========================================
+%function IsSimstructBasedTarget()
+  %return ::SimstructBasedTarget
+%endfunction
+
+%% Function: IsModelReferenceRTWTarget =========================================
+%% Abstract:
+%%    Return true if we are generating code for model reference
+%function IsModelReferenceRTWTarget()
+  %if "RTW" == ::CompiledModel.ModelReferenceTargetType
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction %% IsModelReferenceRTWTarget
+
+%% Function: IsModelRefScalableBuild ==========================================
+%% Abstract:
+%%    Return true if we are generating code for model reference target
+%%    and the generated code is scalable (logic written into .rtw file)
+%function IsModelRefScalableBuild()
+  %return  IsModelReferenceTarget() && ...
+    ::CompiledModel.ModelReferenceGenScalableCode
+%endfunction
+
+%% Function: IsVariableStepModelReferenceTarget ================================
+%% Abstract:
+%%  Returns true if the solver type is variable step and we are building
+%% a model reference target.  Note that only simstruct based are allowed.
+%function IsVariableStepModelReferenceTarget()
+  %return IsModelReferenceForASimstructBasedTarget() && ...
+    ::CompiledModel.SolverType == "VariableStep"
+%endfunction
+
+%% Function: IsFPCIgnored =====================================================
+%% Abstract:
+%% Return true if FPC should be ignored
+%function IsFPCIgnored(fpc)
+  %if ISEMPTY(fpc) || (ISFIELD(fpc, "IsAuto") && fpc.IsAuto)
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction  
+
+%% Function: HasModelReferenceBlocksInModel ====================================
+%% Abstract:
+%%    Return true if we are generating code for a model that contains
+%%    references to other models.
+%%
+%function HasModelReferenceBlocksInModel() void
+  %return ::CompiledModel.NumModelReferenceBlocksInModel > 0
+%endfunction
+
+
+%% Function: HasModelReferenceBlocks ===========================================
+%% Abstract:
+%%    Return true if we are generating code for a model that contains
+%%    references to other models and calling those in the generated code.
+%%
+%function HasModelReferenceBlocks() void
+  %return ::CompiledModel.NumModelReferenceBlocks > 0
+%endfunction
+
+%% Function: GetRootSystemSourceFileName ============================================
+%% Abstract:
+%%    Get the file name for root system.
+%%
+%function GetRootSystemSourceFileName()
+  %return (::CompiledModel.System[::CompiledModel.NumSystems - 1].SystemSourceFileName)
+%endfunction
+
+%% Function: GetRootSystemHeaderFileName ============================================
+%% Abstract:
+%%    Get the file name for root system.
+%%
+%function GetRootSystemHeaderFileName()
+  %return (::CompiledModel.System[::CompiledModel.NumSystems - 1].SystemHeaderFileName)
+%endfunction
+
+%% Function: FcnIsRootSystem ==================================================
+%% Abstract:
+%%   return true if system is root system.
+%% 
+%function FcnIsRootSystem(system)
+  %if system.Type == "root"
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+%% Function: GetModelrefSFunctionName =========================================
+%% Abstract:
+%%    Get the name of the s-function for the model reference target
+%%
+%function GetModelrefSFunctionName(name)
+  %assign suffix = FEVAL("coder.internal.modelRefUtil", name, "getBinExt", ::ProtectedModelReferenceTarget)
+  %return name + suffix
+%endfunction
+
+
+%% Function: GetBaseSystemIdx ===============================================
+%% Abstract:
+%%  Get base system Idx. For standalone code generation, this is root system
+%%  idx. For model reference, this is the hidden model reference subsystem.
+%function GetBaseSystemIdx()
+   %assign baseSysIdx = IsModelReferenceTarget() ? ...
+     ::CompiledModel.NumSystems - 2 : ::CompiledModel.NumSystems - 1
+   %return baseSysIdx
+%endfunction
+
+
+%% Function: GetBaseModuleIdx ===============================================
+%% Abstract:
+%%  Get base module Idx. For standalone code generation, this is root module
+%%  idx. For model reference, this is the hidden model reference module.
+%function GetBaseModuleIdx()
+   %assign baseSysIdx = GetBaseSystemIdx()
+   %return System[baseSysIdx].CGIRModuleIdx
+%endfunction
+
+
+%% Function:  GetNumSystemsForCodeGen =========================================
+%% Abstract:
+%%     Return number of system to generate code for. For model reference
+%% target, we do not need to generate code for root.
+%%
+%function GetNumSystemsForCodeGen()
+  %assign numSys = IsModelReferenceTarget() ? ...
+    ::CompiledModel.NumSystems - 1 : ::CompiledModel.NumSystems
+  %return numSys
+%endfunction %% GetNumSystemsForCodeGen
+
+%function GetBaseFileName()
+  %assign baseSystem = ::CompiledModel.System[GetBaseSystemIdx()]
+  %assign baseName   = SLibGetSystemOutputHdrFileBaseName(baseSystem)
+  %return baseName
+%endfunction %% GetBaseFileName
+
+%% Function:  GetHideChildDefineSymbol ========================================
+%% Abstract:
+%%   Return a symbol/Identifier which will be used to #ifndef'd sections of 
+%% code in model.h. These sections of code need not be visible to parent
+%% (parent model.h). Potential sections are 
+%%     - Typedef's (BlockIO, DWORK)
+%%     - Extern data declaration (extern rtB;)
+%%     - #include "subsys.h"
+%%     - #include " child.h"
+%%     - subsystem function prototypes
+%%
+%function GetHideChildDefineSymbol(mode) void
+  %assign retStr = ""
+  %if IsModelRefScalableBuild() && ...
+    !GenerateClassInterface && ...
+    !::CompiledModel.AncestorAllocatesCoderDataGroups
+    %if mode == "ifndef"
+      %assign retStr = "#ifndef %<::CompiledModel.Name>_MDLREF_HIDE_CHILD_"
+      %assign retStr = retStr + "\n"
+    %elseif mode == "endif"
+      %assign retStr = "#endif /*%<::CompiledModel.Name>_MDLREF_HIDE_CHILD_*/"
+      %assign retStr = retStr + "\n"
+    %elseif mode == "define"
+      %assign retStr = "%<::CompiledModel.Name>_MDLREF_HIDE_CHILD_" 
+    %else
+      %return ""
+    %endif
+  %endif
+  %return retStr
+%endfunction %% GetBaseFileName
+
+%% Function: GetBaseFile ======================================================
+%% Abstract:
+%%    When generating code for model reference, this return the file
+%%    associated with the top level subsystem. Otherwise, it return
+%%    model file.
+%function GetBaseFile(type)
+  %assert(type == "SystemHeader" || type == "SystemBody")
+  %assign baseName  = GetBaseFileName()
+  %assign baseFile = SLibAddModelFile(type,"Simulink", baseName)
+  %return baseFile
+%endfunction %% GetBaseFile
+
+
+%% Function: IsModelReferenceBaseSys ==========================================
+%% Abstract:
+%%    Return true if we are generating code for model reference target
+%%    and the system is the hidden root system
+%function IsModelReferenceBaseSys(ss)
+  %return  IsModelReferenceTarget() && ss.SystemIdx == NumSystems-2
+%endfunction
+
+%% Function: LoadModelReferenceBlocksInterface ================================
+%% Abstract:
+%%      Read model reference interfaces from mat file and cache them in
+%%      ::CompiledModel.ModelReferenceInterfaces
+%%
+%function LoadModelReferenceBlocksInterface() void
+  %<LibAddToCompiledModel("ModelBlocksHaveNonInlinedSfcns", 0)>
+  %<LibAddToCompiledModel("ContainsMultiThreadBlocker", 0)>
+  
+  %assign zeroVec = CreateVectorWithValue(NumSampleTimes, 0)
+  %<LibAddToCompiledModel("ModelBlocksReqClockTicks", zeroVec)>
+  %<LibAddToCompiledModel("ModelBlocksReqLongClockTicks", zeroVec)>
+  %<LibAddToCompiledModel("ModelBlocksUseStopReq", 0)>
+  %<LibAddToCompiledModel("ModelBlocksUseContTimeOutputInconsistentWithStateAtMajorStep", 0)>
+  %<LibAddToCompiledModel("ModelBlockNeedsTriggerTID", 0)>
+  
+  %assign mdlsReqLongClockTicks = CreateVectorWithValue(NumRuntimeExportedRates, 0)
+  %assign mdlsActRateInteraction = FEVAL("zeros", ...
+    NumRuntimeExportedRates, NumRuntimeExportedRates)
+
+  %assign hasMdlBlks = (ISFIELD(::CompiledModel,"ModelReferenceBlocks") && ...
+    SIZE(::CompiledModel.ModelReferenceBlocks,0) > 0)
+    
+  %if !hasMdlBlks
+    %return
+  %endif
+
+  %assign mdlRefBlks = ::CompiledModel.ModelReferenceBlocks
+  %assign numMdlRefs = SIZE(mdlRefBlks,0)
+  %with ::CompiledModel
+    %assign buildStartDir = FEVAL("rtwprivate","rtwattic","getStartDir")
+    %addtorecord ::CompiledModel ModelReferenceInterfaces {}
+     
+    %foreach rowIdx = numMdlRefs
+      %assign mdlRefInfo = mdlRefBlks[rowIdx]
+      %assign mSysIdx    = mdlRefInfo[0]
+      %assign bIdx       = mdlRefInfo[1]
+      %assign mdlrefBlk  = System[mSysIdx].Block[bIdx]
+      %with mdlrefBlk
+	%assign mdlName = ParamSettings.ReferencedModelName
+
+    %assign needToAddBlockInterface = !EXISTS(ModelReferenceInterfaces.%<mdlName>Interface)
+    %assign needToLoadBlockInterface = needToAddBlockInterface || ...
+        ( EXISTS(ModelReferenceInterfaces.%<mdlName>Interface.IsModelBlockInXILMode) && ...
+          ModelReferenceInterfaces.%<mdlName>Interface.IsModelBlockInXILMode)
+
+    %if needToLoadBlockInterface
+      %% Normally, the model ref interface should be loaded from
+      %% the infoMATFile that matches the current target.
+      %% But for top model accel, if the child model is in SIL/PIL mode
+      %% then we need to look for the RTW or NONE target.
+      %assign loadMatchingTarget = !Accelerator || (ParamSettings.XILCodeInterface == "None")
+      %if loadMatchingTarget
+        %assign blkInterface = LoadModelrefInterfaceInMatInfoFile(...
+            mdlName, buildStartDir)
+      %else
+        %% We don't know the STF if we are in XIL mode - we need to query
+        %% the SIL/PIL interface.  But we also need to mark it as being 
+        %% as such, because "fileName" could be different for ERT and SIM
+        %% target code if customized file naming is used.  If an Accelerator
+        %% mode block does exist, we should be using the modelInterface from
+        %% that, or else the wrong header file will get included (or we won't
+        %% even find the fileName field if the XIL model is in Top Model mode)
+        %assign lIsModelRefTarget = (ParamSettings.XILCodeInterface == "Model reference")
+        %assign lFormattedBlockPath = LibGetFormattedBlockPath(mdlrefBlk)
+        %assign blkInterface = FEVAL("rtw.pil.ModelBlockPIL.getModelInterfaceForTLC", ...
+                lFormattedBlockPath, lIsModelRefTarget)
+        %addtorecord blkInterface IsModelBlockInXILMode TLC_TRUE
+      %endif
+        
+      %if needToAddBlockInterface
+        %addtorecord ::CompiledModel.ModelReferenceInterfaces \
+        %<mdlName>Interface blkInterface
+      %else
+        %assign ::CompiledModel.ModelReferenceInterfaces.%<mdlName>Interface=blkInterface
+      %endif
+
+	  %<PropModelBlocksInfoToCompiledModel(blkInterface, mdlrefBlk)>
+	%endif
+      %endwith
+    %endforeach
+  %endwith
+%endfunction
+  
+%% Function: PropModelBlocksInfoToCompiledModel ================================
+%% Abstract:
+%%	    
+%function PropModelBlocksInfoToCompiledModel(blkInterface, mdlrefBlock) void
+  %% Non-inlined s-functions
+  %if blkInterface.HasNonInlinedSfcn
+    %assign ::CompiledModel.ModelBlocksHaveNonInlinedSfcns = 1
+  %endif
+  	    
+  %% FirstInitCond
+  %if blkInterface.FirstInitConditionReq
+    %assign ::CompiledModel.IsFirstInitCondMacroUsed = 1
+  %endif
+  
+  %% If any of the submodels use a triggerTID, then this model
+  %% will also need it if it is aperiodic fcn-call model.
+  %if blkInterface.FcnCallMdlRefTriggerTIDIsReq && ...
+    RTMMdlRefTriggerTIDMayBeRequired()
+    %assign ::CompiledModel.ModelBlockNeedsTriggerTID = 1
+  %endif
+  
+  %% None of these fields are needed for simstruct based targets
+  %if SLibIsERTCodeFormat()
+    %if IsModelReferenceTarget()
+      %with InheritedFunctionCallSystems
+        %% Add names of function-call systems that have reset states set to
+        %% inherited until there are 10 systems, if we hit an error, 
+        %% we limit the number of systems we show in the error.
+        %assign numSystemsInBlk = SIZE(blkInterface.InheritedFcnCallSystems,1)
+        %assign numSystemsInModel = NumInheritedFunctionCallSystems
+      
+        %if numSystemsInModel < 10
+          %assign numSlotsLeft = 10 - numSystemsInModel
+          %assign numSystemsToAdd = (numSlotsLeft < numSystemsInBlk) ? ...
+            numSlotsLeft : numSystemsInBlk
+          
+          %foreach idx = numSystemsToAdd
+            %addtorecord ::CompiledModel.InheritedFunctionCallSystems ...
+              InheritedFunctionCallSystem %<blkInterface.InheritedFcnCallSystems[idx]>
+          %endforeach
+          
+          %assign ::CompiledModel.InheritedFunctionCallSystems.NumInheritedFunctionCallSystems = ...
+            numSystemsInModel + numSystemsToAdd
+        %endif
+      %endwith
+    %endif
+    
+    %% Rate interaction
+    %if blkInterface.RequireMultiRateSampleHits
+      %% If a submodel needs specialSampleHits, then the parent also
+      %% must be multi-tasking.  The single tasking timing engine
+      %% does not keep track of specialSampleHits for non-simstruct
+      %% based code.  The internal simulink timing engine does keep
+      %% track of specialSampleHits.
+      %if SLibSingleTasking() && !IsModelReferenceForASimstructBasedTarget()
+        %assign modelName = ::CompiledModel.Name
+        %assign refName   = blkInterface.Name 
+        %assign msg = FEVAL("DAStudio.message", ...
+          "Simulink:modelReference:multiTaskingInSingleTasking", ...
+          "%<modelName>", "%<refName>")
+        %<LibReportError("%<msg>")>
+      %endif
+      
+      %assign ::CompiledModel.RequireMultiRateSampleHits = 1
+    %endif
+
+    %% For simstruct-based targets, we always use the ss macro
+    %if blkInterface.StopReqAccessed
+      %assign ::CompiledModel.ModelBlocksUseStopReq = 1
+    %endif
+    
+    %if blkInterface.ContTimeOutputInconsistentWithStateAtMajorStepAccessed
+      %assign ::CompiledModel.ModelBlocksUseContTimeOutputInconsistentWithStateAtMajorStep = 1
+    %endif
+    
+    
+    %% TID ticks
+    %assign origBlockFcn = ::BlockFcn
+    %foreach i = NumSampleTimes
+      %assign iChildTid = MapParentTID2ChildTID(mdlrefBlock, i)
+      
+      %if iChildTid >= 0 %% If the block has this tid
+        %if blkInterface.ClockTicksReq[iChildTid]
+          %assign ::CompiledModel.ModelBlocksReqClockTicks[i] = 1
+          
+          %% For async sample times, assume that Outputs is
+          %% accessing this.  Do Enable/Disable need to be added?
+          %if LibAsynchronousTriggeredTID(i) 
+            %assign ::BlockFcn = "OutputUpdate"
+          %endif
+          %<SLibSetNeedAbsoluteTime(i)>
+          %if LibAsynchronousTriggeredTID(i) 
+            %assign ::BlockFcn = origBlockFcn
+          %endif
+        %endif
+        %if blkInterface.LongClockTicksReq[iChildTid]
+          %assign ::CompiledModel.ModelBlocksReqLongClockTicks[i] = 1
+          %assert SLibNeedAbsoluteTimeForTID(i)
+        %endif
+        
+        %if blkInterface.NeedFloatTime[iChildTid]
+          %<SLibSetNeedFloatAbsoluteTime(i)>
+        %endif
+      %endif
+    %endforeach
+    %foreach i = NumRuntimeExportedRates
+      %assign iChildTid = MapParentTID2ChildTID(mdlrefBlock, i)
+      
+      %if iChildTid >= 0 %% If the block has this tid
+        %if blkInterface.RequireMultiRateSampleHits 
+          %foreach j = NumRuntimeExportedRates
+            %assign jChildTid = MapParentTID2ChildTID(mdlrefBlock, j)
+            %if jChildTid >= 0 	 %% If the block has this tid   
+              %if blkInterface.ActualRateInteraction[iChildTid][jChildTid]
+                %assign ::CompiledModel.MatrixOfRequireRateInteraction[i][j] = 1
+                %assign ::CompiledModel.RequireRateInteraction = TLC_TRUE
+              %endif
+            %endif
+          %endforeach
+        %endif
+      %endif
+    %endforeach
+  %endif
+  
+  %% Submodel DSM Declarations  
+  %assign subModelDecls = blkInterface.GlobalDSMDeclarations 
+  %if(! ISEMPTY(subModelDecls))
+    %if(! ISFIELD(::CompiledModel, "SubModelGlobalDSMDeclarations"))
+      %addtorecord ::CompiledModel SubModelGlobalDSMDeclarations {}
+    %endif
+    
+    %assign numDecls = SIZE(subModelDecls.DSMDeclaration, 1)
+    %foreach idx = numDecls
+      %assign decl = subModelDecls.DSMDeclaration[idx]
+      %addtorecord ::CompiledModel.SubModelGlobalDSMDeclarations Declarations %<decl>
+    %endforeach
+  %endif
+
+
+  %% Submodel Non-inlined S-Function declarations
+  %assign subModelSFcns = blkInterface.NonInlinedSFcnNames
+  %if(! ISEMPTY(subModelSFcns))
+    %if(! ISFIELD(::CompiledModel, "SubModelNonInlinedSFunctions"))
+      %addtorecord ::CompiledModel SubModelNonInlinedSFunctions {}
+    %endif
+    
+    %assign numSFcns = SIZE(subModelSFcns.Function, 1)
+    %foreach idx = numSFcns
+      %assign sfcn = subModelSFcns.Function[idx]
+      %addtorecord ::CompiledModel.SubModelNonInlinedSFunctions Function %<sfcn>
+    %endforeach
+  %endif
+
+  %% NeedsGlobalTimingEngine
+  %if blkInterface.NeedsGlobalTimingEngine
+    %assign ::tMdlRefTimingBridgeAccessed = TLC_TRUE
+  %endif
+
+  %% 
+  %if !blkInterface.SupportsMultiThreading
+    %assign ::CompiledModel.ContainsMultiThreadBlocker = 1
+  %endif
+    
+  
+  %% Submodel Code Variants
+  %if(ISFIELD(blkInterface, "CodeVariants"))
+    %assign subModelCodeVariants = blkInterface.CodeVariants 
+
+    %% Submodel variant control
+    %if(! ISEMPTY(subModelCodeVariants))
+      %if(! ISFIELD(::CompiledModel, "SubModelCodeVariants"))
+        %addtorecord ::CompiledModel SubModelCodeVariants {}
+      %endif
+
+      %createrecord VariantData {} 
+      %if(ISFIELD(subModelCodeVariants.VariantControl, "Variant"))
+        %assign numVariants = SIZE(subModelCodeVariants.VariantControl.Variant, 1)
+        %foreach idx = numVariants
+          %assign variant = subModelCodeVariants.VariantControl.Variant[idx]
+          %addtorecord VariantData Variant %<variant>
+        %endforeach
+      %endif
+      %addtorecord ::CompiledModel.SubModelCodeVariants VariantControl VariantData
+
+      %% Submodel AUTOSAR Parameters 
+      %createrecord ParamData {}
+      %if(ISFIELD(subModelCodeVariants.VariantParameter, "Pair"))
+        %assign numParams = SIZE(subModelCodeVariants.VariantParameter.Pair, 1)
+        %foreach idx = numParams
+          %assign pair = subModelCodeVariants.VariantParameter.Pair[idx]
+          %addtorecord ParamData Pair %<pair>
+        %endforeach
+      %endif
+      %addtorecord ::CompiledModel.SubModelCodeVariants VariantParameter ParamData
+    %endif
+  %endif
+%endfunction %%PropModelBlocksInfoToCompiledModel
+
+
+%% Function: GetBuildStartDir =================================================
+%% Abstract:
+%%     Return dir where the user initiated the build, i.e., pwd before
+%%     code generation.
+%%
+%function GetBuildStartDir() Output
+  %assign buildStartDir = FEVAL("rtwprivate","rtwattic","getStartDir")
+  %return buildStartDir
+%endfunction
+
+%% Function: CacheModelrefInterfaceInMatInfoFile  =============================
+%% Abstract:
+%%      Store interface of model reference blocks in .mat file.
+%%      This function should go to model ref lib file. However, since
+%%      other related functions are in this file, we keep it here.
+%function CacheModelrefInterfaceInMatInfoFile(mdlref, type, interface) void
+  %if !IsModelReferenceTarget()
+     %assign targetType = "NONE"
+  %else
+     %assign targetType = IsModelReferenceSimTarget() ? "SIM" : "RTW"
+  %endif
+  %assign rtwinfomat = FEVAL("coder.internal.infoMATFileMgr", type,...
+    "binfo", "%<mdlref>", ...
+    "%<targetType>", interface)
+%endfunction
+
+%% Function: LoadModelrefInterfaceInMatInfoFile ===============================
+%% Abstract:
+%%    Load and return model reference interface info from mat file.
+%%
+%function LoadModelrefInterfaceInMatInfoFile(mdlref, buildStartDir)
+  %% Note: Use
+  %%    "SIM" : For model reference sim target or accelerator.
+  %%            Note that we run model reference blocks in Simulink. However,
+  %%            we may use some of the interface field in the
+  %%            blocks/modelref.tlc
+  %%     "RTW": Standalone target or model reference coder target
+  %if IsModelReferenceSimTarget() || Accelerator || isRAccel
+    %assign targetType = "SIM"
+  %else
+    %assign targetType = "RTW"
+  %endif
+  %assign modelInterface = FEVAL("coder.internal.infoMATFileMgr", ...
+    "loadInterface", "binfo", mdlref, targetType)
+  %return modelInterface
+%endfunction
+
+%function LoadModelrefInterfaceInMatInfoFileSpecificTarget(mdlref, targetType)
+    %assign modelInterface = FEVAL("coder.internal.infoMATFileMgr", ...
+        "loadInterface", "binfo", mdlref, targetType)
+    %return modelInterface
+%endfunction
+
+%% Function: LoadRTWInfoMatFileforTLC ===============================
+%% Abstract:
+%%    Load rtwinfomat into a TLC structure and cached it into ::CompiledModel.
+%%
+%function LoadRTWInfoMatFileforTLC() void
+  %assign FILESEP       = FEVAL("filesep")
+  %assign targetType    = ::CompiledModel.ModelReferenceTargetType
+  
+  %assign infoStruct    = FEVAL("coder.internal.infoMATFileMgr", "loadforTLC", "binfo", LibGetModelName(), targetType)
+  %assign rootFolder    = FEVAL("coder.internal.infoMATFileMgr", "getAnchorDir", "binfo", LibGetModelName(), targetType)
+  
+  %addtorecord ::CompiledModel RTWInfoMatFile infoStruct
+  %% convert to absolute path
+  %assign ::CompiledModel.RTWInfoMatFile.sharedSourcesDir = FEVAL("fullfile", rootFolder, ::CompiledModel.RTWInfoMatFile.sharedSourcesDir, FILESEP)
+%endfunction
+
+%% Function: GetModelrefHasMdlInitPort =========================================
+%% Abstract:
+%%       Given a model reference block, return whether the block has model
+%%       initialize port
+%%
+%function GetModelrefHasMdlInitPort(blk)
+  %% it must be model reference
+  %assert (TYPE(blk.Type) == "Identifier" && blk.Type == "ModelReference")
+
+  %if ISFIELD(blk.ParamSettings, "ModelEventPortNames")
+    %foreach mweIdx = SIZE(blk.ParamSettings.ModelEventPortNames, 1)
+      %if blk.ParamSettings.ModelEventPortNames[mweIdx] == "initialize"
+        %return TLC_TRUE
+      %endif
+    %endforeach
+  %endif
+
+  %return TLC_FALSE
+  
+%endfunction
+
+%% Function: GetModelrefHasMdlTermPort =========================================
+%% Abstract:
+%%       Given a model reference block, return whether the block has model
+%%       terminate port
+%%
+%function GetModelrefHasMdlTermPort(blk)
+  %% it must be model reference
+  %assert (TYPE(blk.Type) == "Identifier" && blk.Type == "ModelReference")
+
+  %if ISFIELD(blk.ParamSettings, "ModelEventPortNames")
+    %foreach mweIdx = SIZE(blk.ParamSettings.ModelEventPortNames, 1)
+      %if blk.ParamSettings.ModelEventPortNames[mweIdx] == "terminate"
+        %return TLC_TRUE
+      %endif
+    %endforeach
+  %endif
+
+  %return TLC_FALSE
+  
+%endfunction
+
+%% Function: GetModelrefHasMdlResetPort =========================================
+%% Abstract:
+%%       Given a model reference block, return whether the block has model
+%%       reset port
+%%
+%function GetModelrefHasMdlResetPort(blk)
+  %% it must be model reference
+  %assert (TYPE(blk.Type) == "Identifier" && blk.Type == "ModelReference")
+
+  %if ISFIELD(blk.ParamSettings, "ModelEventPortTypes")
+    %foreach mweIdx = SIZE(blk.ParamSettings.ModelEventPortTypes, 1)
+      %if blk.ParamSettings.ModelEventPortTypes[mweIdx] == "RESET"
+        %return TLC_TRUE
+      %endif
+    %endforeach
+  %endif
+
+  %return TLC_FALSE
+  
+%endfunction
+
+%% Function: GetModelrefHasMdlPeriodicPort =========================================
+%% Abstract:
+%%       Given a model reference block, return whether the block has model
+%%       periodic event port
+%%
+%function GetModelrefHasMdlPeriodicPort(blk)
+  %% it must be model reference
+  %assert (TYPE(blk.Type) == "Identifier" && blk.Type == "ModelReference")
+
+  %if ISFIELD(blk.ParamSettings, "ModelEventPortTypes")
+    %foreach mweIdx = SIZE(blk.ParamSettings.ModelEventPortTypes, 1)
+      %if blk.ParamSettings.ModelEventPortTypes[mweIdx] == "PERIODIC"
+        %return TLC_TRUE
+      %endif
+    %endforeach
+  %endif
+
+  %return TLC_FALSE
+  
+%endfunction
+
+%% Function: GetChildFirstMdlEventTIDForEventType ==================================
+%% Abstract:
+%%       Given a model reference block, return the TID corresponding to the 
+%%       specified event type. The event types may be INITIALIZE, TERMINATE,
+%%       RESET, or PERIODIC. For RESET and PERIODIC, the function will return 
+%%       the first TID. The TIDs are listed in a vector in "T", "I", "R" and "P".
+%%       There may be 0 or 1 INITIALIZE and TERMINATE TIDs and 0 or more "RESET" and
+%%       "PERIODIC" TIDs
+%function GetChildFirstMdlEventTIDForEventType(blk, eventPortType)
+  %% it must be model reference
+  %assert (TYPE(blk.Type) == "Identifier" && blk.Type == "ModelReference")
+
+  %if ISFIELD(blk.ParamSettings, "ModelEventPortTypes")
+    %foreach mweIdx = SIZE(blk.ParamSettings.ModelEventPortTypes, 1)
+      %if blk.ParamSettings.ModelEventPortTypes[mweIdx] == eventPortType
+        %return blk.ParamSettings.ModelEventPortTIDs[mweIdx]
+      %endif
+    %endforeach
+  %endif
+
+  %return -1
+  
+%endfunction  
+
+%% Function: GetFcnCallParentTIDForChildTID ==========================================
+%% Abstract:
+%%       Given a model reference block and TID in the block, the function returns the 
+%%       TID in the parent block that the TID in the refenced block maps to
+%%       The TIDs are laid out as a series of child TIDs followed by the corresponding
+%%       parent TIDs in the vector ChildTidToParentTidMap [c1, ..., cn, p1, ... pn]
+%function GetFcnCallParentTIDForChildTID(block, childTID)
+  
+  %assign fcChildTidToParentMap = block.ParamSettings.ChildTidToParentTidMap
+  %assign numFcChildTids = SIZE(fcChildTidToParentMap, 1)/2
+  %foreach fcTID = numFcChildTids
+    %if childTID == fcChildTidToParentMap[fcTID]
+      %return fcChildTidToParentMap[fcTID + numFcChildTids]
+    %endif
+  %endforeach
+  
+  %return -1
+%endfunction
+
+%% Function: GetModelrefInterface ==============================================
+%% Abstract:
+%%       Given a model reference block, return block interface which is cached
+%%       in ::CompiledModel
+%%
+%function GetModelrefInterface(blk)
+  %% it must be model reference
+  %assert (TYPE(blk.Type) == "Identifier" && blk.Type == "ModelReference")
+  %assign mdlName = blk.ParamSettings.ReferencedModelName
+  %assert(EXISTS(::CompiledModel.ModelReferenceInterfaces.%<mdlName>Interface))
+  %return ::CompiledModel.ModelReferenceInterfaces.%<mdlName>Interface
+%endfunction
+
+
+%function IsBaseSystem(system)
+  %assign isBase = 0
+  %if IsModelReferenceTarget()
+    %assign isBase = IsModelReferenceBaseSys(system)
+  %elseif system.Type == "root"
+    %assign isBase = 1
+  %endif
+  %return isBase
+%endfunction
+
+
+%function GetDataCFile()
+ %assign  dataFile = SLibAddModelFile("SystemBody","Simulink", "%<Name>_data")
+ %return dataFile
+%endfunction
+
+%function GetPrivateHFile()
+  %assign privFile = SLibAddModelFile("SystemHeader","Simulink", "%<Name>_private")
+  %return privFile
+%endfunction
+
+%function skipCanonicalSideInput(aSystemInterace,function , aArgIdx) void
+    %assign ci = aSystemInterace.CanonicalInputArgDef[aArgIdx]
+    %assign isOutputFcn = TYPE(function)=="String" && (function == "OutputFcn" || function == "UpdateFcn" || function == "OutputUpdateFcn")
+    %return isOutputFcn && GenerateClassInterface && ci.ConnectedToSimulinkFunction == "yes"
+%endfunction
+
+%function skipCanonicalSideOutput(aSystemInterace,function , aArgIdx) void
+    %assign co = aSystemInterace.CanonicalOutputArgDef[aArgIdx]
+    %assign isOutputFcn = TYPE(function)=="String" && (function == "OutputFcn" || function == "UpdateFcn" || function == "OutputUpdateFcn")
+    %return isOutputFcn && GenerateClassInterface && co.ConnectedToSimulinkFunction == "yes"
+%endfunction
+
+%% Function:  IsMultiInstanceERTOrModelReference ==============================
+%% Abstract:
+%%    Return true if it is Multi instance ERT or Model reference
+%%
+%function IsMultiInstanceERTOrModelReference() void
+  %return MultiInstanceERTCode || IsModelReferenceTarget()
+%endfunction
+
+%% Function: GetModelRefRegistrationFcnName ===================================
+%% Abstract:
+%%    Returns the name of the model reference registration function, the 
+%% form is %<BaseSubsysName>_initialize
+%%
+%function GetModelRefRegistrationFcnName() void
+  %return ::CompiledModel.System[GetBaseSystemIdx()].ModelInitializeFcn
+%endfunction
+
+
+%function CreateVectorWithValue(numElm, value)
+  %assign vec = []
+  %foreach idx = numElm
+    %assign vec = vec + value
+  %endforeach
+  %return vec
+%endfunction
+
+
+%% Function: MapParentTID2ChildTID ==========================================
+%% Abstract:
+%%   Map parents TID to child system TID. Return -1 if no matching tid is found.  
+%function MapParentTID2ChildTID(block, parentTid)
+  %assign childTid = -1 %% 
+  %assign blockInterface = GetModelrefInterface(block)
+  %if ISFIELD(block.ParamSettings, "ChildTidToParentTidMap")
+    %assign childTidToParentMap = block.ParamSettings.ChildTidToParentTidMap
+    %assign numTids = SIZE(childTidToParentMap,1)/2
+    %foreach tidIdx = numTids
+      %if ISEQUAL(childTidToParentMap[tidIdx + numTids], parentTid)
+        %assign childTid = childTidToParentMap[tidIdx]
+        %break
+      %endif
+    %endforeach
+  %else
+    %assign blockTid = FcnEffectiveTid(block)
+    %if TYPE(blockTid) != "Identifier" %% Ignore constant/triggered sample time
+      %if TYPE(blockTid) == "Number"
+        %if ISEQUAL(blockTid, parentTid)
+          %assign childTid = 0
+        %endif
+      %elseif TYPE(blockTid) == "Vector"
+        %foreach tidIdx = SIZE(blockTid,1)
+          %% Note: Constant sample times are (-2)
+          %if ISEQUAL(blockTid[tidIdx], parentTid)
+            %assign childTid = tidIdx
+            %break
+          %endif
+        %endforeach
+      %else
+        %assert(0)
+      %endif
+    %endif
+  %endif
+  %return childTid
+%endfunction
+
+%% Function: FcnMapTIDForRateGrouping ==========================================
+%% Abstract:
+%%   We need to remove any TID's for the model reference block that are
+%% not needed when we do rate grouping.  This includes constant TID's and
+%% TID1 when Tid01Eq is true for the submodel.
+%function FcnMapTIDForRateGrouping(block, tid) void
+  %assign output_tid = tid
+  %if (TYPE(tid) == "Vector") 
+    %% Remove the constant tid from the vector
+    %assign output_tid = []
+    %foreach i = SIZE(tid,1)
+      %if tid[i] != -2
+        %assign output_tid = output_tid + tid[i]
+      %endif
+    %endforeach
+
+    %% If the size of output_tid is 1, make it a scalar
+    %if TYPE(output_tid) == "Vector" && SIZE(output_tid,1) == 1
+      %assign output_tid = output_tid[0]
+    %endif
+  
+    %% If the modelref block has only two TID's and Tid01Eq,
+    %% we can treat the block as single rate.  Blocks that
+    %% have more than 2 tid's will be taken care of later.
+    %assign intf = GetModelrefInterface(block)
+    %if (SIZE(output_tid, 1) == 2) && intf.Tid01Eq
+      %assign output_tid = 0
+    %endif
+  %endif
+  %return output_tid
+%endfunction %% FcnMapTIDForRateGrouping
+
+%% Function: GetNumberOfNoncontSignalsFeedingDerivPorts ========================
+%% Abstract:
+%%  Get the total number of noncontinuous signals feeding deriv ports 
+%% in a model.
+%function GetNumberOfNoncontSignalsFeedingDerivPorts() void
+  %if ISFIELD(::CompiledModel,"SolverResetInfo")
+    %return ::CompiledModel.SolverResetInfo.NumNonContDerivSignals
+  %else
+    %return 0
+  %endif
+%endfunction %% GetNumberOfNoncontSignalsFeedingDerivPorst
+
+%% Function: HasNonContSigFeedingOutport =======================================
+%% Abstract:
+%%  Returns true if any of the outports have a discontinuity (a continuous
+%%  sample time, but are fed by a discrete block).  This only works for
+%%  modelref targets.
+%function HasNonContSigFeedingOutport() void
+  %assert (IsModelReferenceTarget())  
+  %assign hasNonContOutput = TLC_FALSE
+  %if IsModelReferenceForASimstructBasedTarget()
+    %foreach idx = ::CompiledModel.ExternalOutputs.NumExternalOutputs
+      %if ::CompiledModel.ExternalOutputs.ExternalOutput[idx].NonContinuous
+        %assign hasNonContOutput = TLC_TRUE
+        %break
+      %endif
+    %endforeach
+  %endif
+  %return hasNonContOutput
+%endfunction %% HasNonContSigFeedingOutport
+
+%% Function: GetNonContOutputPorts =============================================
+%% Abstract:
+%%  Return an array which has length of the number of root outports.  Each
+%% element is the number of noncontinuous signals feeding that port.
+%function GetNonContOutputPorts() void
+  %assert (IsModelReferenceTarget())  
+  %assign nonContPorts = []
+  %if IsModelReferenceForASimstructBasedTarget()
+    %foreach idx = ::CompiledModel.ExternalOutputs.NumExternalOutputs
+      %if ::CompiledModel.ExternalOutputs.ExternalOutput[idx].NonContinuous
+        %assign numNonCont = ...
+          ::CompiledModel.SolverResetInfo.NonContOutputSignals.NonContOutput[idx].NumNonContOutputSignals
+        %assign nonContPorts = nonContPorts + %<numNonCont>
+      %else
+        %assign nonContPorts = nonContPorts + 0
+      %endif
+    %endforeach
+  %endif
+  %return nonContPorts
+%endfunction
+
+%% Function: SLibGetGlobalTimingBridge ========================================
+%% Abstract:
+%%  Return the name of the global timing bridge for modelref, and mark it
+%% as accessed.  If it's not accessed, we do not need to declare it or pass
+%% it through the registration function.
+%function SLibGetGlobalTimingBridge() void
+  %assert (IsModelReferenceTarget() || HasModelReferenceBlocks()) 
+  %assign ::tMdlRefTimingBridgeAccessed = TLC_TRUE
+  %if RTMTimingBridgeIsReqFcn() 
+    %return RTMGet("timingBridge")
+  %else
+    %return ::tMdlRefTimingBridge  
+  %endif
+%endfunction
+
+%% Function: SLibModelNeedsTriggerTIDArg =======================================
+%% Abstract:
+%%  Does this model need a triggerTID argument in the registration function?
+%% Note that this is only true for referenced models, but parent models may
+%% also call this function.  The model will have a triggerTID if there is a
+%% triggerTID field in the rtModel, or some submodel uses a triggerTID.
+%function SLibModelNeedsTriggerTIDArg() void
+  %assert (IsModelReferenceTarget() || HasModelReferenceBlocks())
+  %return RTMMdlRefTriggerTIDIsReqFcn() || ...
+    ::CompiledModel.ModelBlockNeedsTriggerTID
+%endfunction
+  
+
+%% Function: SLibMdlRefSystemPreprocessorCondition =============================
+%% Abstract:
+%%   Return a block's net preprocessor condition
+%%
+%function SLibMdlRefSystemPreprocessorCondition(block) void
+  %assign sysIdx = block.BlockIdx[0]
+  %assign blockCondition = block.ParamSettings.DerivedLocalPreprocessorCondition
+  %assign sysCondition = ::CompiledModel.System[sysIdx].SystemPreprocessorCondition
+  %assign condition = ""
+  
+  %% legacy VSS and Model Variant case
+  %if !ISEMPTY(sysCondition)
+    %assign condition = sysCondition
+  %endif
+  %if !ISEMPTY(blockCondition)
+    %if ISEMPTY(condition)
+      %assign condition = blockCondition
+    %else
+      %assign condition = "(" + condition + ") && (" + blockCondition + ")"
+    %endif
+  %endif
+
+  %if ISEMPTY(condition)
+    %% check for net CGVCE set on ModelRef block. 
+    %assign condition = block.ParamSettings.NetPreprocessorCondition
+  %endif
+ 
+  %return condition
+%endfunction
+
+%%Function: SLibMdlRefNetInlineVariantPreprocessorCondition =========
+%% Abstract:
+%% This function returns the net prepreproccesor condition of a model block instance
+%% The net condition is computed as the localCondition ANDed with the instancecondition
+%% The localCondition is either the vss local condition or the local condition on the block(IV)
+%% The netinstancecondition is either the vss choice cg condition or the iv condition on a cg node
+%% If neither the call graph condition nor the local condition is present(think of a modelref
+%% without a local condition inside a virtual system)then we get the propagated inline variant
+%% condition on the modelblock
+%function SLibMdlRefNetInlineVariantPreprocessorCondition(sysIdx, instIdx, blockIdx)
+    %assign vcRecord = SLibVariantConditionRecord()
+    %assign blockSystem = ::CompiledModel.System[sysIdx]
+    %assign block = ::CompiledModel.System[sysIdx].Block[blockIdx]
+    %assign localCond = ""
+    %assign netCond = ""
+
+    %%%%% Determine local conditions of this model block %%%%%%%%%%%
+    %% check if modelref has vss local condition
+    %assign localCond = block.ParamSettings.DerivedLocalPreprocessorCondition
+    %if ISEMPTY(localCond)
+      %% now try to get IV local condition
+      %assign localCond = block.VariantCondition
+    %endif
+
+    %%%%%% Determine net condition of the model block %%%%%%%%%%
+    %% check if the modelref has vss net instance condition
+    %assign conditions = blockSystem.NetPreprocessorInstanceConditions
+    %assign netCond = ISEMPTY(conditions) ? "" : conditions[instIdx]
+    %if ISEMPTY(netCond) 
+        %%now try to get the net instance conditions of IV
+        %assign conditions = blockSystem.NetInlineVariantPreprocessorInstanceConditions
+        %assign netCond = ISEMPTY(conditions) ? "" : conditions[instIdx]
+    %endif
+
+    %if !ISEMPTY(localCond)
+        %if ISEMPTY(netCond)
+            %assign netCond = localCond
+        %elseif !ISEQUAL(localCond,netCond)
+            %% Here we have performed a basic check of equality. However we really should be checking if one if tigher that the other
+            %% and assign the netCond to be the tighter of the two
+            %assign netCond = "(" + netCond + ") && (" + localCond + ")"
+        %endif
+    %endif
+
+    %if ISEMPTY(netCond)
+        %%check for propagated CGVCE
+        %assign netCond = block.ParamSettings.NetPreprocessorCondition
+    %endif
+
+    %if !ISEMPTY(netCond)
+        %assign vcRecord.ifCond = "#if %<netCond>"
+        %assign vcRecord.endIfCond = "#endif"
+        %assign vcRecord.hasConds = TLC_TRUE
+    %endif
+
+    %return vcRecord
+
+%endfunction 
+  
+%% Function: SLibMdlRefNetPreprocessorCondition ====================
+%% Abstract:
+%%   Return a block's net preprocessor condition
+%%
+%function SLibMdlRefNetPreprocessorCondition(sysIdx, instIdx, blockIdx) void
+  %assign conditions = ::CompiledModel.System[sysIdx].NetPreprocessorInstanceConditions
+  %assign condition = ISEMPTY(conditions) ? "" : conditions[instIdx]
+  %assign block = ::CompiledModel.System[sysIdx].Block[blockIdx]
+  %assign blockCondition = block.ParamSettings.DerivedLocalPreprocessorCondition
+  %if !ISEMPTY(blockCondition)
+    %if ISEMPTY(condition)
+      %assign condition = blockCondition
+    %else
+      %assign condition = "(" + condition + ") && (" + blockCondition + ")"
+    %endif
+  %endif
+  %return condition
+%endfunction
+  
+%% Function: SLibMdlRefIfNetPreprocessorCondition ================
+%% Abstract:
+%%   Return a block's net opening preprocessor condition
+%%
+%function SLibMdlRefIfNetPreprocessorCondition(sysIdx, instIdx, blockIdx) void
+  %assign condition = SLibMdlRefNetPreprocessorCondition(sysIdx, instIdx, blockIdx)
+  %if ISEMPTY(condition)
+    %return ""
+  %else
+    %return "#if %<condition>"
+  %endif
+%endfunction
+  
+%% Function: SLibMdlRefEndIfNetPreprocessorCondition ================
+%% Abstract:
+%%   Return a block's net closing preprocessor condition
+%%
+%function SLibMdlRefEndIfNetPreprocessorCondition(sysIdx, instIdx, blockIdx) void
+  %assign condition = SLibMdlRefNetPreprocessorCondition(sysIdx, instIdx, blockIdx)
+  %if ISEMPTY(condition)
+    %return ""
+  %else
+    %return "#endif"
+  %endif
+%endfunction
+  
+%% Function: SLibMdlRefLocalPreprocessorCondition =============================
+%% Abstract:
+%%   Return a block's local preprocessor condition
+%%
+%function SLibMdlRefLocalPreprocessorCondition(block) void
+  %assign condition = block.ParamSettings.LocalPreprocessorCondition
+  %if ISEMPTY(condition)
+    %return ""
+  %else
+    %return condition
+  %endif
+%endfunction
+  
+%% Function: SLibMdlRefIfLocalPreprocessorCondition ===========================
+%% Abstract:
+%%   Return a block's local opening preprocessor condition
+%%
+%function SLibMdlRefIfLocalPreprocessorCondition(block) void
+  %assign condition = block.ParamSettings.LocalPreprocessorCondition
+  %assign isDefault = block.ParamSettings.IsDefaultVariant
+  %if ISEMPTY(condition) && !ISEMPTY(isDefault)
+    %assign condition = block.ParamSettings.DerivedLocalPreprocessorCondition
+    %return "#if %<condition> /* (default) */"
+  %else 
+    %if ISEMPTY(condition)
+      %return ""
+    %else
+      %return "#if %<condition>"
+    %endif
+  %endif
+%endfunction
+  
+%% Function: SLibMdlRefEndIfLocalPreprocessorCondition ========================
+%% Abstract:
+%%   Return a block's local closing preprocessor condition
+%%
+%function SLibMdlRefEndIfLocalPreprocessorCondition(block) void
+  %assign condition = block.ParamSettings.LocalPreprocessorCondition
+  %assign isDefault = block.ParamSettings.IsDefaultVariant
+  %if ISEMPTY(condition)  && !ISEMPTY(isDefault)
+    %return "#endif"
+  %else
+    %if ISEMPTY(condition)
+      %return ""
+    %else
+      %return "#endif"
+    %endif
+  %endif
+%endfunction
+
+%% Function: SLibMdlRefIsDefaultVariant ========================
+%% Abstract:
+%%   Return 1 if the block is a default variant
+%%
+%function SLibMdlRefIsDefaultVariant(block)
+  %assign isDefault = block.ParamSettings.IsDefaultVariant
+  %return isDefault
+%endfunction
+
+  
+%% DocFunction{Advanced Functions}: LibAppendToModelReferenceUserData =========
+%%
+%% Abstract:
+%%
+%% Appends the given data object to the userdata in the binfo file
+%% for the model currently being built.  This function can only be
+%% called when generating code for model reference targets, not for SIM target.
+%% 
+%% This data cannot be a Vector or Matrix.  To work around this limitation, 
+%% create a record with a field containing the Vector or Matrix data and 
+%% pass this record into this function.
+%%
+%function LibAppendToModelReferenceUserData(data) void
+  %if ! LibIsModelReferenceRTWTarget()
+     %assign errTxt = "To use LibAppendToModelReferenceUserData the target type must be RTW"
+     %<LibReportError(errTxt)>
+  %endif
+
+  %assign datatype = TYPE(data)
+  %if ( ISEQUAL(datatype, "Vector") || ISEQUAL(datatype, "Matrix"))
+     %assign errTxt = "To use LibAppendToModelReferenceUserData the data cannot be a matrix or vector.  Instead, create a record with a field containing the vector or matrix data and pass this record into this function."
+     %<LibReportError(errTxt)>
+  %endif
+
+  %assign targetType = ::CompiledModel.ModelReferenceTargetType
+
+  %assign modelName     = ::CompiledModel.Name
+
+  %assign infoStruct = FEVAL("coder.internal.infoMATFileMgr",...
+                             "appendToUserData", "binfo", ...
+                             "%<modelName>", "%<targetType>", data)
+%endfunction
+
+
+
+%% DocFunction{Advanced Functions}: LibGetModelReferenceUserData ==============
+%%
+%% Abstract:
+%%
+%% Gets the user data for the given model.  This returns a vector with
+%% one element for each time LibAppendToUserData was called in the given
+%% model.
+%%
+%% This function cannot be called during builds where the target type is SIM.
+%%
+%function LibGetModelReferenceUserData(modelName)
+  %if LibIsModelReferenceSimTarget()
+     %assign errTxt = "To use LibGetModelReferenceUserData the target type cannot be SIM"
+     %<LibReportError(errTxt)>
+  %endif
+
+  %assign size = FEVAL("coder.internal.infoMATFileMgr", ...
+       "getUserDataSize", "binfo", "%<modelName>", "RTW")
+
+  %assign toReturn = []
+
+  %foreach idx = size
+     %assign midx = idx + 1 %% M is 1 based, TLC is 0 based
+         
+     %assign data = FEVAL("coder.internal.infoMATFileMgr", ...
+                          "getUserData", "binfo", "%<modelName>", "RTW", midx)
+
+     %assign toReturn = toReturn + data
+  %endforeach
+  
+  %return toReturn
+%endfunction
+
+
+
+%% DocFunction{Advanced Functions}: LibGetReferencedModelNames ================
+%%
+%% Abstract:
+%%
+%% Gets the names of the models referenced by the model that is currently
+%% being built.  This returns the data as a structure with two fields:
+%%
+%%    1) NumReferencedModels:  an integer with the number of model names
+%%    2) ReferencedModel:  an array of structures, where each structure
+%%                         has a field Name containing the name
+%%                         of a referenced model
+%%
+%function LibGetReferencedModelNames()
+  %% If there are no model reference blocks, then 
+  %% ::CompiledModel.ModelReferenceBlocks will not exist.
+  %% As a result, we need to handle the case of no model reference 
+  %% blocks separately.
+  %if ! HasModelReferenceBlocks()
+     %createrecord toReturn { }
+     %addtorecord toReturn NumReferencedModels 0
+     %addtorecord toReturn ReferencedModel []
+     %return toReturn
+  %endif
+
+  %assign mdlRefBlks = ::CompiledModel.ModelReferenceBlocks
+  %assign numMdlRefs = SIZE(mdlRefBlks,0)
+  %createrecord modelNames { }
+
+  %% Loop over each model reference block and get the name of the
+  %% referenced model.
+  %foreach rowIdx = numMdlRefs
+      %assign mdlRefInfo = mdlRefBlks[rowIdx]
+      %assign mSysIdx    = mdlRefInfo[0]
+      %assign bIdx       = mdlRefInfo[1]
+      %assign mdlrefBlk  = ::CompiledModel.System[mSysIdx].Block[bIdx]
+      %assign mdlName    = mdlrefBlk.ParamSettings.ReferencedModelName 
+
+      %if !ISFIELD(modelNames, mdlName)
+          %addtorecord modelNames %<mdlName> 1
+      %endif
+  %endforeach
+
+  %assign modelNames = FIELDNAMES(modelNames)
+  %assign numModelNames = SIZE(modelNames, 1)
+
+  %% Now that we have the names of all the models, construct
+  %% the structure to return.
+  %createrecord toReturn { }
+  %addtorecord toReturn NumReferencedModels numModelNames
+  %foreach nameIdx = numModelNames
+      %assign modelName = modelNames[nameIdx]
+      %addtorecord toReturn ReferencedModel { Name "%<modelName>"}
+  %endforeach
+
+  %return toReturn
+%endfunction
+
+
+%% Function: SLibGetSubsysDWorkForCPPMdlRefBlk =============================
+%% Abstract:
+%%   For C++ encapsulation MdlRef support, given model reference
+%%   block that is within a non-virtual subsystem, find the corresponding
+%%   DWork record for the mdlref block in the Subsystem.
+%%
+%function SLibGetSubsysDWorkForCPPMdlRefBlk(blk) void
+  %assert GenerateClassInterface
+  %assert blk.Type == "ModelReference"
+  %assert blk.MdlRefIsCPPClassGenMode
+  %assert ISFIELD(blk,"CPPObjDWorkIdxInSubsys")
+
+  %% Containing subsystem
+  %assign sys            = ::CompiledModel.System[blk.BlockIdx[0]]
+  %% Get one callsite of the containing subsystem
+  %assign callSite       = sys.CallSites[0]
+  %assign graphicalSys   = ::CompiledModel.System[callSite[2]]
+  %assign subsysBlk      = graphicalSys.Block[callSite[3]]
+  %assign dworkIdx       = subsysBlk.DWork[blk.CPPObjDWorkIdxInSubsys].FirstRootIdx
+  
+  %return ::CompiledModel.DWorks.DWork[dworkIdx]
+%endfunction %% 
+
+
+%% Function: SLibGetCPPMdlRefObjName =============================
+%% Abstract:
+%%   For C++ encapsulation MdlRef support, given a subsystem idx
+%%   and the modelref block id, find the corresponding object
+%%   name on which the member functions can be called.
+%%
+%function SLibGetCPPMdlRefObjName(sysIdx,blkIdx) void
+   %assert GenerateClassInterface
+   %assert System[sysIdx].Block[blkIdx].Type == "ModelReference"   
+   %assert System[sysIdx].Block[blkIdx].MdlRefIsCPPClassGenMode
+   
+   %assign blk = System[sysIdx].Block[blkIdx]
+   %assign blkInterface = GetModelrefInterface(blk)
+    %if ISFIELD(blk,"CPPObjDWorkIdxInSubsys") && !blkInterface.IsScalableBuild
+      %assign dwRec = SLibGetSubsysDWorkForCPPMdlRefBlk(blk)
+      %return LibGetRecordIdentifier(dwRec)
+   %endif
+     
+   %assign mdlRefBlks = ISFIELD(::CompiledModel,"ModelReferenceBlocks") ? ...
+     ::CompiledModel.ModelReferenceBlocks : []
+  
+  
+   %assign mdlRefBlkInd = -1
+  
+   %if !ISEMPTY(mdlRefBlks)
+     %foreach rowIdx = SIZE(mdlRefBlks,0)
+       %assign mdlRefInfo = mdlRefBlks[rowIdx]
+       %assign mSysIdx = mdlRefInfo[0]
+       %assign bIdx    = mdlRefInfo[1]
+       
+       %if mSysIdx == sysIdx && bIdx == blkIdx
+         %assign mdlRefBlkInd = rowIdx
+         %break
+       %endif
+     %endforeach
+   %endif
+   
+   %assign mdlRefInstCPPVar = ::CompiledModel.ModelBlock[mdlRefBlkInd].MdlRefInstanceVarName
+
+   %return mdlRefInstCPPVar
+   
+%endfunction %%SLibGetCPPMdlRefObjName
+
+%function FcnGetModelBlockDWorkCategory(aBlock) void
+  %assign dworkIdx = SLibGetStructDWorkIdxForModelRefBlk(aBlock)
+  %assign dwRec =  ::CompiledModel.DWorks.DWork[aBlock.DWork[dworkIdx].FirstRootIdx]
+  %assign dwRecVarGroupIdx = dwRec.VarGroupIdx[0]
+  %assign dwRecVarGroup = ::CompiledModel.VarGroups.VarGroup[dwRecVarGroupIdx]
+  %if LibGetVarGroupCategory(dwRecVarGroupIdx) == "DWork"
+    %assign category = "DWork"
+  %elseif LibGetVarGroupCategory(dwRecVarGroupIdx) == "HierarchicalCoderData"
+    %assign category = "CoderDataGroup" + ::CompiledModel.CoderDataGroup[dwRecVarGroup.CoderDataGroupIndex].Name
+  %else
+    %assign category = LibGetVarGroupCategory(dwRecVarGroupIdx)
+  %endif
+  %return category
+%endfunction
+  
+
+%% Function: SLibCalcMdlRefObjSubsysAccessPath =================
+%% Abstract:
+%%   For C++ encapsulation MdlRef support, given a non-inlined
+%%   subsystem idx, the modelref block id, the instance id, and sysFcn, 
+%%   calculate the corresponding object access path via the subsystem 
+%%   dwork.
+%%
+%function SLibCalcMdlRefObjSubsysAccessPath(sysIdx,blkIdx,instIdx,sysFcn) void
+   %assert GenerateClassInterface
+   %assert System[sysIdx].Block[blkIdx].Type == "ModelReference"   
+   %assert System[sysIdx].Block[blkIdx].MdlRefIsCPPClassGenMode
+   %assert !LibSystemIsRoot(System[sysIdx]) && ...
+           !IsModelReferenceBaseSys(System[sysIdx])
+   
+   %assign locCacheBlockFcn = ::BlockFcn
+   %assign ::BlockFcn = sysFcn
+   
+   %assign dworkIdx = SLibGetStructDWorkIdxForModelRefBlk(System[sysIdx].Block[blkIdx])
+   %assign category = FcnGetModelBlockDWorkCategory(System[sysIdx].Block[blkIdx])
+   %assign varGroupIdx = FcnSysVarGroupIndex(System[sysIdx], category, instIdx)
+   %assign baseSysIdx = GetBaseSystemIdx()
+   %if ISFIELD(System[sysIdx].Block[blkIdx],"ModelInstVarGroupIndex") && ...
+     System[sysIdx].Block[blkIdx].ModelInstVarGroupIndex > -1
+       %assign dworkPath = ...
+      SLibCGIRVarGroupPath(System[sysIdx].Block[blkIdx].ModelInstVarGroupIndex,GetBaseSystemIdx(),TLC_FALSE)
+   %else
+     %assign dworkPath = SLibCGIRVarGroupPath(varGroupIdx, baseSysIdx, ...
+       System[sysIdx].CrossNoArgFcnBound)
+   %endif
+   %assign mdlRefInstCPPVar = ...
+           SLibGetCPPMdlRefObjName(System[sysIdx].SystemIdx,...
+                      System[sysIdx].Block[blkIdx].BlockIdx[2])
+   %assign cppVarPath = dworkPath + mdlRefInstCPPVar
+
+   %assign ::BlockFcn = locCacheBlockFcn
+   
+   %return cppVarPath
+   
+%endfunction %%SLibCalcMdlRefObjSubsysAccessPath
+
+%% Function: SLibModelHierarchyContainsNoninlinedSfcn ===========================
+%% Abstract:
+%%    Return true if this model, or any model below contains a non-inlined
+%% S-Function
+%%
+%function SLibModelHierarchyContainsNoninlinedSfcn()
+  %if ::CompiledModel.NumChildSFunctions > 0 || ...
+    ::CompiledModel.ModelBlocksHaveNonInlinedSfcns
+    %return TLC_TRUE
+  %else
+    %return TLC_FALSE
+  %endif
+%endfunction
+
+%% Function: GetAcceleratorStringForFunction ===================================
+%% Abstract:
+%%    Helper function to return the string used by accelerator to call
+%% back into the Simulink engine to call a certain block method.
+%function GetAcceleratorStringForFunction(sysFcn) void
+  %assign accFunction = ""
+  %switch (sysFcn)
+    %case "Initialize"
+      %assign accFunction = "SS_CALL_MDL_INITIALIZE_CONDITIONS"
+      %break
+    %case "SetupRuntimeResources"
+      %assign accFunction = "SS_CALL_MDL_SETUP_RUNTIME_RESOURCES"
+      %break
+    %case "Enable"
+      %assign accFunction = "SS_CALL_RTW_GENERATED_ENABLE"
+      %break
+      
+    %case "Disable"
+      %assign accFunction = "SS_CALL_RTW_GENERATED_DISABLE"
+      %break
+      
+    %case "Output"
+    %case "OutputUpdate"
+      %assign accFunction = "SS_CALL_MDL_OUTPUTS"
+      %break
+      
+    %case "Update"
+      %assign accFunction = "SS_CALL_MDL_UPDATE"
+      %break
+      
+    %case "FinalizeDims"
+      %assign accFunction = "SS_CALL_MDL_FINALIZE_ALL_DIMS"
+      %break
+      
+    %case "ZeroCrossing"
+      %assign accFunction = "SS_CALL_MDL_ZERO_CROSSINGS"
+      %break
+      
+    %case "Projection"
+      %assign accFunction = "SS_CALL_MDL_PROJECTION"
+      %break
+      
+    %case "Derivative"
+      %assign accFunction = "SS_CALL_MDL_DERIVATIVES"
+      %break
+      
+    %case "ForcingFunction"
+      %assign accFunction = "SS_CALL_MDL_FORCINGFUNCTION"
+      %break
+      
+    %case "MassMatrix"
+      %assign accFunction = "SS_CALL_MDL_MASSMATRIX"
+      %break
+      
+    %case "Terminate"
+      %assign accFunction = "SS_CALL_MDL_TERMINATE"
+      %break
+    %case "CleanupRuntimeResources"
+      %assign accFunction = "SS_CALL_MDL_CLEANUP_RUNTIME_RESOURCES"
+      %break
+  %endswitch
+  
+  %return accFunction
+%endfunction
+
+
+%% Function: SLibSerializeFcnArgs =============================================
+%% Abstract:
+%%   Helper function to write out a vector of arguments into a comma
+%% separated list.
+%function SLibSerializeFcnArgs(recArgs)
+  %assign fcnArgs = ""
+  %foreach idx = SIZE(recArgs,1)
+    %if idx == 0
+      %assign fcnArgs = recArgs[idx]
+    %else
+      %assign fcnArgs = fcnArgs + ", %<recArgs[idx]>"
+    %endif
+  %endforeach
+
+  %return fcnArgs
+%endfunction
+
+%% Function: SLibGetModelArgumentIdentifier =============================
+%% Abstract:
+%%  Helper function to get the name of the model workspace variable for
+%%  a model argument in a referenced model
+%function SLibGetModelArgumentIdentifier(canPrmDef, canPrmIdx)
+  %% If the arg is not used, just use the name in the canPrmDef since
+  %% the variable won't really be used as an argument.
+  %if (canPrmDef.IsUsed == "no")
+    %assign ident = LibGetRecordIdentifier(canPrmDef)
+  %else
+    %assign baseIdx = GetBaseSystemIdx()
+    %assign callSite = System[baseIdx].CallSites[0]
+    %assign ssBlk       = System[callSite[2]].Block[callSite[3]]
+    %assign childPrmIdx = ...
+      ssBlk.CallSiteInfo.CanonicalPrmArg[canPrmIdx].ChildPrmArgIdx
+    %assign canPrm  = SLibGetCallSitePrmArg(callSite, childPrmIdx)
+    %assign ident = LibGetRecordIdentifier(canPrm.ASTNode)
+  %endif
+
+  %return ident 
+%endfunction
+
+%% Function: SLibGetModelRefGlobalDSMDeclarations =============================
+%% Abstract: 
+%%  Get the declarations for global DSM for model reference targets
+%function SLibGetModelRefGlobalDSMDeclarations() void
+  %createrecord dsmDeclarations {}
+
+  %assign numDWorks = DWorks.NumDWorks
+  
+  %foreach idx = numDWorks
+    %assign dwork = DWorks.DWork[idx]
+    %if dwork.GlobalDSM
+      %assign type = SLibGetRecordContainerTypeName(dwork)
+      %assign wide = LibOptionalVectorWidth(LibGetRecordWidth(dwork))
+      %assign name = dwork.SFcnWrapperDSMName
+      
+      %assign declaration = "%<type> %<name>%<wide>;"
+      
+      %addtorecord dsmDeclarations DSMDeclaration { ...
+        Name         STRING(name) ...
+        Declaration  STRING(declaration) ...
+        ExternNeeded TLC_TRUE ...
+      }
+    %endif
+  %endforeach
+  
+  %if(ISFIELD(::CompiledModel, "SubModelGlobalDSMDeclarations"))  
+    %assign submodelDecls = ::CompiledModel.SubModelGlobalDSMDeclarations 
+    %assign numDecls = SIZE(submodelDecls.Declarations, 1) 
+    
+    %foreach idx = numDecls 
+      %assign decl = submodelDecls.Declarations[idx] 
+      %assign decl.ExternNeeded = TLC_FALSE 
+      %addtorecord dsmDeclarations DSMDeclaration %<decl> 
+    %endforeach 
+  %endif 
+    
+  %return dsmDeclarations
+%endfunction
+
+%% Function: SLibSetModelRefCacheFcnCallInputInfo =============================
+%% Abstract:
+%%  Helper function for supporting root-level function-call inports,
+%%  this is used to cache away information about each task.
+
+%function SLibSetModelRefCacheFcnCallInputInfo(portIdx, fcnType, taskName, tid, isAsync, groupIdx, dworkIdx, portName) void
+%assert IsModelReferenceTarget() || Accelerator || SLibHasFcnCallRootInport()
+
+  %assign mdlRefSys = ::CompiledModel.System[GetBaseSystemIdx()]
+  
+  %if !LibIsSystemField(mdlRefSys, "FcnCallInputInfo")
+    %createrecord fcnCallInfo {}
+    %<LibAddToSystem(mdlRefSys, "FcnCallInputInfo", fcnCallInfo)>
+  %endif
+  
+  %assign currField = LibGetSystemField(mdlRefSys, "FcnCallInputInfo")
+
+  %% We don't seem to handle going from OutputUpdate to Output, just
+  %% switch the fcnType here.
+  %if fcnType == "OutputUpdate"
+    %assign fcnType = "Output"
+  %endif
+  
+  %if !ISEMPTY(currField) 
+    %foreach idx = SIZE(currField.FcnCallInfo, 1)
+      %assign info = currField.FcnCallInfo[idx]
+      %if info.TaskName == taskName
+        %% It is possible this function is called multiple times for the same taskName, 
+        %% e.g., child module calls a parent module's SubFunction, but we only want to
+        %% register the same taskName once
+        %return
+      %endif
+    %endforeach
+  %endif
+  
+  %addtorecord currField FcnCallInfo { ...
+    FcnType  STRING(fcnType); ...
+    TaskName STRING(taskName); ...
+    TID      tid;...
+    PortIdx  portIdx;...
+    isAsync  isAsync;...
+    FcnCallPortGroupIndex groupIdx;...
+    dworkIndex dworkIdx;...
+    PortName STRING(portName)}
+  
+  %<LibSetSystemField(mdlRefSys, "FcnCallInputInfo", currField)>  
+
+%endfunction
+
+
+%% Function: SLibSetModelRefCachePeriodicFcnCallInputInfo =====================
+%% Abstract:
+%%  Helper function for supporting root-level periodic function-call inports,
+%%  this is used to cache away information about each periodic task.
+%function SLibSetModelRefCachePeriodicFcnCallInputInfo(portIdx, fcnType, fcnName, tid, dworkIndex, portName) void
+  %<SLibSetModelRefCacheFcnCallInputInfo(portIdx, fcnType, fcnName, tid, TLC_FALSE, -1, dworkIndex, portName)>
+%endfunction
+
+
+%% Function: SLibSetModelRefCacheAsyncFcnCallInputInfo ========================
+%% Abstract:
+%%  Helper function for supporting root-level async function-call inports, this
+%%  is used by the inserted s-function to cache away information about each async
+%%  task.
+%function SLibSetModelRefCacheAsyncFcnCallInputInfo(taskName, portIdx, tid, fcnType, groupIndex, dworkIndex, portName) void
+  %<SLibSetModelRefCacheFcnCallInputInfo(portIdx, fcnType, taskName, tid, TLC_TRUE, groupIndex, dworkIndex, portName)>
+%endfunction
+
+%% Function: ModelBlockHasAsyncInput ===========================================
+%%   Helper function to determine if a Model block has async function-call
+%% inputs
+%function ModelBlockHasAsyncInput(tid, block) void
+  %return block.ParamSettings.HasAsyncFcnCallInput && ...
+    LibAsynchronousTriggeredTID(tid) && ...
+    !SLibNonInlinedModelWideEventTID(tid)
+%endfunction
+
+
+
+%% Function: SLibGetSSExportMethodCall =======================================
+%%   Dump out a call in the model reference s-function to register an exported
+%% method for function-call inputs.
+%function SLibGetSSExportMethodCall(fcnInfo, taskFcnName) void
+  %switch fcnInfo.FcnType
+    %case "Output"
+      %assign retVal = "ssExportOutputFcn(S, %<fcnInfo.PortIdx>, %<taskFcnName>);"
+      %break
+      
+    %case "Disable"
+      %assign retVal = "ssExportDisableFcn(S, %<fcnInfo.PortIdx>, %<taskFcnName>);"
+      %break
+
+    %case "Enable"
+      %assign retVal = "ssExportEnableFcn(S, %<fcnInfo.PortIdx>, %<taskFcnName>);"
+      %break
+      
+    %default
+      %<LibReportFatalError("Unexpected fcnType: %<fcnInfo.FcnType>")>
+  %endswitch
+  
+  %return retVal
+%endfunction
+      
+
+%% Function: SLibIsModelRefAsyncTID ============================================
+%% Abstract:
+%%  We now support async TID's in referenced models, but only when they
+%% come from a root function-call inport.
+%function SLibIsModelRefAsyncTID(tid)
+  %return IsModelReferenceTarget() && LibAsynchronousTriggeredTID(tid)
+%endfunction
+
+
+%% Function: SLibCreateWrapperForModelBlockFCI ================================
+%% Abstract:
+%%   Core method to create the wrapper function for a model block
+%% function-call input.
+%function SLibCreateWrapperForModelBlockFCI(modelBlock, fcnType) void
+  %if !ISFIELD(modelBlock.WrapperFcns, "%<fcnType>")
+    %return ""
+  %endif
+
+  %assign fcnBuffers = modelBlock.WrapperFcns.%<fcnType>
+  %assign locSS = RTMGetModelSS()
+  %assign args = ::tSimStructType + " *const " + locSS
+  %assign args = args + ", int_T " + ::tControlPortIdx
+  %assign args = args + ", int_T " + ::tTID
+  
+  %openfile fcnBuf
+  %foreach idx = SIZE(fcnBuffers,1)
+    %assign fcnBuffer = modelBlock.WrapperFcns.%<fcnType>[idx]
+    %assign tid = CAST("Number", fcnBuffer.TID)
+    %assign isAsync = fcnBuffer.isAsync
+    %assign fcnPortIdx = fcnBuffer.FcnPortIdx
+    
+    /* 
+    * Force non-inlined (FNI) function call stub
+    * for '%<modelBlock.Name>'
+    */    
+    ssFcnCallErr_T %<fcnBuffer.FcnName>(%<args>) {
+    %if isAsync && ...
+      fcnPortIdx < modelBlock.NumDataInputPorts && ...
+      modelBlock.ParamSettings.IsTopAsync[fcnBuffer.FcnCallPortGroupIndex] && ...
+      fcnType == "OutputUpdate"
+      %<SLibDumpOutputUpdateCodeForAsyncTid(tid)>\
+    %elseif ISFIELD(modelBlock, "CallerBlkInfo") && ...
+      modelBlock.CallerBlkInfo[fcnPortIdx].CallerBlkPortEl >= 0
+
+      %assign callerBlkIdx = modelBlock.CallerBlkInfo[fcnPortIdx].CallerBlkIdx
+      %assign sfcnBlkEl    = modelBlock.CallerBlkInfo[fcnPortIdx].CallerBlkPortEl
+      %assign sfcnBlk      = System[callerBlkIdx[0]].Block[callerBlkIdx[2]]
+      %<SLibBlockExecuteSysFcn(sfcnBlk, sfcnBlkEl, fcnType)>\
+    %else
+      %<CallModelBlockAsyncFcnCallInput(modelBlock, fcnBuffer.FcnPortIdx, ...
+        tid, fcnType)>\
+    %endif
+    
+    return SS_FCNCALL_NO_ERR;
+    }
+  %endforeach
+  %closefile fcnBuf
+ 
+  %return fcnBuf
+%endfunction
+
+
+%% Function: SLibGenerateFNIStubsForModelBlocks ===============================
+%% Abstract:
+%%   If there are any non-inlined s-function calling Model block function-call
+%% inputs, generate the wrapper functions we attach to the s-function.
+%function SLibGenerateFNIStubsForModelBlocks() void
+  %openfile fcnBuff
+  %foreach idIdx = ::CompiledModel.NumModelReferenceBlocks
+    %assign blkIdx    = ::CompiledModel.ModelReferenceBlocks[idIdx]
+    %assign mdlBlock  = ::CompiledModel.System[blkIdx[0]].Block[blkIdx[1]]
+    %if ISFIELD(mdlBlock, "WrapperFcns")
+      %<SLibCreateWrapperForModelBlockFCI(mdlBlock, "OutputUpdate")>\
+      %<SLibCreateWrapperForModelBlockFCI(mdlBlock, "Enable")>\
+      %<SLibCreateWrapperForModelBlockFCI(mdlBlock, "Disable")>\
+    %endif
+  %endforeach
+  %closefile fcnBuff
+  %return fcnBuff
+%endfunction
+
+
+
+%% Function: SLibCallModelBlockFcnCallInput ====================================
+%% Abstract:
+%%   Called for s-functions making function-calls to Model blocks.
+%function SLibCallModelBlockFcnCallInput(blkFcn, sysIdx, blkIdx, portIdx, ...
+  tid, callTaskTopBlk, modIdx, fcnIdx) void
+  %openfile fcnBuff
+  %% To generate the right code for a branched/wide async fcn-call
+  %% initiator, we need to let the s-function make the call.
+  %if callTaskTopBlk
+    %assign blkIdx = [%<sysIdx>, %<blkIdx>, %<portIdx>]
+    %assign taskTopBlock = FcnGetTaskTopSfcnBlock(tid)
+    %<SLibGetAsyncSysCodeForTaskTopBlk(taskTopBlock, tid, ...
+      "ModelReference", blkIdx)>\
+  %else
+    %assign system = System[sysIdx]
+    %with system
+      %assign block = Block[blkIdx]
+      %with block
+        %assign blkcode = CallModelBlockAsyncFcnCallInput(block, portIdx, tid, blkFcn)
+        %if !ISEMPTY(blkcode)
+          %<SLibMdlRefIfLocalPreprocessorCondition(block)>
+          %<SLibIfVariantCondition16b(block)>
+          %<CallModelBlockAsyncFcnCallInput(block, portIdx, tid, blkFcn)>\
+          %<SLibEndIfVariantCondition16b(block)>
+          %<SLibMdlRefEndIfLocalPreprocessorCondition(block)>
+        %endif
+      %endwith
+    %endwith  
+  %endif
+  %closefile fcnBuff
+  %return fcnBuff
+%endfunction
+
+%% Function: SLibGetModelBlockFcnCallInputInfo =================================
+%% Abstract:
+%%   Get the FcnCallInfo for the specified input and fcnType of a Model block.
+%function SLibGetModelBlockFcnCallInputInfo(block, portIdx, fcnType) void
+  %assign blockInterface = GetModelrefInterface(block)
+  %assign fcnCallInfo = []
+  
+  %% We treat OutputUpdate as Output
+  %if fcnType == "OutputUpdate"
+    %assign fcnType = "Output"
+  %endif
+  
+  %assert (portIdx != -1)
+  
+  %% Check for the existance of FcnCallInputs. It is possible to run into this scenario for an
+  %% inactive variant function-call input of the model block when the model block also has Init/Reset
+  %% event ports (model block is present but no function-call inputs). 
+  %% See TestPoint_mExportFcnInitSSTop in 
+  %% TopTester: matlab/test/toolbox/simulink/variants/inlineVariants/modelref/tmdlref_basic.m
+  %if ISFIELD(blockInterface, "FcnCallInputs")
+    %% For now, loop over the info to find the one associated
+    %% with the port.  We should make this a direct index.
+    %foreach idx = SIZE(blockInterface.FcnCallInputs, 1)
+      %assign locCallInfo = blockInterface.FcnCallInputs[idx]
+      %if locCallInfo.PortIdx == portIdx && ...
+        locCallInfo.FcnType == fcnType
+        %assign fcnCallInfo = locCallInfo
+        %break
+      %endif
+    %endforeach
+  %endif
+
+  %return fcnCallInfo
+%endfunction
+
+%% Function: CallModelBlockInitializePortFunction =================================
+%function CallModelBlockInitializePortFunction(block, blockInterface, localTid) void
+
+  %assign fcnCall = ""
+
+  %if ISFIELD(blockInterface, "RegistrationFcn")
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+      "RegistrationFcn", blockInterface, ...
+      blockInterface.RegistrationFcn, 0, localTid, 0, "")
+  %endif
+
+  %% Initialize all output ports to ground value.
+  %with block
+    %assign needIterVar = TLC_FALSE
+    %foreach portIdx = NumDataOutputPorts
+      %if LibBlockOutputSignalWidth(portIdx) > 1
+        %assign needIterVar = TLC_TRUE
+        %break
+      %endif
+    %endforeach
+    
+    %assign fcnCall = fcnCall + "{\n"
+
+    %assign iterVar = "i_%<block.BlockIdx[0]>_%<block.BlockIdx[2]>"
+    %if needIterVar
+      %assign fcnCall = fcnCall + "int_T %<iterVar>;\n"
+    %endif
+    
+    %foreach portIdx = NumDataOutputPorts
+      %assign dTypeId = LibBlockOutputSignalAliasedThruDataTypeId(portIdx)
+      %assign groundVal = LibGetGroundValueFromId(dTypeId)
+      %assign portWidth = LibBlockOutputSignalWidth(portIdx)
+      %assign isComplex = LibBlockOutputSignalIsComplex(portIdx)
+      %if portWidth > 1
+        %assign fcnCall = fcnCall + ...
+          "for (%<iterVar> = 0; %<iterVar> < %<portWidth>; %<iterVar>++) {\n"
+        %if isComplex
+          %assign fcnCall = fcnCall + ...
+            "%<LibBlockOutputSignal(portIdx, iterVar, "", 0)>.re = %<groundVal>;\n"
+          %assign fcnCall = fcnCall + ...
+            "%<LibBlockOutputSignal(portIdx, iterVar, "", 0)>.im = %<groundVal>;\n"
+        %else
+          %assign fcnCall = fcnCall + ...
+            "%<LibBlockOutputSignal(portIdx, iterVar, "", 0)> = %<groundVal>;\n"
+        %endif
+        %assign fcnCall = fcnCall + "}\n"
+      %else
+        %if isComplex
+          %assign fcnCall = fcnCall + ...
+            "%<LibBlockOutputSignal(portIdx, "", "", 0)>.re = %<groundVal>;\n"
+          %assign fcnCall = fcnCall + ...
+            "%<LibBlockOutputSignal(portIdx, "", "", 0)>.im = %<groundVal>;\n"
+        %else
+          %assign fcnCall = fcnCall + ...
+            "%<LibBlockOutputSignal(portIdx, "", "", 0)> = %<groundVal>;\n"
+        %endif
+      %endif
+    %endforeach
+    
+    %assign fcnCall = fcnCall + "}\n"
+  %endwith
+    
+  %if ISFIELD(blockInterface, "StartFcn")
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+      "StartFcn", blockInterface, ...
+      blockInterface.StartFcn, 0, localTid, 0, "")
+  %endif
+  
+  %if ISFIELD(blockInterface, "SystemInitializeFcn")
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+      "SystemInitializeFcn", ...
+      blockInterface, ...
+      blockInterface.SystemInitializeFcn, 0, localTid, 0, "")
+  %endif
+  
+  %if ISFIELD(blockInterface, "EnableFcn")
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+      "EnableFcn", blockInterface, ...
+      blockInterface.EnableFcn, 0, localTid, 0, "")
+  %endif
+
+  %% Call ParameterChangeEvent function.
+  %assign prmEventFcnInfo = GetModelWideEventFcnInfo( ...
+    blockInterface, "ParameterChangeEvent", "")
+  %if prmEventFcnInfo.eventTid != -1 && !ISEMPTY(prmEventFcnInfo.fcnName)
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+      "OutputFcn", blockInterface, ...
+      GETFIELD(blockInterface, prmEventFcnInfo.fcnName), 0, prmEventFcnInfo.eventTid, 0, "")
+  %endif
+  
+  %assign initStatDWorkIdx = block.ParamSettings.InitStatusDWorkIdx
+  %assign fcnCall = fcnCall + "%<LibBlockDWork(block.DWork[initStatDWorkIdx],"","",0)> = 1U;\n"
+
+  %return fcnCall
+
+%endfunction
+
+
+%function GetModelWideEventFcnInfo(blockInterface, eventType, eventID) void
+  %assign tid = -1
+  %assign fcn = ""
+  %if ISFIELD(blockInterface, "ModelWideEvents")
+    %foreach mweIdx = SIZE(blockInterface.ModelWideEvents, 1)
+      %% Terminate function, Reset function, or Reset With Init function
+      %if (eventType == blockInterface.ModelWideEvents[mweIdx].eventType) && ...
+          ((eventType != "ResetEvent" && eventType != "ResetWithInitEvent") || ...
+           eventID == blockInterface.ModelWideEvents[mweIdx].id)
+        %assign tid = blockInterface.ModelWideEvents[mweIdx].tid
+        %assign outFcn = "OutputTID" + SPRINTF("%d", tid) + "Fcn"
+        %assign outUpdateFcn = "OutputUpdateTID" + SPRINTF("%d", tid) + "Fcn"
+        %if ISFIELD(blockInterface, outFcn)
+          %assign fcn = outFcn
+        %elseif ISFIELD(blockInterface, outUpdateFcn)
+          %assign fcn = outUpdateFcn
+        %endif
+        %break
+      %endif
+    %endforeach
+  %endif
+  
+  %createrecord retVal {eventTid tid; fcnName fcn}
+  %return retVal
+%endfunction
+
+%% Function: CallModelBlockTerminatePortFunction ===============================
+%function CallModelBlockTerminatePortFunction(block, blockInterface, localTid) void
+
+  %assign fcnCall = ""
+  
+  %assign termInfo = GetModelWideEventFcnInfo(blockInterface, "PowerDownEvent", "")  
+  %if termInfo.eventTid != -1 && !ISEMPTY(termInfo.fcnName)
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+      "OutputFcn", blockInterface, ...
+      GETFIELD(blockInterface, termInfo.fcnName), 0, termInfo.eventTid, 0, "")
+  %endif
+
+  %if ISFIELD(blockInterface, "TerminateFcn")
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+      "TerminateFcn", blockInterface, ...
+      blockInterface.TerminateFcn, 0, localTid, 0, "")
+  %endif
+
+  %assign initStatDWorkIdx = block.ParamSettings.InitStatusDWorkIdx
+  %assign fcnCall = fcnCall + "%<LibBlockDWork(block.DWork[initStatDWorkIdx],"","",0)> = 0U;\n"
+
+  %return fcnCall
+
+%endfunction
+
+%%Function: CallModelBlockResetPortFunction ====================================
+%function CallModelBlockResetPortFunction(block, blockInterface, eventPortName, localTid) void
+
+  %assign fcnCall = ""
+  
+  %assign resetInfo = GetModelWideEventFcnInfo(blockInterface, "ResetEvent", eventPortName)  
+  %if resetInfo.eventTid != -1 && !ISEMPTY(resetInfo.fcnName)
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+      "OutputFcn", blockInterface, ...
+      GETFIELD(blockInterface, resetInfo.fcnName), 0, resetInfo.eventTid, 0, "")
+  %else  
+    %assign resetWithInitInfo = GetModelWideEventFcnInfo(blockInterface, "ResetWithInitEvent", eventPortName)  
+    %if resetWithInitInfo.eventTid != -1 && !ISEMPTY(resetWithInitInfo.fcnName)
+      %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, ...
+        "OutputFcn", blockInterface, ...
+        GETFIELD(blockInterface, resetWithInitInfo.fcnName), 0, resetWithInitInfo.eventTid, 0, "")
+  %endif 
+  %endif 
+  %return fcnCall
+    
+%endfunction
+
+%% Function: CallModelBlockOutputUpdateFunction ==================================
+%function CallModelBlockOutputUpdateFunction( ...
+  block, blockInterface, childTID, useTIDinFcnName) void
+
+  %assign fcnCall = ""
+
+  %% Look for combined output-update function first.
+  %if useTIDinFcnName
+    %assign outputUpdateFcn = "OutputUpdateTID" + SPRINTF("%d", childTID) + "Fcn"
+  %else
+    %assign outputUpdateFcn = "OutputUpdateFcn"
+  %endif
+  %if ISFIELD(blockInterface, outputUpdateFcn)
+    %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, "OutputUpdateFcn", ...
+      blockInterface, GETFIELD(blockInterface, outputUpdateFcn), 0, childTID, 0,"")
+  %else
+    %% If combined output-update function not found, look for individual output
+    %% and update functions.
+    %if useTIDinFcnName
+      %assign outputFcn = "OutputTID" + SPRINTF("%d", childTID) + "Fcn"
+    %else
+      %assign outputFcn = "OutputFcn"
+    %endif
+    %if ISFIELD(blockInterface, outputFcn)
+      %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, "OutputFcn", ...
+        blockInterface, GETFIELD(blockInterface, outputFcn), 0, childTID, 0,"")
+    %endif
+
+    %if useTIDinFcnName
+      %assign updateFcn = "UpdateTID" + SPRINTF("%d", childTID) + "Fcn"
+    %else
+      %assign updateFcn = "UpdateFcn"
+    %endif
+    %if ISFIELD(blockInterface, updateFcn)
+      %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, "UpdateFcn", ...
+        blockInterface, GETFIELD(blockInterface, updateFcn), 0, childTID, 0,"")
+    %endif
+  %endif
+
+  %return fcnCall
+  
+%endfunction
+
+%% Function: CallModelBlockPeriodicEventPortFunction =============================
+%function CallModelBlockPeriodicEventPortFunction(block, blockInterface, childTID) void
+
+  %% Find output, update, or combined output-update function for TID
+  %assign fcnCall = ...
+    CallModelBlockOutputUpdateFunction(block, blockInterface, childTID, TLC_TRUE)
+
+  %if ISEMPTY(fcnCall) && childTID == 0
+    %% If we cannot find the function to call, this may be a single rate
+    %% or sample time independent model. Find output, update, or combined
+    %% output-update function without using TID in the function name.
+    %assign fcnCall = ...
+      CallModelBlockOutputUpdateFunction(block, blockInterface, childTID, TLC_FALSE)
+  %endif
+  
+  %return fcnCall
+    
+%endfunction
+
+%% Function: CallModelBlockModelEventPortFunction ==============================
+%% Abstract:
+%%    Call methods corresponding to given model wide event in a referenced
+%%    model.
+%function CallModelBlockModelEventPortFunction(block, eventPortName, eventPortType, localTid) void
+
+  %assign fcnCall = ""
+  %assign blockInterface = GetModelrefInterface(block)
+
+  %if eventPortType == "INITIALIZE"
+
+    %% ================
+    %% Initialize Event
+    %% ================
+
+    %if ISFIELD(block.ParamSettings, "InitStatusDWorkIdx")
+      %assign initStatDWorkIdx = block.ParamSettings.InitStatusDWorkIdx
+      %assert(initStatDWorkIdx != -1)
+
+      %assign fcnCall = fcnCall + "if (%<LibBlockDWork(block.DWork[initStatDWorkIdx],"","",0)> == 1U) {\n"
+
+      %if !GetModelrefHasMdlTermPort(block)
+        %assign fcnCall = fcnCall + ...
+          CallModelBlockTerminatePortFunction(block, blockInterface, localTid)
+      %else
+        %assign fcnCall = fcnCall + ...
+          "void *errMsg = CreateDiagnosticAsVoidPtr_wrapper(\n" + ...
+          "\"Simulink:FcnCall:InvalidMdlInitFcnCall\", 2,\n" + ...
+          "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<LibGetFormattedBlockPath(block)>\",\n" + ...
+          "CODEGEN_SUPPORT_ARG_REAL_TYPE, %<LibGetT()>);\n"
+        %assign fcnCall = fcnCall + "_ssSet_slErrMsg(%<::tSimStruct>, errMsg);\n"
+        %assign fcnCall = fcnCall + "return;\n"
+      %endif
+
+      %assign fcnCall = fcnCall + "}\n"
+    %endif
+   
+    %assign fcnCall = fcnCall + ...
+      CallModelBlockInitializePortFunction(block, blockInterface, localTid)
+
+  %elseif eventPortType == "TERMINATE"
+
+    %% ===============
+    %% Terminate Event
+    %% ===============
+
+    %if ISFIELD(block.ParamSettings, "InitStatusDWorkIdx")
+      %assign initStatDWorkIdx = block.ParamSettings.InitStatusDWorkIdx
+      %assert(initStatDWorkIdx != -1)
+
+      %assign fcnCall = fcnCall + "if (%<LibBlockDWork(block.DWork[initStatDWorkIdx],"","",0)> == 0U) {\n"
+
+      %assign fcnCall = fcnCall + ...
+        "void *errMsg = CreateDiagnosticAsVoidPtr_wrapper(\n" + ...
+        "\"Simulink:FcnCall:InvalidMdlTermFcnCall\", 2,\n" + ...
+        "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<LibGetFormattedBlockPath(block)>\",\n" + ...
+        "CODEGEN_SUPPORT_ARG_REAL_TYPE, %<LibGetT()>);\n"
+      %assign fcnCall = fcnCall + "_ssSet_slErrMsg(%<::tSimStruct>, errMsg);\n"
+      %assign fcnCall = fcnCall + "return;\n"
+    
+      %assign fcnCall = fcnCall + "}\n"
+    %endif
+
+    %assign fcnCall = fcnCall + ...
+      CallModelBlockTerminatePortFunction(block, blockInterface, localTid)
+    
+  %elseif eventPortType == "RESET"
+    
+    %% ===========
+    %% Reset Event
+    %% ===========
+    
+    %if ISFIELD(block.ParamSettings, "InitStatusDWorkIdx")
+      %assign initStatDWorkIdx = block.ParamSettings.InitStatusDWorkIdx
+      %assert(initStatDWorkIdx != -1)
+
+      %assign fcnCall = fcnCall + "if (%<LibBlockDWork(block.DWork[initStatDWorkIdx],"","",0)> == 0U) {\n"
+
+      %assign fcnCall = fcnCall + ...
+        "void *errMsg = CreateDiagnosticAsVoidPtr_wrapper(\n" + ...
+        "\"Simulink:FcnCall:InvalidMdlResetFcnCall\", 3,\n" + ...
+        "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<eventPortName>\",\n" + ...
+        "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<LibGetFormattedBlockPath(block)>\",\n" + ...
+        "CODEGEN_SUPPORT_ARG_REAL_TYPE, %<LibGetT()>);\n"
+      %assign fcnCall = fcnCall + "_ssSet_slErrMsg(%<::tSimStruct>, errMsg);\n"
+      %assign fcnCall = fcnCall + "return;\n"
+      
+      %assign fcnCall = fcnCall + "}\n"
+    %endif
+
+    %assign fcnCall = fcnCall + ...
+      CallModelBlockResetPortFunction(block, blockInterface, eventPortName, localTid)
+    
+  %else
+    
+    %% ==============
+    %% Periodic Event
+    %% ==============
+    
+    %if ISFIELD(block.ParamSettings, "InitStatusDWorkIdx")
+      %assign initStatDWorkIdx = block.ParamSettings.InitStatusDWorkIdx
+      %assert (initStatDWorkIdx != -1)
+      
+      %assign fcnCall = fcnCall + "if (%<LibBlockDWork(block.DWork[initStatDWorkIdx],"","",0)> == 0U) {\n"
+      %assign fcnCall = fcnCall + ...
+        "void *errMsg = CreateDiagnosticAsVoidPtr(\n" + ...
+        "\"Simulink:FcnCall:InvalidNonMdlEventFcnCall\", 4, \n" + ...
+        "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<eventPortName>\", \n" + ...
+        "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<LibGetFormattedBlockPath(block)>\", \n" + ...
+        "CODEGEN_SUPPORT_ARG_REAL_TYPE, %<LibGetT()>);\n"
+      %assign fcnCall = fcnCall + "_ssSet_slErrMsg(%<::tSimStruct>, errMsg);\n"
+      %assign fcnCall = fcnCall + "return;\n"      
+      %assign fcnCall = fcnCall + "}\n"      
+    %endif
+    
+    %% Figure out TID for periodic event port - Use EventPortTIDs parameter
+    %assign childTid = -1
+    %foreach mweIdx = SIZE(block.ParamSettings.ModelEventPortNames, 1)
+      %if block.ParamSettings.ModelEventPortTypes[mweIdx] == "PERIODIC" && ...
+        block.ParamSettings.ModelEventPortNames[mweIdx] == eventPortName
+        %assign childTid = block.ParamSettings.ModelEventPortTIDs[mweIdx]
+        %break
+      %endif
+    %endforeach
+    
+    %if childTid != -1
+      %assign fcnCall = fcnCall + ...
+        CallModelBlockPeriodicEventPortFunction(block, blockInterface, childTid)
+    %endif
+  %endif    
+    
+  %return fcnCall
+
+%endfunction
+
+
+%function ModelRefInitStatusCheckForFunctionCaller(sysIdx, blkIdx, fcnName) void
+
+  %assign block = System[sysIdx].Block[blkIdx]
+  %assign initStatDWorkIdx = block.ParamSettings.InitStatusDWorkIdx
+  %assert(initStatDWorkIdx != -1)
+  
+  %assign fcnCall = "if (%<LibBlockDWork(block.DWork[initStatDWorkIdx],"","",0)> == 0U) {\n"
+  %assign fcnCall = fcnCall + ...
+    "void *errMsg = CreateDiagnosticAsVoidPtr_wrapper(\n" + ...
+    "\"Simulink:FcnCall:InvalidNonMdlEventSimulinkFcn\", 3,\n" + ...
+    "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<fcnName>\",\n" + ...
+    "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<LibGetFormattedBlockPath(block)>\",\n" + ...
+    "CODEGEN_SUPPORT_ARG_REAL_TYPE, %<LibGetT()>);\n"
+  %assign fcnCall = fcnCall + "_ssSet_slErrMsg(%<::tSimStruct>, errMsg);\n"
+  %assign fcnCall = fcnCall + "return;\n"
+  %assign fcnCall = fcnCall + "}"
+  
+  %return fcnCall
+    
+%endfunction
+
+
+%% Function: CallModelBlockAsyncFcnCallInput ==================================
+%% Abstract:
+%%    Call the given function for an async task in a referenced model.
+%function CallModelBlockAsyncFcnCallInput(block, portIdx, localTid, ...
+  fcnType) void
+  
+  %assign blockInterface = GetModelrefInterface(block)
+  %assign fcnCall = ""
+
+  %if portIdx >= block.NumDataInputPorts && ...
+    ISFIELD(block.ParamSettings, "ModelEventPortNames")
+
+    %if (fcnType == "Output" || fcnType == "OutputUpdate")
+      %if Accelerator
+        %assign fcnCall = SLibCallModelBlockFcnCallInputInSimulink(block, portIdx, ...
+          localTid, fcnType)
+      %else
+        %% Call functions via initialize/reset/terminate ports
+        %assign eventPortIdx = portIdx - block.NumDataInputPorts
+        %assign eventPortName = block.ParamSettings.ModelEventPortNames[eventPortIdx]
+        %assign eventPortType = block.ParamSettings.ModelEventPortTypes[eventPortIdx]
+        %assign fcnCall = CallModelBlockModelEventPortFunction(block, eventPortName, eventPortType, localTid)
+      %endif
+    %endif
+    
+  %else
+
+    %assign fcnCallInfo = SLibGetModelBlockFcnCallInputInfo(block, portIdx, fcnType)
+ 
+    %% If we found a corresponding function in the referenced model, call
+    %% that function
+    %if !ISEMPTY(fcnCallInfo)
+      %if Accelerator
+        %assign fcnCall = SLibCallModelBlockFcnCallInputInSimulink(block, portIdx, ...
+          localTid, fcnType)
+      %else
+    
+        %if ISFIELD(block.ParamSettings, "InitStatusDWorkIdx")
+          %assign initStatDWorkIdx = block.ParamSettings.InitStatusDWorkIdx
+          %assert(initStatDWorkIdx != -1)
+          %assign fcnCall = fcnCall + "if (%<LibBlockDWork(block.DWork[initStatDWorkIdx],"","",0)> == 0U) {\n"
+
+          %assign fcnCall = fcnCall + ...
+            "void *errMsg = CreateDiagnosticAsVoidPtr_wrapper(\n" + ...
+            "\"Simulink:FcnCall:InvalidNonMdlEventFcnCall\", 3,\n" + ...
+            "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<fcnCallInfo.PortName>\",\n" + ...
+            "CODEGEN_SUPPORT_ARG_STRING_TYPE, \"%<LibGetFormattedBlockPath(block)>\",\n" + ...
+            "CODEGEN_SUPPORT_ARG_REAL_TYPE, %<LibGetT()>);\n"
+          %assign fcnCall = fcnCall + "_ssSet_slErrMsg(%<::tSimStruct>, errMsg);\n"
+          %assign fcnCall = fcnCall + "return;\n"
+
+          %assign fcnCall = fcnCall + "}\n"
+        %endif
+        
+        %assign fcnCall = fcnCall + SLibCallModelBlockFunction([], block, fcnCallInfo.TaskName, ...
+          blockInterface, fcnCallInfo.TaskFcnInfo.FcnRec, 0, localTid, 0, "")
+
+      %endif
+    %endif
+  %endif
+  
+  %return fcnCall
+%endfunction  
+
+%function CppEncapMdlrefTimingDecArgs() void  
+  %assert(::GenerateClassInterface && IsModelReferenceRTWTarget())  
+  %assign decArgs = []      
+  %if !IsModelReferenceForASimstructBasedTarget() && ...
+    ::tMdlRefTimingBridgeAccessed
+    %assign decArgs = decArgs + "const rtTimingBridge *timingBridge"
+  %endif  
+  %if ::tMdlRefGlobalTIDMapAccessed
+    %assign decArgs = AddCppEncapMdlrefTIDArgs(decArgs)
+  %endif
+  %return decArgs
+%endfunction
+
+%function AddCppEncapMdlrefTIDArgs(decArgs) void  
+  %assert(::GenerateClassInterface && IsModelReferenceRTWTarget())    
+  %if ::tMdlRefNeedTIDArgs
+    %if !MdlRefIsConstSampleBlock() || MdlRefHasParameterRate()
+      %% Write out the declaration of the global TID map.  Note that for inherited
+      %% submodels, we will put the map into the rtModel.  This is because each
+      %% instance the submodel could get a different TID and we need the TID
+      %% for logging. see FcnInitializeModelRefGlobalTimingEngine().
+      %assign numTIDs = SLibGetNumTIDsForGlobalTIDMap()
+      %foreach idx = numTIDs 
+        %assign decArgs = decArgs + "int_T mdlref_TID%<idx>"
+      %endforeach
+    %else
+      %assign decArgs = decArgs + "int_T mdlref_TID0"
+    %endif
+  %endif  
+  %if SLibModelNeedsTriggerTIDArg()
+    %assign decArgs = decArgs + "int_T mdlref_TriggerTID"
+  %endif  
+  %return decArgs
+%endfunction
+
+%function IsSystemReusableParentBaseSys(sysIdx)
+  %return IsBaseSystem(System[System[sysIdx].ReusedParentSystemIdx])
+%endfunction
+
+
+%% Function: SLibGetNumTIDsForGlobalTIDMap ==================================
+%% Abstract:
+%%    Get the number of elements needed to store the TID map for referenced
+%% models.
+%function SLibGetNumTIDsForGlobalTIDMap() void
+  %return NumRuntimeExportedRates + ...
+    NumAsynchronousSampleTimes + NumExplictTasksInUnionSampleTimes
+%endfunction
+
+%% Function: SLibGetProtectedBlockPath ==================================
+%% Abstract:
+%%    When protecting a model, use this standard string instead of the 
+%% full block path to protect IP
+%function SLibGetProtectedBlockPath() void
+  %return "Block_in_protected_model"
+%endfunction
+
+%% Function: SLibIsGeneratingSimTargetForProtectedModel ========================
+%% Abstract:
+%%   This function returns true if we are generating the SIM target and either 
+%% protecting this model, or this is a submodel of a model being protected.
+%% 
+%% Note that ::ProtectedModelReferenceTarget is only true for the model
+%% being protected
+%function SLibIsGeneratingSimTargetForProtectedModel() void
+  %return IsModelReferenceSimTarget() && CompiledModel.GenProtectedModelOrSubmodel
+%endfunction
+
+
+%endif %%_MODELREFUTIL_
+
+%% [EOF] modelrefutil.tlc
